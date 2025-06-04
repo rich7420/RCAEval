@@ -47,6 +47,7 @@ if is_py310():
         fci_pagerank,
         fci_randomwalk,
         ges_pagerank,
+        gnn_kan,
         granger_pagerank,
         granger_randomwalk,
         lingam_pagerank,

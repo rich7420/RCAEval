@@ -1,0 +1,65 @@
+services:
+  gnn-kan:
+    build:
+      context: ..
+      dockerfile: docker_gnnkan/Dockerfile
+    image: rcaeval-gnnkan:gpu
+    container_name: rcaeval-gnnkan
+    volumes:
+      - ../data:/app/data
+      - ../results:/app/results
+      - ../RCAEval:/app/RCAEval
+      - ../docs:/app/docs
+      - ../tests:/app/tests
+      - ../script:/app/script
+      - ../main.py:/app/main.py
+    environment:
+      - PYTHONPATH=/app
+      - TZ=Asia/Taipei
+      - NVIDIA_VISIBLE_DEVICES=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    stdin_open: true
+    tty: true
+    working_dir: /app
+    restart: unless-stopped
+    ports:
+      - "8888:8888"  # Jupyter
+      - "8080:8080"  # API
+    command: /bin/bash -c "source env_gnnkan/bin/activate && echo 'RCAEval GNN-KAN environment with GPU support ready!' && tail -f /dev/null"
+
+  gnn-kan-jupyter:
+    build:
+      context: ..
+      dockerfile: docker_gnnkan/Dockerfile
+    image: rcaeval-gnnkan:gpu
+    container_name: rcaeval-gnnkan-jupyter
+    volumes:
+      - ../data:/app/data
+      - ../results:/app/results
+      - ../RCAEval:/app/RCAEval
+      - ../docs:/app/docs
+      - ../tests:/app/tests
+      - ../script:/app/script
+      - ../main.py:/app/main.py
+    environment:
+      - PYTHONPATH=/app
+      - TZ=Asia/Taipei
+      - NVIDIA_VISIBLE_DEVICES=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    ports:
+      - "8889:8888"
+    working_dir: /app
+    restart: unless-stopped
+    command: /bin/bash -c "source env_gnnkan/bin/activate && jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''"
