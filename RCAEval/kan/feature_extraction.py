@@ -210,47 +210,80 @@ def stl_decomposition(metrics_data, seasonal=7, return_components=True):
     for col in data.columns:
         series = data[col].dropna()
         
-        if len(series) < 2 * seasonal:
-            # 數據太少，無法分解，使用原始數據
-            features = series.values.reshape(-1, 1)
-            names = [f'{col}_original']
+        # 更嚴格的數據長度檢查
+        min_required_length = max(2 * seasonal + 1, 10)  # 至少需要這麼多數據點
+        
+        if len(series) < min_required_length:
+            print(f"STL decomposition skipped for {col}: insufficient data length ({len(series)} < {min_required_length})")
+            # 使用基本統計特徵替代
+            features = np.array([
+                [np.mean(series), np.std(series), np.max(series), np.min(series)]
+            ]).T
+            names = [f'{col}_mean', f'{col}_std', f'{col}_max', f'{col}_min']
         else:
             try:
-                # STL 分解
-                stl = STL(series, seasonal=seasonal)
-                result = stl.fit()
+                # 嘗試多個季節性參數
+                seasonal_attempts = [seasonal, 3, 5, 2]  # 嘗試不同的週期
+                stl_success = False
                 
-                if return_components:
-                    # 返回所有組件
-                    trend = result.trend.fillna(0).values
-                    seasonal_comp = result.seasonal.fillna(0).values
-                    residual = result.resid.fillna(0).values
-                    
-                    features = np.column_stack([trend, seasonal_comp, residual])
-                    names = [f'{col}_trend', f'{col}_seasonal', f'{col}_residual']
-                else:
-                    # 只返回趨勢
-                    features = result.trend.fillna(0).values.reshape(-1, 1)
-                    names = [f'{col}_trend']
+                for attempt_seasonal in seasonal_attempts:
+                    if len(series) >= 2 * attempt_seasonal + 1:
+                        try:
+                            stl = STL(series, seasonal=attempt_seasonal, robust=True)
+                            result = stl.fit()
+                            
+                            if return_components:
+                                # 返回所有組件
+                                trend = result.trend.fillna(series.mean()).values
+                                seasonal_comp = result.seasonal.fillna(0).values
+                                residual = result.resid.fillna(0).values
+                                
+                                features = np.column_stack([trend, seasonal_comp, residual])
+                                names = [f'{col}_trend', f'{col}_seasonal', f'{col}_residual']
+                            else:
+                                # 只返回趨勢
+                                features = result.trend.fillna(series.mean()).values.reshape(-1, 1)
+                                names = [f'{col}_trend']
+                            
+                            stl_success = True
+                            break
+                        except Exception as e_inner:
+                            continue
+                
+                if not stl_success:
+                    print(f"STL decomposition failed for {col}: trying all seasonal periods")
+                    # 回退到統計特徵
+                    features = np.array([
+                        [np.mean(series), np.std(series), np.max(series), np.min(series)]
+                    ]).T
+                    names = [f'{col}_mean', f'{col}_std', f'{col}_max', f'{col}_min']
                     
             except Exception as e:
                 print(f"STL decomposition failed for {col}: {e}")
-                # 回退到原始數據
-                features = series.values.reshape(-1, 1)
-                names = [f'{col}_original']
+                # 回退到統計特徵
+                features = np.array([
+                    [np.mean(series), np.std(series), np.max(series), np.min(series)]
+                ]).T
+                names = [f'{col}_mean', f'{col}_std', f'{col}_max', f'{col}_min']
         
         decomposed_features.append(features)
         component_names.extend(names)
     
     # 對齊所有特徵的長度
-    min_length = min(f.shape[0] for f in decomposed_features)
-    decomposed_features = [f[:min_length] for f in decomposed_features]
-    
-    # 合併所有特徵
     if decomposed_features:
+        min_length = min(f.shape[0] for f in decomposed_features)
+        if min_length == 0:
+            # 如果所有特徵都是空的，創建默認特徵
+            min_length = 1
+            decomposed_features = [np.array([[0]]) for _ in decomposed_features]
+        
+        decomposed_features = [f[:min_length] for f in decomposed_features]
+        
+        # 合併所有特徵
         final_features = np.column_stack(decomposed_features)
     else:
-        final_features = np.array([])
+        final_features = np.array([[0]])  # 默認特徵
+        component_names = ['default_feature']
     
     return final_features, component_names
 

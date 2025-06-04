@@ -9,7 +9,8 @@ from .feature_extraction import (
     stl_decomposition,
     kll_feature_processing,
     compute_topology_features,
-    feature_fusion
+    feature_fusion,
+    extract_error_features
 )
 
 __all__ = [
@@ -20,5 +21,6 @@ __all__ = [
     'stl_decomposition',
     'kll_feature_processing',
     'compute_topology_features',
-    'feature_fusion'
+    'feature_fusion',
+    'extract_error_features'
 ]

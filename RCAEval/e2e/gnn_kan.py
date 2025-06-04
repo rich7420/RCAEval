@@ -24,7 +24,7 @@ import scipy.sparse as sp
 from RCAEval.kan import (
     KANLayer, GNNKANEncoder,
     sliding_window_alignment, extract_log_features, stl_decomposition,
-    kll_feature_processing, compute_topology_features, extract_error_features,
+    kll_feature_processing, compute_topology_features,
     feature_fusion
 )
 from RCAEval.io.time_series import preprocess, drop_constant
@@ -585,7 +585,7 @@ def run_gnn_kan_rca(data, inject_time=None, dataset=None, **kwargs):
 def test_gnn_kan():
     """測試 GNN-KAN 功能"""
     print("Testing GNN-KAN RCA...")
-    
+
     # 創建測試數據
     np.random.seed(42)
     test_data = pd.DataFrame({
@@ -595,10 +595,10 @@ def test_gnn_kan():
         'disk_io': np.random.rand(100) * 1000,
         'network_latency': np.random.rand(100) * 50
     })
-    
+
     # 運行 GNN-KAN RCA
-    result = gnn_kan_rca(test_data, inject_time=50, dataset='test')
-    
+    result = gnn_kan_rca(test_data, inject_time=50, dataset='test', stl_seasonal=3)
+
     print(f"Result keys: {list(result.keys())}")
     print(f"Number of nodes: {len(result['node_names'])}")
     print(f"Top 5 ranked nodes: {result['ranks'][:5]}")
