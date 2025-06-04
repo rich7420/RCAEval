@@ -1,4 +1,4 @@
-FROM ubuntu:22.04
+FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
 #docker compose build --no-cache
 # 使用 NVIDIA CUDA 基礎映像，包含 GPU 支持
 # FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
