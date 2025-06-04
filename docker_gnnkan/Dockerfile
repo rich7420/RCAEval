@@ -1,10 +1,7 @@
-FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
+FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04
 #docker compose build --no-cache
-# 使用 NVIDIA CUDA 基礎映像，包含 GPU 支持
-# FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
+# 使用 NVIDIA CUDA 11.8 基礎映像，包含 GPU 支持
 
-# FROM ubuntu:22.04
-# 使用 Ubuntu 22.04 作為CPU基礎映像
 # 設置環境變數
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
@@ -75,10 +72,10 @@ RUN python3.10 -m venv env_gnnkan && \
     pip install numpy==1.23.5 && \
     # 安裝基礎依賴
     pip install --default-timeout=100 --retries=10 --no-cache-dir -r requirements.txt && \
-    # 安裝 GPU 版本的 PyTorch
-    pip install --default-timeout=100 --retries=10 --no-cache-dir torch==1.12.1 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 && \
-    # 安裝 PyG (PyTorch Geometric) GPU 版本
-    pip install --default-timeout=100 --retries=10 --no-cache-dir torch-scatter torch-sparse torch-cluster torch-spline-conv torch-geometric -f https://data.pyg.org/whl/torch-1.12.1+cu121.html && \
+    # 安裝 GPU 版本的 PyTorch (使用 CUDA 11.8)
+    pip install --default-timeout=100 --retries=10 --no-cache-dir torch==1.12.1 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu116 && \
+    # 安裝 PyG (PyTorch Geometric) GPU 版本 (使用 CUDA 11.6 兼容 11.8)
+    pip install --default-timeout=100 --retries=10 --no-cache-dir torch-scatter torch-sparse torch-cluster torch-spline-conv torch-geometric -f https://data.pyg.org/whl/torch-1.12.1+cu116.html && \
     # 安裝 Jupyter
     pip install jupyter notebook && \
     # 確保 tigramite 和 scikit-network 正確安裝
