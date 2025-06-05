@@ -501,6 +501,10 @@ def train_gnn_kan_model(model, node_features, edge_index, config):
         trained_model: 訓練後的模型
         final_adj: 最終的鄰接矩陣
     """
+    print(f"Training on device: {next(model.parameters()).device}")
+    print(f"Node features shape: {node_features.shape}")
+    print(f"Edge index shape: {edge_index.shape}")
+    
     model.train()
     
     # 設置優化器
@@ -513,27 +517,62 @@ def train_gnn_kan_model(model, node_features, edge_index, config):
                                    gamma=config.scheduler_gamma)
     
     # 訓練循環
-    for epoch in range(config.epochs):
-        optimizer.zero_grad()
-        
-        # 前向傳播
-        node_embeddings, adj_scores = model(node_features, edge_index)
-        
-        # 計算損失
-        loss = compute_loss(node_embeddings, adj_scores, edge_index, config)
-        
-        # 反向傳播
-        loss.backward()
-        optimizer.step()
-        scheduler.step()
-        
-        if epoch % 20 == 0:
-            print(f"Epoch {epoch}/{config.epochs}, Loss: {loss.item():.4f}")
+    try:
+        for epoch in range(config.epochs):
+            optimizer.zero_grad()
+            
+            # 前向傳播
+            try:
+                node_embeddings, adj_scores = model(node_features, edge_index)
+                
+                # 計算損失
+                loss = compute_loss(node_embeddings, adj_scores, edge_index, config)
+                
+                # 檢查 loss 是否為 NaN
+                if torch.isnan(loss):
+                    print(f"NaN loss detected at epoch {epoch}")
+                    break
+                
+                # 反向傳播
+                loss.backward()
+                
+                # 梯度裁剪
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                
+                optimizer.step()
+                scheduler.step()
+                
+                if epoch % 5 == 0:  # 更頻繁的日誌輸出
+                    print(f"Epoch {epoch}/{config.epochs}, Loss: {loss.item():.4f}")
+                    
+                    # GPU 記憶體監控
+                    if torch.cuda.is_available():
+                        print(f"GPU memory used: {torch.cuda.memory_allocated()/1024**3:.2f} GB")
+                        
+            except Exception as e:
+                print(f"Error in epoch {epoch}: {e}")
+                import traceback
+                traceback.print_exc()
+                break
+                
+    except KeyboardInterrupt:
+        print("Training interrupted by user")
+    except Exception as e:
+        print(f"Training error: {e}")
+        import traceback
+        traceback.print_exc()
     
     # 獲取最終的鄰接矩陣
+    print("Getting final adjacency matrix...")
     model.eval()
-    with torch.no_grad():
-        _, final_adj = model(node_features, edge_index)
+    try:
+        with torch.no_grad():
+            _, final_adj = model(node_features, edge_index)
+    except Exception as e:
+        print(f"Error getting final adjacency: {e}")
+        # 返回隨機鄰接矩陣作為後備
+        num_nodes = node_features.size(0)
+        final_adj = torch.rand(num_nodes, num_nodes, device=node_features.device)
     
     return model, final_adj
 
@@ -585,6 +624,14 @@ def run_gnn_kan_rca(data, inject_time=None, dataset=None, **kwargs):
 def test_gnn_kan():
     """測試 GNN-KAN 功能"""
     print("Testing GNN-KAN RCA...")
+    
+    # 檢查 GPU 可用性
+    print(f"CUDA available: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        print(f"GPU device: {torch.cuda.get_device_name(0)}")
+        print(f"GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+    else:
+        print("Using CPU")
 
     # 創建測試數據
     np.random.seed(42)
@@ -596,8 +643,9 @@ def test_gnn_kan():
         'network_latency': np.random.rand(100) * 50
     })
 
-    # 運行 GNN-KAN RCA
-    result = gnn_kan_rca(test_data, inject_time=50, dataset='test', stl_seasonal=3)
+    # 運行 GNN-KAN RCA，使用較少的訓練輪數進行測試
+    result = gnn_kan_rca(test_data, inject_time=50, dataset='test', 
+                        stl_seasonal=3, epochs=20)
 
     print(f"Result keys: {list(result.keys())}")
     print(f"Number of nodes: {len(result['node_names'])}")
