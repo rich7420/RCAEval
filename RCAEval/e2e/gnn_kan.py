@@ -25,7 +25,7 @@ from RCAEval.kan import (
     KANLayer, GNNKANEncoder,
     sliding_window_alignment, extract_log_features, stl_decomposition,
     kll_feature_processing, compute_topology_features,
-    feature_fusion
+    feature_fusion, extract_error_features
 )
 from RCAEval.io.time_series import preprocess, drop_constant
 
@@ -105,80 +105,199 @@ class MultiModalFeatureExtractor:
         all_features = []
         node_names = []
         
-        # 處理 metrics 數據
-        if 'metric' in data:
-            metric_data = data['metric']
-            if inject_time is not None:
-                metric_data = metric_data.iloc[::15, :]  # 降採樣
-                normal_data = metric_data[metric_data['time'] < inject_time]
-                anomal_data = metric_data[metric_data['time'] >= inject_time]
-                
-                normal_processed = preprocess(normal_data, dataset='default')
-                anomal_processed = preprocess(anomal_data, dataset='default')
-                
-                # 對齊列
-                intersect = [x for x in normal_processed.columns if x in anomal_processed.columns]
-                normal_processed = normal_processed[intersect]
-                anomal_processed = anomal_processed[intersect]
-                
-                metric_data = pd.concat([normal_processed, anomal_processed], axis=0, ignore_index=True)
-            else:
-                metric_data = preprocess(metric_data, dataset='default')
-            
-            # STL 分解
-            stl_features, stl_names = stl_decomposition(
-                metric_data.select_dtypes(include=[np.number]),
-                seasonal=self.config.stl_seasonal
-            )
-            
-            if stl_features.size > 0:
-                # KLL 處理
-                processed_features = kll_feature_processing(
-                    stl_features, k=self.config.kll_k
-                )
-                all_features.append(processed_features)
-                node_names.extend(stl_names)
+        print("Processing multimodal data...")
         
-        # 處理 log 數據
-        if 'logts' in data:
-            log_data = data['logts']
-            log_data = drop_constant(log_data)
-            
-            if inject_time is not None:
-                normal_log = log_data[log_data['time'] < inject_time].drop(columns=['time'])
-                anomal_log = log_data[log_data['time'] >= inject_time].drop(columns=['time'])
-                log_combined = pd.concat([normal_log, anomal_log], axis=0, ignore_index=True)
-            else:
-                log_combined = log_data.drop(columns=['time'], errors='ignore')
-            
-            # TF-IDF 特徵提取
-            log_features, log_names = extract_log_features(
-                log_combined,
-                use_dla=self.config.use_dla,
-                max_features=self.config.max_log_features
+        # 首先應用 sliding window 對齊
+        if inject_time is not None:
+            print("Applying sliding window alignment...")
+            windows, timestamps = sliding_window_alignment(
+                data, 
+                window_size=self.config.window_size, 
+                step_size=self.config.step_size,
+                timestamp_col='time'
             )
-            
-            if log_features.size > 0:
-                all_features.append(log_features)
-                node_names.extend(log_names)
-        
-        # 合併所有特徵
-        if all_features:
-            # 對齊特徵長度
-            min_length = min(f.shape[0] for f in all_features)
-            aligned_features = [f[:min_length] for f in all_features]
-            
-            # 特徵融合
-            fused_features = feature_fusion(
-                *aligned_features,
-                fusion_method=self.config.fusion_method,
-                target_dim=self.config.target_feature_dim
-            )
-            
-            return fused_features, node_names
+            print(f"Created {len(windows)} windows for analysis")
         else:
+            # 如果沒有 inject_time，處理整個數據集
+            windows = [data]
+            timestamps = [None]
+        
+        # 對每個窗口進行特徵提取
+        for window_idx, window_data in enumerate(windows):
+            window_features = []
+            window_node_names = []
+            
+            # 處理 metric 數據
+            if 'metric' in window_data:
+                metric_data = window_data['metric']
+                
+                if inject_time is not None:
+                    # 分割正常和異常數據
+                    normal_df = metric_data[metric_data['time'] < inject_time]
+                    anomal_df = metric_data[metric_data['time'] >= inject_time]
+                    
+                    if not normal_df.empty and not anomal_df.empty:
+                        normal_processed = preprocess(normal_df, dataset='default')
+                        anomal_processed = preprocess(anomal_df, dataset='default')
+                        
+                        # 對齊列
+                        intersect = [x for x in normal_processed.columns if x in anomal_processed.columns]
+                        normal_processed = normal_processed[intersect]
+                        anomal_processed = anomal_processed[intersect]
+                        
+                        metric_data = pd.concat([normal_processed, anomal_processed], axis=0, ignore_index=True)
+                    else:
+                        metric_data = preprocess(metric_data, dataset='default')
+                else:
+                    metric_data = preprocess(metric_data, dataset='default')
+                
+                # STL 分解
+                stl_features, stl_names = stl_decomposition(
+                    metric_data.select_dtypes(include=[np.number]),
+                    seasonal=self.config.stl_seasonal
+                )
+                
+                if stl_features.size > 0:
+                    # KLL 處理
+                    processed_features = kll_feature_processing(
+                        stl_features, k=self.config.kll_k
+                    )
+                    window_features.append(processed_features)
+                    window_node_names.extend([f'w{window_idx}_{name}' for name in stl_names])
+            
+            # 處理 log 數據
+            if 'log' in window_data:
+                log_data = window_data['log']
+                log_features, log_names = extract_log_features(
+                    log_data,
+                    use_dla=self.config.use_dla,
+                    max_features=self.config.max_log_features
+                )
+                
+                if log_features.size > 0:
+                    window_features.append(log_features)
+                    window_node_names.extend([f'w{window_idx}_{name}' for name in log_names])
+            
+            # 處理單一模態 DataFrame
+            if isinstance(window_data, pd.DataFrame):
+                # STL 分解
+                stl_features, stl_names = stl_decomposition(
+                    window_data.select_dtypes(include=[np.number]),
+                    seasonal=self.config.stl_seasonal
+                )
+                
+                if stl_features.size > 0:
+                    # KLL 處理
+                    processed_features = kll_feature_processing(
+                        stl_features, k=self.config.kll_k
+                    )
+                    window_features.append(processed_features)
+                    window_node_names.extend([f'w{window_idx}_{name}' for name in stl_names])
+                
+                # 提取錯誤特徵
+                print("Extracting error features...")
+                error_features, error_names = extract_error_features(window_data)
+                if error_features.size > 0:
+                    window_features.append(error_features.reshape(1, -1) if error_features.ndim == 1 else error_features)
+                    window_node_names.extend([f'w{window_idx}_{name}' for name in error_names])
+            
+            # 收集當前窗口的特徵
+            if window_features:
+                all_features.extend(window_features)
+                node_names.extend(window_node_names)
+        
+        if not all_features:
+            print("No features extracted, returning empty arrays")
             return np.array([]), []
-    
+        
+        # 對齊所有特徵的長度
+        min_length = min(f.shape[0] for f in all_features if f.size > 0)
+        if min_length == 0:
+            min_length = 1
+            
+        aligned_features = []
+        for features in all_features:
+            if features.size == 0:
+                continue
+            if features.shape[0] > min_length:
+                features = features[:min_length]
+            elif features.shape[0] < min_length:
+                # 重複最後一行
+                padding = np.repeat(features[-1:], min_length - features.shape[0], axis=0)
+                features = np.vstack([features, padding])
+            aligned_features.append(features)
+        
+        if not aligned_features:
+            return np.array([]), []
+        
+        # 計算拓樸特徵
+        print("Computing topology features...")
+        # 先構建一個初步的相似性矩陣
+        if len(aligned_features) > 1:
+            # 計算特徵間的相似性
+            from sklearn.metrics.pairwise import cosine_similarity
+            
+            # 將所有特徵拼接
+            combined_features = np.hstack(aligned_features)
+            if combined_features.shape[1] > 1:
+                similarity_matrix = cosine_similarity(combined_features.T)
+                # 轉換為鄰接矩陣
+                adj_matrix = (similarity_matrix > 0.5).astype(float)
+                
+                topology_features, topology_names = compute_topology_features(
+                    adj_matrix, node_names[:adj_matrix.shape[0]]
+                )
+                
+                if topology_features.size > 0:
+                    # 將拓樸特徵廣播到所有節點
+                    topo_features_expanded = np.tile(topology_features, (min_length, 1))
+                    aligned_features.append(topo_features_expanded)
+                    node_names.extend([f'topology_{name}' for name in topology_names])
+        
+        # 特徵融合
+        print("Performing feature fusion...")
+        
+        # 分離不同類型的特徵進行融合
+        log_feats = None
+        metric_feats = None
+        topo_feats = None
+        error_feats = None
+        
+        combined_features = []
+        for i, features in enumerate(aligned_features):
+            if 'log' in node_names[i] if i < len(node_names) else False:
+                if log_feats is None:
+                    log_feats = features
+                else:
+                    log_feats = np.hstack([log_feats, features])
+            elif 'topology' in node_names[i] if i < len(node_names) else False:
+                if topo_feats is None:
+                    topo_feats = features
+                else:
+                    topo_feats = np.hstack([topo_feats, features])
+            elif 'error' in node_names[i] if i < len(node_names) else False:
+                if error_feats is None:
+                    error_feats = features
+                else:
+                    error_feats = np.hstack([error_feats, features])
+            else:
+                if metric_feats is None:
+                    metric_feats = features
+                else:
+                    metric_feats = np.hstack([metric_feats, features])
+        
+        # 使用改進的特徵融合
+        fused_features = feature_fusion(
+            log_feats, metric_feats, topo_feats, error_feats,
+            fusion_method=self.config.fusion_method,
+            target_dim=self.config.target_feature_dim
+        )
+        
+        if fused_features.size == 0:
+            # 回退方案：直接拼接
+            fused_features = np.hstack(aligned_features)
+        
+        return fused_features, node_names
     def _extract_single_modal_features(self, data, inject_time):
         """處理單一模態數據"""
         # 預處理數據
