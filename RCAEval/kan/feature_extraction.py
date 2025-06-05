@@ -632,6 +632,306 @@ def attention_fusion(features_list, weights):
     return fused
 
 
+def extract_trace_features(trace_data, inject_time=None):
+    """
+    從 trace/span 數據中提取特徵，參考 TracerCA 方法
+    
+    Args:
+        trace_data: DataFrame 包含 trace/span 數據
+                   需要的列: serviceName, methodName, operationName, startTime, duration
+        inject_time: 故障注入時間點
+    
+    Returns:
+        features: trace 特徵矩陣 [num_operations, num_features]
+        node_names: 操作名稱列表
+        service_graph: 服務依賴圖 (NetworkX Graph)
+    """
+    print("Extracting trace features...")
+    
+    if trace_data is None or trace_data.empty:
+        return np.array([]), [], None
+    
+    try:
+        # 1. 數據預處理 (參考 TracerCA)
+        span_df = trace_data.copy()
+        span_df["methodName"] = span_df["methodName"].fillna(span_df.get("operationName", ""))
+        span_df["operation"] = span_df["serviceName"] + "_" + span_df["methodName"]
+        
+        # 2. 構建服務依賴圖
+        service_graph = build_service_dependency_graph(span_df)
+        
+        # 3. 如果有 inject_time，執行 TracerCA 風格的分析
+        if inject_time is not None:
+            trace_features, operation_names = _extract_trace_anomaly_features(
+                span_df, inject_time
+            )
+        else:
+            # 沒有 inject_time 時，提取基本統計特徵
+            trace_features, operation_names = _extract_trace_statistical_features(span_df)
+        
+        print(f"✓ Extracted {trace_features.shape[0]} trace operations with {trace_features.shape[1]} features")
+        
+        return trace_features, operation_names, service_graph
+        
+    except Exception as e:
+        print(f"Trace feature extraction failed: {e}")
+        return np.array([]), [], None
+
+
+def _extract_trace_anomaly_features(span_df, inject_time):
+    """基於 TracerCA 的異常檢測特徵提取"""
+    
+    # 分割正常和異常時期 (參考 TracerCA)
+    normal_df = span_df[span_df["startTime"] + span_df["duration"] < inject_time]
+    anomal_df = span_df[span_df["startTime"] + span_df["duration"] >= inject_time]
+    
+    if normal_df.empty or anomal_df.empty:
+        return _extract_trace_statistical_features(span_df)
+    
+    # 計算正常時期的 SLO (參考 TracerCA 的 get_operation_slo)
+    normal_slo = {}
+    for op in normal_df["operation"].dropna().unique():
+        op_data = normal_df[normal_df["operation"] == op]["duration"]
+        mean_duration = op_data.mean() / 1000  # 轉換為毫秒
+        std_duration = op_data.std() / 1000
+        normal_slo[op] = {"mean": mean_duration, "std": std_duration}
+    
+    # 檢測異常 span
+    anomal_df = anomal_df.copy()
+    anomal_df["mean"] = anomal_df["operation"].apply(
+        lambda op: normal_slo.get(op, {}).get("mean", 0)
+    )
+    anomal_df["std"] = anomal_df["operation"].apply(
+        lambda op: normal_slo.get(op, {}).get("std", 1)
+    )
+    anomal_df["abnormal"] = (
+        anomal_df["duration"] / 1000 >= 
+        anomal_df["mean"] + 3 * anomal_df["std"]
+    )
+    
+    # 計算 TracerCA 特徵
+    operations = list(span_df["operation"].dropna().unique())
+    features = []
+    
+    for op in operations:
+        # Support: |abnormal_traces of operation A| / |total abnormal traces|
+        op_abnormal_count = anomal_df[anomal_df["operation"] == op]["abnormal"].sum()
+        total_abnormal_count = anomal_df["abnormal"].sum()
+        support = op_abnormal_count / max(total_abnormal_count, 1)
+        
+        # Confidence: |abnormal traces of operation A| / |total traces of operation A|
+        op_total_count = anomal_df[anomal_df["operation"] == op].shape[0]
+        confidence = op_abnormal_count / max(op_total_count, 1)
+        
+        # JI (Jaccard Index): 2 * support * confidence / (support + confidence)
+        ji = (2 * support * confidence / max(support + confidence, 1e-10) 
+              if support + confidence > 0 else 0)
+        
+        # 額外的統計特徵
+        op_normal_data = normal_df[normal_df["operation"] == op]
+        op_anomal_data = anomal_df[anomal_df["operation"] == op]
+        
+        # 延遲統計
+        normal_latency_mean = op_normal_data["duration"].mean() if not op_normal_data.empty else 0
+        anomal_latency_mean = op_anomal_data["duration"].mean() if not op_anomal_data.empty else 0
+        latency_change = (anomal_latency_mean - normal_latency_mean) / max(normal_latency_mean, 1)
+        
+        # 調用頻率變化
+        normal_call_rate = len(op_normal_data) / max(len(normal_df), 1)
+        anomal_call_rate = len(op_anomal_data) / max(len(anomal_df), 1)
+        call_rate_change = anomal_call_rate - normal_call_rate
+        
+        features.append([
+            support,                    # TracerCA support
+            confidence,                 # TracerCA confidence  
+            ji,                        # TracerCA JI score
+            latency_change,            # 延遲變化率
+            call_rate_change,          # 調用頻率變化
+            normal_latency_mean,       # 正常時期平均延遲
+            anomal_latency_mean,       # 異常時期平均延遲
+            op_abnormal_count,         # 異常 span 數量
+        ])
+    
+    feature_names = [
+        'support', 'confidence', 'ji_score', 'latency_change', 
+        'call_rate_change', 'normal_latency', 'anomal_latency', 'abnormal_count'
+    ]
+    
+    return np.array(features), operations
+
+
+def _extract_trace_statistical_features(span_df):
+    """提取基本統計特徵 (當沒有 inject_time 時)"""
+    
+    operations = list(span_df["operation"].dropna().unique())
+    features = []
+    
+    for op in operations:
+        op_data = span_df[span_df["operation"] == op]
+        
+        # 延遲統計
+        duration_stats = op_data["duration"].describe()
+        
+        # 調用頻率
+        call_count = len(op_data)
+        call_rate = call_count / len(span_df)
+        
+        # 時間分佈特徵
+        time_span = (op_data["startTime"].max() - op_data["startTime"].min()) / 1e6  # 轉為秒
+        
+        features.append([
+            duration_stats['mean'],     # 平均延遲
+            duration_stats['std'],      # 延遲標準差
+            duration_stats['min'],      # 最小延遲
+            duration_stats['max'],      # 最大延遲
+            duration_stats['50%'],      # 中位數延遲
+            call_count,                 # 調用次數
+            call_rate,                  # 調用頻率
+            time_span,                  # 時間跨度
+        ])
+    
+    feature_names = [
+        'latency_mean', 'latency_std', 'latency_min', 'latency_max',
+        'latency_median', 'call_count', 'call_rate', 'time_span'
+    ]
+    
+    return np.array(features), operations
+
+
+def build_service_dependency_graph(span_df):
+    """
+    從 trace 數據構建服務依賴圖
+    
+    Args:
+        span_df: span 數據
+    
+    Returns:
+        NetworkX DiGraph 表示服務依賴關係
+    """
+    print("Building service dependency graph from traces...")
+    
+    G = nx.DiGraph()
+    
+    try:
+        # 添加所有服務作為節點
+        services = span_df["serviceName"].dropna().unique()
+        G.add_nodes_from(services)
+        
+        # 根據 trace 構建邊
+        if 'traceId' in span_df.columns:
+            for trace_id, trace_group in span_df.groupby('traceId'):
+                # 按開始時間排序
+                trace_group = trace_group.sort_values('startTime')
+                services_in_trace = trace_group['serviceName'].tolist()
+                
+                # 添加相鄰服務之間的邊
+                for i in range(len(services_in_trace) - 1):
+                    src = services_in_trace[i]
+                    dst = services_in_trace[i + 1]
+                    
+                    if src != dst:  # 避免自環
+                        if G.has_edge(src, dst):
+                            G[src][dst]['weight'] += 1
+                        else:
+                            G.add_edge(src, dst, weight=1)
+        else:
+            # 如果沒有 traceId，基於服務出現順序構建依賴
+            unique_services = span_df['serviceName'].unique()
+            for i in range(len(unique_services) - 1):
+                G.add_edge(unique_services[i], unique_services[i + 1], weight=1)
+        
+        print(f"✓ Built service dependency graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+        
+    except Exception as e:
+        print(f"Failed to build service dependency graph: {e}")
+    
+    return G
+
+
+def extract_service_topology_features(service_graph, service_names=None):
+    """
+    從服務依賴圖中提取拓樸特徵
+    
+    Args:
+        service_graph: NetworkX 服務依賴圖
+        service_names: 服務名稱列表
+    
+    Returns:
+        topology_features: 拓樸特徵矩陣
+        feature_names: 特徵名稱
+    """
+    if service_graph is None or service_graph.number_of_nodes() == 0:
+        return np.array([]), []
+    
+    features = []
+    feature_names = []
+    
+    try:
+        # 計算圖的全局特徵
+        num_nodes = service_graph.number_of_nodes()
+        num_edges = service_graph.number_of_edges()
+        
+        # 連通性
+        is_connected = nx.is_weakly_connected(service_graph)
+        
+        # 平均度
+        degrees = dict(service_graph.degree())
+        avg_degree = np.mean(list(degrees.values())) if degrees else 0
+        
+        # 聚類係數
+        try:
+            clustering = nx.average_clustering(service_graph.to_undirected())
+        except:
+            clustering = 0
+        
+        # 最短路徑長度
+        try:
+            if is_connected:
+                avg_shortest_path = nx.average_shortest_path_length(service_graph)
+            else:
+                avg_shortest_path = 0
+        except:
+            avg_shortest_path = 0
+        
+        # 中心性指標
+        try:
+            pagerank_centrality = nx.pagerank(service_graph)
+            betweenness_centrality = nx.betweenness_centrality(service_graph)
+            
+            # 取平均值和標準差
+            pagerank_mean = np.mean(list(pagerank_centrality.values()))
+            pagerank_std = np.std(list(pagerank_centrality.values()))
+            betweenness_mean = np.mean(list(betweenness_centrality.values()))
+            betweenness_std = np.std(list(betweenness_centrality.values()))
+            
+        except:
+            pagerank_mean = pagerank_std = betweenness_mean = betweenness_std = 0
+        
+        # 組裝特徵
+        global_features = [
+            num_nodes, num_edges, avg_degree, clustering, avg_shortest_path,
+            int(is_connected), pagerank_mean, pagerank_std, 
+            betweenness_mean, betweenness_std
+        ]
+        
+        global_feature_names = [
+            'service_count', 'dependency_count', 'avg_degree', 'clustering',
+            'avg_path_length', 'is_connected', 'pagerank_mean', 'pagerank_std',
+            'betweenness_mean', 'betweenness_std'
+        ]
+        
+        features.extend(global_features)
+        feature_names.extend(global_feature_names)
+        
+        print(f"✓ Extracted {len(features)} service topology features")
+        
+    except Exception as e:
+        print(f"Service topology feature extraction failed: {e}")
+        return np.array([]), []
+    
+    return np.array(features).reshape(1, -1), feature_names
+
+
 # 測試函數
 def test_feature_extraction():
     """測試特徵提取功能"""

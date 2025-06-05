@@ -10,7 +10,10 @@ from .feature_extraction import (
     kll_feature_processing,
     compute_topology_features,
     feature_fusion,
-    extract_error_features
+    extract_error_features,
+    extract_trace_features,
+    build_service_dependency_graph,
+    extract_service_topology_features
 )
 
 __all__ = [
@@ -22,5 +25,8 @@ __all__ = [
     'kll_feature_processing',
     'compute_topology_features',
     'feature_fusion',
-    'extract_error_features'
+    'extract_error_features',
+    'extract_trace_features',
+    'build_service_dependency_graph',
+    'extract_service_topology_features'
 ]

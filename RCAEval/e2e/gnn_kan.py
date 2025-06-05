@@ -25,7 +25,9 @@ from RCAEval.kan import (
     KANLayer, GNNKANEncoder,
     sliding_window_alignment, extract_log_features, stl_decomposition,
     kll_feature_processing, compute_topology_features,
-    feature_fusion, extract_error_features
+    feature_fusion, extract_error_features,
+    extract_trace_features, build_service_dependency_graph,
+    extract_service_topology_features
 )
 from RCAEval.io.time_series import preprocess, drop_constant
 
@@ -127,6 +129,34 @@ class MultiModalFeatureExtractor:
             window_features = []
             window_node_names = []
             
+            # 處理 trace 數據 (新增功能)
+            if 'trace' in window_data or 'traces' in window_data:
+                trace_key = 'trace' if 'trace' in window_data else 'traces'
+                trace_data = window_data[trace_key]
+                
+                print(f"Extracting trace features from window {window_idx}...")
+                trace_features, operation_names, service_graph = extract_trace_features(
+                    trace_data, inject_time
+                )
+                
+                if trace_features.size > 0:
+                    window_features.append(trace_features)
+                    window_node_names.extend([f'w{window_idx}_trace_{name}' for name in operation_names])
+                    print(f"✓ Extracted {trace_features.shape[0]} trace operations")
+                
+                # 提取服務拓樸特徵
+                if service_graph is not None:
+                    service_topo_features, service_topo_names = extract_service_topology_features(
+                        service_graph, list(service_graph.nodes())
+                    )
+                    if service_topo_features.size > 0:
+                        # 廣播服務拓樸特徵到窗口長度
+                        min_length = trace_features.shape[0] if trace_features.size > 0 else 1
+                        service_topo_expanded = np.tile(service_topo_features, (min_length, 1))
+                        window_features.append(service_topo_expanded)
+                        window_node_names.extend([f'w{window_idx}_service_topo_{name}' for name in service_topo_names])
+                        print(f"✓ Extracted {len(service_topo_names)} service topology features")
+            
             # 處理 metric 數據
             if 'metric' in window_data:
                 metric_data = window_data['metric']
@@ -180,6 +210,30 @@ class MultiModalFeatureExtractor:
             
             # 處理單一模態 DataFrame
             if isinstance(window_data, pd.DataFrame):
+                # 檢查是否包含 trace 相關的列
+                trace_columns = ['serviceName', 'methodName', 'operationName', 'startTime', 'duration']
+                if any(col in window_data.columns for col in trace_columns):
+                    print(f"Detected trace data in DataFrame format for window {window_idx}")
+                    trace_features, operation_names, service_graph = extract_trace_features(
+                        window_data, inject_time
+                    )
+                    
+                    if trace_features.size > 0:
+                        window_features.append(trace_features)
+                        window_node_names.extend([f'w{window_idx}_trace_{name}' for name in operation_names])
+                        print(f"✓ Extracted {trace_features.shape[0]} trace operations from DataFrame")
+                    
+                    # 提取服務拓樸特徵
+                    if service_graph is not None:
+                        service_topo_features, service_topo_names = extract_service_topology_features(
+                            service_graph, list(service_graph.nodes())
+                        )
+                        if service_topo_features.size > 0:
+                            min_length = trace_features.shape[0] if trace_features.size > 0 else 1
+                            service_topo_expanded = np.tile(service_topo_features, (min_length, 1))
+                            window_features.append(service_topo_expanded)
+                            window_node_names.extend([f'w{window_idx}_service_topo_{name}' for name in service_topo_names])
+                
                 # STL 分解
                 stl_features, stl_names = stl_decomposition(
                     window_data.select_dtypes(include=[np.number]),
@@ -262,20 +316,34 @@ class MultiModalFeatureExtractor:
         metric_feats = None
         topo_feats = None
         error_feats = None
+        trace_feats = None
+        service_topo_feats = None
         
         combined_features = []
         for i, features in enumerate(aligned_features):
-            if 'log' in node_names[i] if i < len(node_names) else False:
+            node_name = node_names[i] if i < len(node_names) else ""
+            
+            if 'trace_' in node_name:
+                if trace_feats is None:
+                    trace_feats = features
+                else:
+                    trace_feats = np.hstack([trace_feats, features])
+            elif 'service_topo_' in node_name:
+                if service_topo_feats is None:
+                    service_topo_feats = features
+                else:
+                    service_topo_feats = np.hstack([service_topo_feats, features])
+            elif 'log' in node_name:
                 if log_feats is None:
                     log_feats = features
                 else:
                     log_feats = np.hstack([log_feats, features])
-            elif 'topology' in node_names[i] if i < len(node_names) else False:
+            elif 'topology' in node_name:
                 if topo_feats is None:
                     topo_feats = features
                 else:
                     topo_feats = np.hstack([topo_feats, features])
-            elif 'error' in node_names[i] if i < len(node_names) else False:
+            elif 'error' in node_name:
                 if error_feats is None:
                     error_feats = features
                 else:
@@ -286,9 +354,9 @@ class MultiModalFeatureExtractor:
                 else:
                     metric_feats = np.hstack([metric_feats, features])
         
-        # 使用改進的特徵融合
-        fused_features = feature_fusion(
-            log_feats, metric_feats, topo_feats, error_feats,
+        # 使用改進的特徵融合，包含 trace 特徵
+        fused_features = enhanced_feature_fusion(
+            log_feats, metric_feats, topo_feats, error_feats, trace_feats, service_topo_feats,
             fusion_method=self.config.fusion_method,
             target_dim=self.config.target_feature_dim
         )
@@ -775,5 +843,148 @@ def test_gnn_kan():
     return result
 
 
-if __name__ == "__main__":
-    test_gnn_kan()
+def enhanced_feature_fusion(log_feats, metric_feats, topo_feats, error_feats, trace_feats, service_topo_feats,
+                           fusion_method='attention', target_dim=None):
+    """
+    增強的多模態特徵融合，包含 trace 特徵
+    
+    Args:
+        log_feats: 日誌特徵
+        metric_feats: 度量特徵
+        topo_feats: 拓樸特徵
+        error_feats: 錯誤特徵
+        trace_feats: trace 特徵 (新增)
+        service_topo_feats: 服務拓樸特徵 (新增)
+        fusion_method: 融合方法
+        target_dim: 目標維度
+    
+    Returns:
+        fused_features: 融合後的特徵
+    """
+    # 收集所有非空特徵
+    all_features = []
+    feature_weights = []
+    
+    if log_feats is not None and log_feats.size > 0:
+        if log_feats.ndim == 1:
+            log_feats = log_feats.reshape(1, -1)
+        all_features.append(log_feats)
+        feature_weights.append(0.2)  # 日誌特徵權重
+    
+    if metric_feats is not None and metric_feats.size > 0:
+        if metric_feats.ndim == 1:
+            metric_feats = metric_feats.reshape(1, -1)
+        all_features.append(metric_feats)
+        feature_weights.append(0.3)  # 度量特徵權重
+    
+    if trace_feats is not None and trace_feats.size > 0:
+        if trace_feats.ndim == 1:
+            trace_feats = trace_feats.reshape(1, -1)
+        all_features.append(trace_feats)
+        feature_weights.append(0.25)  # trace 特徵權重 (重要)
+    
+    if service_topo_feats is not None and service_topo_feats.size > 0:
+        if service_topo_feats.ndim == 1:
+            service_topo_feats = service_topo_feats.reshape(1, -1)
+        all_features.append(service_topo_feats)
+        feature_weights.append(0.15)  # 服務拓樸特徵權重
+    
+    if topo_feats is not None and topo_feats.size > 0:
+        if topo_feats.ndim == 1:
+            topo_feats = topo_feats.reshape(1, -1)
+        all_features.append(topo_feats)
+        feature_weights.append(0.08)  # 一般拓樸特徵權重
+    
+    if error_feats is not None and error_feats.size > 0:
+        if error_feats.ndim == 1:
+            error_feats = error_feats.reshape(1, -1)
+        all_features.append(error_feats)
+        feature_weights.append(0.02)  # 錯誤特徵權重
+    
+    if not all_features:
+        return np.array([])
+    
+    # 對齊特徵維度
+    max_rows = max(f.shape[0] for f in all_features)
+    aligned_features = []
+    
+    for features in all_features:
+        if features.shape[0] < max_rows:
+            # 重複最後一行以對齊
+            padding = np.repeat(features[-1:], max_rows - features.shape[0], axis=0)
+            features = np.vstack([features, padding])
+        aligned_features.append(features)
+    
+    # 特徵融合
+    if fusion_method == 'concatenate':
+        fused_features = np.hstack(aligned_features)
+    
+    elif fusion_method == 'weighted':
+        # 加權平均（需要特徵維度相同）
+        normalized_features = []
+        target_cols = min(f.shape[1] for f in aligned_features)
+        
+        for features in aligned_features:
+            if features.shape[1] > target_cols:
+                # PCA 降維
+                from sklearn.decomposition import PCA
+                pca = PCA(n_components=target_cols)
+                features = pca.fit_transform(features)
+            elif features.shape[1] < target_cols:
+                # 填充零
+                padding = np.zeros((features.shape[0], target_cols - features.shape[1]))
+                features = np.hstack([features, padding])
+            
+            normalized_features.append(features)
+        
+        # 加權融合
+        fused_features = np.zeros_like(normalized_features[0])
+        for features, weight in zip(normalized_features, feature_weights):
+            fused_features += weight * features
+    
+    elif fusion_method == 'attention':
+        # 注意力機制融合
+        fused_features = attention_fusion_enhanced(aligned_features, feature_weights)
+    
+    else:
+        fused_features = np.hstack(aligned_features)
+    
+    # 降維到目標維度
+    if target_dim is not None and fused_features.shape[1] > target_dim:
+        from sklearn.decomposition import PCA
+        pca = PCA(n_components=target_dim)
+        fused_features = pca.fit_transform(fused_features)
+    
+    return fused_features
+
+
+def attention_fusion_enhanced(features_list, weights):
+    """增強的注意力機制特徵融合"""
+    import torch
+    from sklearn.preprocessing import MinMaxScaler
+    
+    # 計算注意力權重
+    attention_weights = torch.softmax(torch.tensor(weights), dim=0).numpy()
+    
+    # 標準化特徵維度
+    target_cols = min(f.shape[1] for f in features_list)
+    normalized_features = []
+    
+    for features in features_list:
+        if features.shape[1] != target_cols:
+            scaler = MinMaxScaler()
+            features = scaler.fit_transform(features)
+            if features.shape[1] > target_cols:
+                features = features[:, :target_cols]
+            else:
+                padding = np.zeros((features.shape[0], target_cols - features.shape[1]))
+                features = np.hstack([features, padding])
+        
+        normalized_features.append(features)
+    
+    # 注意力加權
+    fused = np.zeros_like(normalized_features[0])
+    for features, weight in zip(normalized_features, attention_weights):
+        fused += weight * features
+    
+    return fused
