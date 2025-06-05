@@ -59,7 +59,7 @@ if is_py310():
     from .tracerca import tracerca
     # Import our new GNN-KAN method
     try:
-        from .gnn_kan import gnn_kan_rca
+        from .gnn_kan import gnn_kan_rca as gnn_kan
     except Exception as e:
         print(f"Failed to import GNN-KAN: {e}")
         pass
