@@ -15,8 +15,11 @@ from datetime import datetime
 # 設置環境變量以消除 NumPy 警告
 os.environ['NPY_DISABLE_CPU_FEATURES'] = ''
 
-# 添加項目路徑
-sys.path.append('/app')
+# 動態添加項目路徑 (適用於不同環境)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = current_dir
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 def run_command(cmd, description=""):
     """執行命令並捕獲輸出"""

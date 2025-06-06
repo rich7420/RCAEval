@@ -125,11 +125,13 @@ class UltraFastKANLayer(nn.Module):
         # 查找表激活
         activated = self.fast_activation(x)  # [batch, input_dim, 1]
         
-        # 簡化的張量乘法 (只使用一個激活函數)
-        activation_out = torch.sum(
-            self.activation_weights * activated, 
-            dim=2
-        ).T  # [output_dim, batch] -> [batch, output_dim]
+        # 修正的張量乘法
+        # activation_weights: [output_dim, input_dim, table_size] 
+        # activated: [batch, input_dim, 1]
+        # 我們需要正確地進行張量收縮
+        activation_out = torch.einsum('oik,bik->bo', 
+                                    self.activation_weights[:, :, :1], 
+                                    activated)  # [batch, output_dim]
         
         return linear_out + activation_out
 

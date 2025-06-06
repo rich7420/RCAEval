@@ -11,7 +11,12 @@ import numpy as np
 
 # 設置環境變量
 os.environ['NPY_DISABLE_CPU_FEATURES'] = ''
-sys.path.append('/Users/user/RCAEval')
+
+# 動態添加項目路徑 (適用於不同環境)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = current_dir
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 def benchmark_kan_layers():
     """基準測試三種 KAN 層"""
