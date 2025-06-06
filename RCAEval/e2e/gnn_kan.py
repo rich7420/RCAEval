@@ -20,9 +20,9 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics.pairwise import cosine_similarity
 import scipy.sparse as sp
 
-# Import our KAN modules
+# Import our optimized KAN modules
 from RCAEval.kan import (
-    KANLayer, GNNKANEncoder,
+    SimplifiedKANLayer, UltraFastKANLayer, OptimizedGNNKANEncoder,
     sliding_window_alignment, extract_log_features, stl_decomposition,
     kll_feature_processing, compute_topology_features,
     feature_fusion, extract_error_features,
@@ -464,55 +464,44 @@ class GraphConstructor:
 
 
 class GNNKANModel(nn.Module):
-    """GNN-KAN 模型"""
+    """GPU 優化的 GNN-KAN 模型"""
     
     def __init__(self, config, num_nodes):
         super(GNNKANModel, self).__init__()
         self.config = config
         self.num_nodes = num_nodes
         
-        # 特徵投影層
-        self.feature_projection = KANLayer(
+        # 特徵投影層 (使用優化的 KAN)
+        self.feature_projection = UltraFastKANLayer(
             config.target_feature_dim, 
-            config.input_dim,
-            grid_size=config.kan_grid_size
+            config.input_dim
         )
         
-        # GNN-KAN 編碼器
-        self.gnn_encoder = GNNKANEncoder(
+        # GNN-KAN 編碼器 (使用優化版本)
+        self.gnn_encoder = OptimizedGNNKANEncoder(
             input_dim=config.input_dim,
             hidden_dims=config.hidden_dims,
             output_dim=config.output_dim,
             num_layers=config.num_gnn_layers,
-            grid_size=config.kan_grid_size,
+            kan_type='ultra_fast',  # 使用最快的版本
             dropout=config.dropout
         )
         
-        # 輸出層
-        self.output_kan = KANLayer(
+        # 輸出層 (使用優化的 KAN)
+        self.output_kan = UltraFastKANLayer(
             config.output_dim,
-            num_nodes,
-            grid_size=config.kan_grid_size
+            num_nodes
         )
         
-        # 圖重建損失
-        self.graph_decoder = KANLayer(
+        # 圖重建損失 (使用優化的 KAN)
+        self.graph_decoder = UltraFastKANLayer(
             config.output_dim * 2,
-            1,
-            grid_size=config.kan_grid_size
+            1
         )
     
     def forward(self, node_features, edge_index):
         """
-        前向傳播
-        
-        Args:
-            node_features: 節點特徵 [num_nodes, feature_dim]
-            edge_index: 邊索引 [2, num_edges]
-            
-        Returns:
-            node_embeddings: 節點嵌入 [num_nodes, output_dim]
-            adj_scores: 鄰接矩陣分數 [num_nodes, num_nodes]
+        優化的前向傳播
         """
         # 特徵投影
         projected_features = self.feature_projection(node_features)
@@ -520,22 +509,30 @@ class GNNKANModel(nn.Module):
         # GNN-KAN 編碼
         node_embeddings = self.gnn_encoder(projected_features, edge_index)
         
-        # 計算鄰接矩陣分數
-        adj_scores = self._compute_adjacency_scores(node_embeddings)
+        # 計算鄰接矩陣分數 (批量化處理)
+        adj_scores = self._compute_adjacency_scores_batch(node_embeddings)
         
         return node_embeddings, adj_scores
     
-    def _compute_adjacency_scores(self, embeddings):
-        """計算鄰接矩陣分數"""
+    def _compute_adjacency_scores_batch(self, embeddings):
+        """批量化計算鄰接矩陣分數"""
         num_nodes = embeddings.size(0)
-        adj_scores = torch.zeros(num_nodes, num_nodes, device=embeddings.device)
         
-        for i in range(num_nodes):
-            for j in range(num_nodes):
-                # 使用 KAN 計算邊的存在概率
-                edge_features = torch.cat([embeddings[i], embeddings[j]], dim=0)
-                score = torch.sigmoid(self.graph_decoder(edge_features.unsqueeze(0)))
-                adj_scores[i, j] = score.squeeze()
+        # 創建所有可能的邊對
+        i_indices = torch.arange(num_nodes, device=embeddings.device).repeat_interleave(num_nodes)
+        j_indices = torch.arange(num_nodes, device=embeddings.device).repeat(num_nodes)
+        
+        # 批量計算邊特徵
+        edge_features = torch.cat([
+            embeddings[i_indices], 
+            embeddings[j_indices]
+        ], dim=1)
+        
+        # 批量通過 KAN 解碼器
+        scores = torch.sigmoid(self.graph_decoder(edge_features))
+        
+        # 重塑為鄰接矩陣
+        adj_scores = scores.view(num_nodes, num_nodes)
         
         return adj_scores
 

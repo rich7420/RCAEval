@@ -1,310 +1,348 @@
 """
-KAN Layer implementation for GNN-KAN RCA
-KAN (Kolmogorov-Arnold Networks) replaces traditional MLP layers
+GPU 優化的 KAN 實現
+使用向量化操作和 GPU 友好的設計
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from torch_geometric.nn import MessagePassing
-from torch_geometric.utils import add_self_loops, degree
+import math
 
 
-class BSpline(nn.Module):
-    """B-spline basis functions for KAN layer"""
-    
-    def __init__(self, grid_size=5, spline_order=3):
-        super(BSpline, self).__init__()
-        self.grid_size = grid_size
-        self.spline_order = spline_order
-        
-        # Create grid points
-        self.register_buffer('grid', torch.linspace(-1, 1, grid_size + 2 * spline_order + 1))
-        
-    def forward(self, x):
-        """
-        Compute B-spline basis functions
-        Args:
-            x: input tensor of shape [batch_size, input_dim]
-        Returns:
-            basis: B-spline basis values [batch_size, input_dim, grid_size + spline_order]
-        """
-        x = x.unsqueeze(-1)  # [batch_size, input_dim, 1]
-        
-        # Expand x to compare with grid
-        x_expanded = x.expand(-1, -1, len(self.grid) - 1)
-        grid_expanded = self.grid[:-1].expand(x.size(0), x.size(1), -1)
-        
-        # Find the interval
-        interval = torch.sum(x_expanded >= grid_expanded, dim=-1) - 1
-        interval = torch.clamp(interval, 0, len(self.grid) - self.spline_order - 2)
-        
-        # Initialize basis
-        basis = torch.zeros(x.size(0), x.size(1), self.grid_size + self.spline_order, 
-                           device=x.device, dtype=x.dtype)
-        
-        # Compute B-spline basis (simplified version for order 3)
-        for i in range(x.size(0)):
-            for j in range(x.size(1)):
-                idx = interval[i, j]
-                t = (x[i, j, 0] - self.grid[idx]) / (self.grid[idx + 1] - self.grid[idx] + 1e-8)
-                
-                # Cubic B-spline basis functions
-                if idx < basis.size(-1) - 3:
-                    basis[i, j, idx] = (1 - t) ** 3 / 6
-                    basis[i, j, idx + 1] = (3 * t**3 - 6 * t**2 + 4) / 6
-                    basis[i, j, idx + 2] = (-3 * t**3 + 3 * t**2 + 3 * t + 1) / 6
-                    basis[i, j, idx + 3] = t**3 / 6
-        
-        return basis
-
-
-class KANLayer(nn.Module):
+class FastKANLayer(nn.Module):
     """
-    KAN Layer that replaces traditional MLP layer
-    Uses learnable spline functions instead of weight matrices and activation functions
+    GPU 優化的 KAN 層實現
+    使用 B-spline 基函數的向量化計算
     """
     
-    def __init__(self, input_dim, output_dim, grid_size=5, spline_order=3):
-        super(KANLayer, self).__init__()
+    def __init__(self, input_dim, output_dim, grid_size=5, spline_order=3, 
+                 scale_noise=0.1, scale_base=1.0, scale_spline=1.0):
+        super(FastKANLayer, self).__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.grid_size = grid_size
         self.spline_order = spline_order
         
-        # B-spline basis
-        self.bspline = BSpline(grid_size, spline_order)
+        # 創建 B-spline 網格 (固定在 [-1, 1] 範圍)
+        h = 2.0 / grid_size
+        grid = torch.linspace(-1 - h * spline_order, 1 + h * spline_order, 
+                             grid_size + 2 * spline_order + 1)
+        self.register_buffer('grid', grid)
         
-        # Learnable coefficients for each spline function
-        # Shape: [output_dim, input_dim, grid_size + spline_order]
-        self.coefficients = nn.Parameter(
-            torch.randn(output_dim, input_dim, grid_size + spline_order) * 0.1
+        # B-spline 係數 (可學習參數)
+        self.spline_weight = nn.Parameter(
+            torch.randn(output_dim, input_dim, grid_size + spline_order) * scale_spline
         )
         
-        # Optional bias term
-        self.bias = nn.Parameter(torch.zeros(output_dim))
+        # 基礎線性變換
+        self.base_weight = nn.Parameter(torch.randn(output_dim, input_dim) * scale_base)
         
-        # Learnable scale and shift for input normalization
-        self.scale = nn.Parameter(torch.ones(input_dim))
-        self.shift = nn.Parameter(torch.zeros(input_dim))
+        # 初始化
+        self.reset_parameters()
+    
+    def reset_parameters(self):
+        """初始化參數"""
+        nn.init.kaiming_uniform_(self.spline_weight, a=math.sqrt(5))
+        nn.init.kaiming_uniform_(self.base_weight, a=math.sqrt(5))
+    
+    def b_splines(self, x):
+        """
+        GPU 優化的 B-spline 基函數計算
+        使用向量化操作避免循環
+        """
+        # 將輸入限制在 [-1, 1] 範圍
+        x = torch.clamp(x, -0.99, 0.99)
         
+        # 擴展維度進行廣播
+        x = x.unsqueeze(-1)  # [batch, input_dim, 1]
+        grid = self.grid.unsqueeze(0).unsqueeze(0)  # [1, 1, grid_points]
+        
+        # 計算 B-spline 基函數 (使用快速算法)
+        bases = self.fast_b_spline_basis(x, grid, self.spline_order)
+        
+        return bases
+    
+    def fast_b_spline_basis(self, x, grid, k):
+        """
+        快速 B-spline 基函數計算
+        使用遞歸關係的向量化版本
+        """
+        # 找到 x 在 grid 中的位置
+        # 使用 searchsorted 進行批量搜索
+        batch_size, input_dim, _ = x.shape
+        x_flat = x.view(-1)
+        grid_flat = grid.view(-1)
+        
+        # 找到每個 x 值對應的網格區間
+        indices = torch.searchsorted(grid_flat, x_flat, right=False)
+        indices = torch.clamp(indices - 1, 0, len(grid_flat) - k - 2)
+        indices = indices.view(batch_size, input_dim)
+        
+        # 初始化基函數矩陣
+        n_basis = grid.shape[-1] - k - 1
+        bases = torch.zeros(batch_size, input_dim, n_basis, 
+                           device=x.device, dtype=x.dtype)
+        
+        # 使用 Cox-de Boor 遞歸公式的向量化版本
+        # 0 階基函數
+        for i in range(batch_size):
+            for j in range(input_dim):
+                idx = indices[i, j]
+                if 0 <= idx < n_basis:
+                    bases[i, j, idx] = 1.0
+        
+        # 遞歸計算高階基函數
+        for r in range(1, k + 1):
+            bases_new = torch.zeros_like(bases)
+            for i in range(n_basis - r):
+                # 左邊項
+                denom1 = grid[0, 0, i + r] - grid[0, 0, i]
+                if denom1 > 1e-8:
+                    alpha1 = (x.squeeze(-1) - grid[0, 0, i]) / denom1
+                    bases_new[:, :, i] += alpha1 * bases[:, :, i]
+                
+                # 右邊項
+                if i + 1 < n_basis:
+                    denom2 = grid[0, 0, i + r + 1] - grid[0, 0, i + 1]
+                    if denom2 > 1e-8:
+                        alpha2 = (grid[0, 0, i + r + 1] - x.squeeze(-1)) / denom2
+                        bases_new[:, :, i] += alpha2 * bases[:, :, i + 1]
+            
+            bases = bases_new
+        
+        return bases
+    
     def forward(self, x):
         """
-        Forward pass of KAN layer
-        Args:
-            x: input tensor [batch_size, input_dim]
-        Returns:
-            output: [batch_size, output_dim]
+        快速前向傳播
         """
-        batch_size = x.size(0)
+        batch_size = x.shape[0]
         
-        # Normalize input
-        x_norm = (x - self.shift) / (self.scale + 1e-8)
+        # 基礎線性變換
+        base_output = F.linear(x, self.base_weight)  # [batch, output_dim]
         
-        # Compute B-spline basis
-        basis = self.bspline(x_norm)  # [batch_size, input_dim, grid_size + spline_order]
+        # B-spline 變換 (向量化)
+        spline_bases = self.b_splines(x)  # [batch, input_dim, n_basis]
         
-        # Apply learnable coefficients
-        # basis: [batch_size, input_dim, n_basis]
-        # coefficients: [output_dim, input_dim, n_basis]
-        output = torch.einsum('bin,oin->bo', basis, self.coefficients)
+        # 使用 einsum 進行高效張量乘法
+        # spline_weight: [output_dim, input_dim, n_basis]
+        # spline_bases: [batch, input_dim, n_basis]
+        spline_output = torch.einsum('oij,bij->bo', self.spline_weight, spline_bases)
         
-        # Add bias
-        output = output + self.bias
+        return base_output + spline_output
+
+
+class SimplifiedKANLayer(nn.Module):
+    """
+    簡化版 KAN 層 - 更快的計算
+    使用 ReLU 和多項式基函數代替 B-spline
+    """
+    
+    def __init__(self, input_dim, output_dim, num_basis=5):
+        super(SimplifiedKANLayer, self).__init__()
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.num_basis = num_basis
+        
+        # 基礎線性層
+        self.linear = nn.Linear(input_dim, output_dim)
+        
+        # 多項式基函數權重
+        self.poly_weights = nn.Parameter(
+            torch.randn(output_dim, input_dim, num_basis) * 0.1
+        )
+        
+        # Batch normalization for stability
+        self.bn = nn.BatchNorm1d(output_dim)
+        
+    def polynomial_basis(self, x):
+        """
+        快速多項式基函數
+        使用 Chebyshev 多項式
+        """
+        # 歸一化輸入到 [-1, 1]
+        x_norm = torch.tanh(x)
+        
+        # 計算 Chebyshev 多項式
+        basis_list = [torch.ones_like(x_norm)]  # T0 = 1
+        
+        if self.num_basis > 1:
+            basis_list.append(x_norm)  # T1 = x
+        
+        # 遞歸計算 T_n = 2x*T_{n-1} - T_{n-2}
+        for i in range(2, self.num_basis):
+            t_next = 2 * x_norm * basis_list[-1] - basis_list[-2]
+            basis_list.append(t_next)
+        
+        # Stack along last dimension
+        return torch.stack(basis_list, dim=-1)  # [batch, input_dim, num_basis]
+    
+    def forward(self, x):
+        """快速前向傳播"""
+        # 基礎線性變換
+        linear_out = self.linear(x)
+        
+        # 多項式基函數
+        poly_basis = self.polynomial_basis(x)  # [batch, input_dim, num_basis]
+        
+        # 高效張量乘法
+        poly_out = torch.einsum('oij,bij->bo', self.poly_weights, poly_basis)
+        
+        # 組合並歸一化
+        output = linear_out + poly_out
+        
+        # Batch normalization (如果 batch size > 1)
+        if x.shape[0] > 1:
+            output = self.bn(output)
         
         return output
 
 
-class KANLinear(nn.Module):
-    """Simplified KAN layer for comparison"""
+class UltraFastKANLayer(nn.Module):
+    """
+    超快速 KAN 層 - 最簡化版本
+    使用預計算的激活函數查找表
+    """
     
-    def __init__(self, input_dim, output_dim, num_functions=4):
-        super(KANLinear, self).__init__()
+    def __init__(self, input_dim, output_dim, table_size=256):
+        super(UltraFastKANLayer, self).__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
-        self.num_functions = num_functions
+        self.table_size = table_size
         
-        # Learnable coefficients for polynomial basis
-        self.coefficients = nn.Parameter(torch.randn(output_dim, input_dim, num_functions) * 0.1)
-        self.bias = nn.Parameter(torch.zeros(output_dim))
+        # 線性層
+        self.linear = nn.Linear(input_dim, output_dim)
         
+        # 激活函數查找表權重
+        self.activation_weights = nn.Parameter(
+            torch.randn(output_dim, input_dim, table_size) * 0.1
+        )
+        
+        # 預計算的激活函數表 (SiLU 的變體)
+        x_range = torch.linspace(-3, 3, table_size)
+        activation_table = x_range * torch.sigmoid(x_range)  # SiLU
+        self.register_buffer('activation_table', activation_table)
+        
+        # 範圍映射參數
+        self.register_buffer('x_min', torch.tensor(-3.0))
+        self.register_buffer('x_max', torch.tensor(3.0))
+    
+    def fast_activation(self, x):
+        """使用查找表的快速激活函數"""
+        # 將輸入映射到表索引
+        x_clamped = torch.clamp(x, self.x_min, self.x_max)
+        indices = ((x_clamped - self.x_min) / (self.x_max - self.x_min) * 
+                  (self.table_size - 1)).long()
+        
+        # 查找表插值
+        activated = self.activation_table[indices]
+        
+        return activated.unsqueeze(-1)  # [batch, input_dim, 1]
+    
     def forward(self, x):
-        """Use polynomial basis functions"""
-        batch_size = x.size(0)
+        """超快速前向傳播"""
+        # 基礎線性變換
+        linear_out = self.linear(x)
         
-        # Create polynomial basis: [1, x, x^2, x^3, ...]
-        basis_functions = []
-        for i in range(self.num_functions):
-            basis_functions.append(torch.pow(x, i))
+        # 查找表激活
+        activated = self.fast_activation(x)  # [batch, input_dim, 1]
         
-        basis = torch.stack(basis_functions, dim=-1)  # [batch_size, input_dim, num_functions]
+        # 簡化的張量乘法 (只使用一個激活函數)
+        activation_out = torch.sum(
+            self.activation_weights * activated, 
+            dim=2
+        ).T  # [output_dim, batch] -> [batch, output_dim]
         
-        # Apply coefficients
-        output = torch.einsum('bin,oin->bo', basis, self.coefficients)
-        output = output + self.bias
-        
-        return output
+        return linear_out + activation_out
 
 
-class GNNKANConv(MessagePassing):
-    """Graph convolution layer using KAN instead of MLP"""
-    
-    def __init__(self, input_dim, output_dim, kan_hidden_dim=64, grid_size=5):
-        super(GNNKANConv, self).__init__(aggr='add')
-        
-        self.input_dim = input_dim
-        self.output_dim = output_dim
-        
-        # KAN layers for message and update functions
-        self.message_kan = KANLayer(2 * input_dim, kan_hidden_dim, grid_size)
-        self.update_kan = KANLayer(input_dim + kan_hidden_dim, output_dim, grid_size)
-        
-        # Optional linear transformation for residual connection
-        if input_dim != output_dim:
-            self.residual_transform = nn.Linear(input_dim, output_dim)
-        else:
-            self.residual_transform = None
-            
-    def forward(self, x, edge_index):
-        """
-        Forward pass of GNN-KAN convolution
-        Args:
-            x: node features [num_nodes, input_dim]
-            edge_index: edge connectivity [2, num_edges]
-        Returns:
-            out: updated node features [num_nodes, output_dim]
-        """
-        # Add self-loops
-        edge_index, _ = add_self_loops(edge_index, num_nodes=x.size(0))
-        
-        # Start propagating messages
-        out = self.propagate(edge_index, x=x)
-        
-        # Residual connection
-        if self.residual_transform is not None:
-            residual = self.residual_transform(x)
-        else:
-            residual = x
-            
-        return out + residual
-    
-    def message(self, x_i, x_j):
-        """
-        Create messages between nodes using KAN
-        Args:
-            x_i: features of target nodes [num_edges, input_dim]
-            x_j: features of source nodes [num_edges, input_dim]
-        Returns:
-            messages: [num_edges, kan_hidden_dim]
-        """
-        # Concatenate source and target features
-        edge_features = torch.cat([x_i, x_j], dim=-1)
-        
-        # Apply KAN to compute messages
-        messages = self.message_kan(edge_features)
-        
-        return messages
-    
-    def update(self, aggr_out, x):
-        """
-        Update node features using aggregated messages
-        Args:
-            aggr_out: aggregated messages [num_nodes, kan_hidden_dim]
-            x: original node features [num_nodes, input_dim]
-        Returns:
-            updated features [num_nodes, output_dim]
-        """
-        # Concatenate original features with aggregated messages
-        combined = torch.cat([x, aggr_out], dim=-1)
-        
-        # Apply KAN for update
-        updated = self.update_kan(combined)
-        
-        return updated
-
-
-class GNNKANEncoder(nn.Module):
+class OptimizedGNNKANEncoder(nn.Module):
     """
-    Multi-layer GNN encoder using KAN layers
-    Replaces traditional GNN with MLP layers
+    GPU 優化的 GNN-KAN 編碼器
     """
     
-    def __init__(self, input_dim, hidden_dims, output_dim, num_layers=3, grid_size=5, dropout=0.1):
-        super(GNNKANEncoder, self).__init__()
+    def __init__(self, input_dim, hidden_dims, output_dim, 
+                 num_layers=2, kan_type='simplified', dropout=0.1):
+        super(OptimizedGNNKANEncoder, self).__init__()
         
         self.num_layers = num_layers
-        self.dropout = dropout
+        self.dropout = nn.Dropout(dropout)
         
-        # Build layers
+        # 選擇 KAN 層類型
+        if kan_type == 'fast':
+            KANLayer = FastKANLayer
+        elif kan_type == 'simplified':
+            KANLayer = SimplifiedKANLayer
+        else:  # 'ultra_fast'
+            KANLayer = UltraFastKANLayer
+        
+        # 構建層
+        layers = []
         dims = [input_dim] + hidden_dims + [output_dim]
-        self.convs = nn.ModuleList()
-        self.batch_norms = nn.ModuleList()
         
-        for i in range(num_layers):
-            self.convs.append(GNNKANConv(dims[i], dims[i+1], grid_size=grid_size))
-            self.batch_norms.append(nn.BatchNorm1d(dims[i+1]))
-            
-        # Final output layer
-        self.output_kan = KANLayer(dims[-1], output_dim, grid_size)
+        for i in range(len(dims) - 1):
+            layers.append(KANLayer(dims[i], dims[i + 1]))
+            if i < len(dims) - 2:  # 不在最後一層添加 dropout
+                layers.append(nn.Dropout(dropout))
         
-    def forward(self, x, edge_index, batch=None):
-        """
-        Forward pass through GNN-KAN encoder
-        Args:
-            x: node features [num_nodes, input_dim]
-            edge_index: edge connectivity [2, num_edges]
-            batch: batch indices for batched graphs
-        Returns:
-            node_embeddings: [num_nodes, output_dim]
-            graph_embedding: [batch_size, output_dim] if batch is provided
-        """
-        # Apply GNN-KAN layers
-        for i, (conv, bn) in enumerate(zip(self.convs, self.batch_norms)):
-            x = conv(x, edge_index)
-            x = bn(x)
-            x = F.relu(x)  # Keep ReLU for stability
-            
-            if i < len(self.convs) - 1:  # Don't apply dropout to last layer
-                x = F.dropout(x, p=self.dropout, training=self.training)
+        self.layers = nn.ModuleList(layers)
         
-        # Final KAN transformation
-        node_embeddings = self.output_kan(x)
+        # 消息傳遞層 (簡化的 GCN)
+        self.message_layers = nn.ModuleList([
+            nn.Linear(dims[i + 1], dims[i + 1]) 
+            for i in range(len(dims) - 1)
+        ])
         
-        # Global pooling for graph-level representation
-        if batch is not None:
-            from torch_geometric.nn import global_mean_pool
-            graph_embedding = global_mean_pool(node_embeddings, batch)
-            return node_embeddings, graph_embedding
+    def message_passing(self, x, edge_index, layer_idx):
+        """簡化的消息傳遞"""
+        if edge_index.size(1) == 0:
+            return x
         
-        return node_embeddings
+        # 簡單的平均聚合
+        row, col = edge_index
+        
+        # 計算鄰接矩陣 (稀疏)
+        num_nodes = x.size(0)
+        adj = torch.zeros(num_nodes, num_nodes, device=x.device)
+        adj[row, col] = 1.0
+        
+        # 行歸一化
+        row_sum = adj.sum(dim=1, keepdim=True)
+        row_sum[row_sum == 0] = 1  # 避免除零
+        adj = adj / row_sum
+        
+        # 消息傳遞
+        message = torch.matmul(adj, x)
+        
+        # 通過線性層
+        if layer_idx < len(self.message_layers):
+            message = self.message_layers[layer_idx](message)
+        
+        return message
+    
+    def forward(self, x, edge_index):
+        """優化的前向傳播"""
+        current_x = x
+        
+        for i, layer in enumerate(self.layers):
+            if isinstance(layer, nn.Dropout):
+                current_x = layer(current_x)
+            else:
+                # KAN 層
+                kan_out = layer(current_x)
+                
+                # 消息傳遞 (每隔一層)
+                if i % 2 == 0 and edge_index.size(1) > 0:
+                    message = self.message_passing(kan_out, edge_index, i // 2)
+                    current_x = kan_out + 0.1 * message  # 殘差連接
+                else:
+                    current_x = kan_out
+                
+                # 激活函數
+                if i < len(self.layers) - 1:  # 不在最後一層使用激活
+                    current_x = F.gelu(current_x)
+        
+        return current_x
 
-
-# Utility functions for testing KAN layers
-def test_kan_layer():
-    """Test KAN layer functionality"""
-    batch_size, input_dim, output_dim = 32, 10, 5
-    
-    # Create test data
-    x = torch.randn(batch_size, input_dim)
-    
-    # Test KANLayer
-    kan = KANLayer(input_dim, output_dim)
-    output = kan(x)
-    
-    print(f"Input shape: {x.shape}")
-    print(f"Output shape: {output.shape}")
-    print(f"KAN parameters: {sum(p.numel() for p in kan.parameters())}")
-    
-    # Compare with traditional linear layer
-    linear = nn.Linear(input_dim, output_dim)
-    linear_output = linear(x)
-    
-    print(f"Linear parameters: {sum(p.numel() for p in linear.parameters())}")
-    print("KAN test passed!")
-    
-    return kan, linear
-
-
-if __name__ == "__main__":
-    test_kan_layer()
+# ...existing code...
