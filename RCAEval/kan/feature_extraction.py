@@ -189,6 +189,7 @@ def extract_dla_features(log_texts, embedding_dim=128):
 def stl_decomposition(metrics_data, seasonal=7, return_components=True):
     """
     STL 分解將 metrics 分解為趨勢、季節性和殘差
+    改進版：更好地處理短序列和無週期性數據
     
     Args:
         metrics_data: DataFrame 包含時間序列數據
@@ -210,63 +211,82 @@ def stl_decomposition(metrics_data, seasonal=7, return_components=True):
     for col in data.columns:
         series = data[col].dropna()
         
-        # 更嚴格的數據長度檢查
-        # 自動調整季節性參數
-        if len(series) < 50:  # 如果數據太少，直接使用統計特徵
-            print(f"STL decomposition skipped for {col}: insufficient data length ({len(series)}), using statistics")
+        # 改進的數據長度和週期性檢查
+        min_length_required = 50  # 降低最小要求
+        
+        if len(series) < min_length_required:
+            # 數據太短，使用統計特徵代替
             features = np.array([
                 [np.mean(series), np.std(series), np.max(series), np.min(series)]
             ]).T
             names = [f'{col}_mean', f'{col}_std', f'{col}_max', f'{col}_min']
+            print(f"STL skipped for {col}: short series ({len(series)}), using statistics")
         else:
-            # 自動選擇合適的季節性參數
-            auto_seasonal = max(2, min(seasonal, len(series) // 4))
-            min_required_length = 2 * auto_seasonal + 1
-            
-            if len(series) < min_required_length:
-                auto_seasonal = max(2, len(series) // 3)
-            
+            # 自動檢測週期性
             try:
-                stl = STL(series, seasonal=auto_seasonal, robust=True)
-                result = stl.fit()
+                # 嘗試檢測數據的自然週期
+                detected_period = detect_seasonality(series)
+                if detected_period is None or detected_period < 2:
+                    detected_period = min(seasonal, max(2, len(series) // 10))
                 
-                if return_components:
-                    # 返回所有組件
-                    trend = result.trend.fillna(series.mean()).values
-                    seasonal_comp = result.seasonal.fillna(0).values
-                    residual = result.resid.fillna(0).values
-                    
-                    features = np.column_stack([trend, seasonal_comp, residual])
-                    names = [f'{col}_trend', f'{col}_seasonal', f'{col}_residual']
+                # 確保週期參數合理
+                auto_seasonal = min(detected_period, len(series) // 3)
+                auto_seasonal = max(2, auto_seasonal)
+                
+                # 檢查數據是否有足夠變化（避免常數序列）
+                if series.std() < 1e-10:
+                    # 常數序列，使用統計特徵
+                    features = np.array([
+                        [series.iloc[0], 0, series.iloc[0], series.iloc[0]]
+                    ]).T
+                    names = [f'{col}_mean', f'{col}_std', f'{col}_max', f'{col}_min']
+                    print(f"STL skipped for {col}: constant series, using statistics")
                 else:
-                    # 只返回趨勢
-                    features = result.trend.fillna(series.mean()).values.reshape(-1, 1)
-                    names = [f'{col}_trend']
-                
-                print(f"✓ STL decomposition for {col}: seasonal={auto_seasonal}")
+                    # 嘗試 STL 分解
+                    stl = STL(series, 
+                             seasonal=auto_seasonal, 
+                             robust=True,
+                             seasonal_deg=0,  # 使用常數季節性
+                             trend_deg=1)     # 線性趨勢
+                    result = stl.fit()
+                    
+                    if return_components:
+                        # 返回所有組件的統計特徵
+                        trend = result.trend.fillna(series.mean()).values
+                        seasonal_comp = result.seasonal.fillna(0).values
+                        residual = result.resid.fillna(0).values
+                        
+                        # 使用統計特徵而不是原始序列
+                        features = np.array([[
+                            np.mean(trend), np.std(trend),
+                            np.mean(seasonal_comp), np.std(seasonal_comp),
+                            np.mean(residual), np.std(residual)
+                        ]]).T
+                        names = [f'{col}_trend_mean', f'{col}_trend_std',
+                                f'{col}_seasonal_mean', f'{col}_seasonal_std',
+                                f'{col}_residual_mean', f'{col}_residual_std']
+                    else:
+                        # 只返回趨勢統計
+                        trend = result.trend.fillna(series.mean()).values
+                        features = np.array([[np.mean(trend), np.std(trend)]]).T
+                        names = [f'{col}_trend_mean', f'{col}_trend_std']
+                    
+                    print(f"✓ STL decomposition for {col}: seasonal={auto_seasonal}")
                 
             except Exception as e:
-                print(f"STL decomposition failed for {col}: {e}, using statistics")
-                # 回退到統計特徵
+                # STL 失敗，回退到統計特徵
                 features = np.array([
                     [np.mean(series), np.std(series), np.max(series), np.min(series)]
                 ]).T
                 names = [f'{col}_mean', f'{col}_std', f'{col}_max', f'{col}_min']
+                print(f"STL decomposition failed for {col}: {e}, using statistics")
         
         decomposed_features.append(features)
         component_names.extend(names)
     
     # 對齊所有特徵的長度
     if decomposed_features:
-        min_length = min(f.shape[0] for f in decomposed_features)
-        if min_length == 0:
-            # 如果所有特徵都是空的，創建默認特徵
-            min_length = 1
-            decomposed_features = [np.array([[0]]) for _ in decomposed_features]
-        
-        decomposed_features = [f[:min_length] for f in decomposed_features]
-        
-        # 合併所有特徵
+        # 所有特徵現在都是統計特徵，維度應該一致
         final_features = np.column_stack(decomposed_features)
     else:
         final_features = np.array([[0]])  # 默認特徵
@@ -275,63 +295,51 @@ def stl_decomposition(metrics_data, seasonal=7, return_components=True):
     return final_features, component_names
 
 
-def kll_feature_processing(features, k=1024, epsilon=0.01):
+def detect_seasonality(series, max_period=None):
     """
-    KLL (K-Minimum/Low-Latency) 算法特徵處理
-    用於特徵選擇和維度降低
+    檢測時間序列的季節性週期
     
     Args:
-        features: 輸入特徵矩陣
-        k: KLL 參數
-        epsilon: 精度參數
+        series: 時間序列
+        max_period: 最大檢測週期
     
     Returns:
-        processed_features: 處理後的特徵
+        detected_period: 檢測到的週期，None 如果沒有明顯週期性
     """
-    if features.size == 0:
-        return features
+    if max_period is None:
+        max_period = min(len(series) // 3, 50)
     
-    features = np.array(features)
-    if features.ndim == 1:
-        features = features.reshape(-1, 1)
+    if len(series) < 10 or max_period < 2:
+        return None
     
-    # KLL 草圖算法的簡化實現
-    # 1. 特徵重要性評估
-    feature_importance = np.var(features, axis=0)
-    
-    # 2. 選擇前 k 個最重要的特徵
-    if features.shape[1] > k:
-        top_k_indices = np.argsort(feature_importance)[-k:]
-        features = features[:, top_k_indices]
-    
-    # 3. 量化處理
-    processed_features = quantize_features(features, epsilon)
-    
-    # 4. 標準化
-    scaler = StandardScaler()
-    processed_features = scaler.fit_transform(processed_features)
-    
-    return processed_features
-
-
-def quantize_features(features, epsilon=0.01):
-    """特徵量化處理"""
-    quantized = np.zeros_like(features)
-    
-    for i in range(features.shape[1]):
-        col = features[:, i]
-        min_val, max_val = np.min(col), np.max(col)
+    try:
+        # 使用自相關函數檢測週期性
+        autocorr_values = []
+        periods = range(2, min(max_period + 1, len(series) // 2))
         
-        if max_val - min_val > 0:
-            # 計算量化等級
-            num_levels = int(1 / epsilon)
-            quantized[:, i] = np.round(
-                (col - min_val) / (max_val - min_val) * (num_levels - 1)
-            ) / (num_levels - 1) * (max_val - min_val) + min_val
-        else:
-            quantized[:, i] = col
-    
-    return quantized
+        for period in periods:
+            if len(series) >= 2 * period:
+                # 計算延遲 period 的自相關
+                shifted = series.shift(period).dropna()
+                original = series[:len(shifted)]
+                
+                if len(original) > 0 and len(shifted) > 0:
+                    corr = np.corrcoef(original, shifted)[0, 1]
+                    if not np.isnan(corr):
+                        autocorr_values.append((period, abs(corr)))
+        
+        if autocorr_values:
+            # 選擇自相關最強的週期
+            best_period, best_corr = max(autocorr_values, key=lambda x: x[1])
+            
+            # 只有自相關超過閾值才認為有週期性
+            if best_corr > 0.3:
+                return best_period
+        
+        return None
+        
+    except Exception:
+        return None
 
 
 def compute_topology_features(adj_matrix, node_names=None):

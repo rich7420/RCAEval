@@ -79,61 +79,46 @@ class SimplifiedKANLayer(nn.Module):
 class UltraFastKANLayer(nn.Module):
     """
     超快速 KAN 層 - 最簡化版本
-    使用預計算的激活函數查找表
+    使用線性組合代替複雜的查找表
     """
     
-    def __init__(self, input_dim, output_dim, table_size=256):
+    def __init__(self, input_dim, output_dim, num_activations=4):
         super(UltraFastKANLayer, self).__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
-        self.table_size = table_size
+        self.num_activations = num_activations
         
-        # 線性層
+        # 主要線性層 (大部分計算)
         self.linear = nn.Linear(input_dim, output_dim)
         
-        # 激活函數查找表權重
+        # 輕量級非線性組件
         self.activation_weights = nn.Parameter(
-            torch.randn(output_dim, input_dim, table_size) * 0.1
+            torch.randn(output_dim, input_dim, num_activations) * 0.01
         )
         
-        # 預計算的激活函數表 (SiLU 的變體)
-        x_range = torch.linspace(-3, 3, table_size)
-        activation_table = x_range * torch.sigmoid(x_range)  # SiLU
-        self.register_buffer('activation_table', activation_table)
-        
-        # 範圍映射參數
-        self.register_buffer('x_min', torch.tensor(-3.0))
-        self.register_buffer('x_max', torch.tensor(3.0))
-    
-    def fast_activation(self, x):
-        """使用查找表的快速激活函數"""
-        # 將輸入映射到表索引
-        x_clamped = torch.clamp(x, self.x_min, self.x_max)
-        indices = ((x_clamped - self.x_min) / (self.x_max - self.x_min) * 
-                  (self.table_size - 1)).long()
-        
-        # 查找表插值
-        activated = self.activation_table[indices]
-        
-        return activated.unsqueeze(-1)  # [batch, input_dim, 1]
-    
     def forward(self, x):
-        """超快速前向傳播"""
-        # 基礎線性變換
+        """超快速前向傳播 - 優化版"""
+        # 主要線性變換 (95% 的計算)
         linear_out = self.linear(x)
         
-        # 查找表激活
-        activated = self.fast_activation(x)  # [batch, input_dim, 1]
+        # 輕量級非線性 (5% 的計算)
+        # 使用簡單的激活函數組合
+        x_expanded = x.unsqueeze(-1)  # [batch, input_dim, 1]
         
-        # 修正的張量乘法
-        # activation_weights: [output_dim, input_dim, table_size] 
-        # activated: [batch, input_dim, 1]
-        # 我們需要正確地進行張量收縮
-        activation_out = torch.einsum('oik,bik->bo', 
-                                    self.activation_weights[:, :, :1], 
-                                    activated)  # [batch, output_dim]
+        # 計算多個簡單激活函數
+        activations = []
+        activations.append(torch.tanh(x_expanded))  # tanh
+        activations.append(torch.sigmoid(x_expanded))  # sigmoid  
+        activations.append(F.relu(x_expanded))  # ReLU
+        activations.append(x_expanded)  # 線性
         
-        return linear_out + activation_out
+        # 取前 num_activations 個
+        activations = torch.cat(activations[:self.num_activations], dim=-1)  # [batch, input_dim, num_activations]
+        
+        # 高效張量乘法
+        nonlinear_out = torch.einsum('oij,bij->bo', self.activation_weights, activations)
+        
+        return linear_out + 0.1 * nonlinear_out  # 降低非線性成分的權重
 
 
 class OptimizedGNNKANEncoder(nn.Module):

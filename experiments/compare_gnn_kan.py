@@ -16,8 +16,8 @@ warnings.filterwarnings('ignore')
 # Add project root to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from RCAEval.benchmark.evaluation import evaluate_ranks
-from RCAEval.benchmark.metrics import calculate_metrics
+# Use the correct evaluation class
+from RCAEval.benchmark.evaluation import Evaluator
 
 
 class RCAComparator:
