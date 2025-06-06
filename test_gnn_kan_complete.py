@@ -12,6 +12,12 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 
+# 設置環境變量以消除 NumPy 警告
+os.environ['NPY_DISABLE_CPU_FEATURES'] = ''
+
+# 添加項目路徑
+sys.path.append('/app')
+
 def run_command(cmd, description=""):
     """執行命令並捕獲輸出"""
     print(f"\n{'='*50}")
@@ -46,7 +52,7 @@ def run_command(cmd, description=""):
 
 def test_gnn_kan_features():
     """測試 GNN-KAN 的所有特徵功能"""
-    print("\n" + "="*60)
+    print("="*60)
     print("測試 GNN-KAN 各項功能")
     print("="*60)
     
@@ -81,20 +87,20 @@ def test_gnn_kan_features():
             kll_feature_processing, compute_topology_features, extract_error_features
         )
         
-        # 創建測試數據
+        # 創建更合適長度的測試數據
         test_data = pd.DataFrame({
-            'time': range(100),
-            'cpu': np.random.randn(100),
-            'memory': np.random.randn(100),
-            'log_text': ['INFO normal'] * 80 + ['ERROR critical'] * 20
+            'time': range(200),  # 增加數據長度
+            'cpu': np.random.randn(200) + np.sin(np.arange(200) * 0.1),  # 添加週期性
+            'memory': np.random.randn(200) + 0.5 * np.cos(np.arange(200) * 0.05),  # 添加趨勢
+            'log_text': ['INFO normal'] * 160 + ['ERROR critical'] * 40
         })
         
         # 測試 sliding window
         windows, timestamps = sliding_window_alignment(test_data, window_size=10)
         print(f"✓ Sliding Window: 創建了 {len(windows)} 個窗口")
         
-        # 測試 STL 分解
-        stl_features, stl_names = stl_decomposition(test_data[['cpu', 'memory']], seasonal=3)
+        # 測試 STL 分解 (使用更小的季節性參數)
+        stl_features, stl_names = stl_decomposition(test_data[['cpu', 'memory']], seasonal=5)
         print(f"✓ STL 分解: 特徵形狀 {stl_features.shape}")
         
         # 測試 KLL 處理
@@ -144,7 +150,7 @@ def test_gnn_kan_features():
             inject_time=inject_time, 
             dataset='test',
             epochs=10,  # 減少訓練輪數加快測試
-            stl_seasonal=3
+            stl_seasonal=5  # 使用較小的季節性參數
         )
         
         print(f"✓ GNN-KAN RCA 測試通過:")

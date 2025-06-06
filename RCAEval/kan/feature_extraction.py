@@ -211,55 +211,42 @@ def stl_decomposition(metrics_data, seasonal=7, return_components=True):
         series = data[col].dropna()
         
         # 更嚴格的數據長度檢查
-        min_required_length = max(2 * seasonal + 1, 10)  # 至少需要這麼多數據點
-        
-        if len(series) < min_required_length:
-            print(f"STL decomposition skipped for {col}: insufficient data length ({len(series)} < {min_required_length})")
-            # 使用基本統計特徵替代
+        # 自動調整季節性參數
+        if len(series) < 50:  # 如果數據太少，直接使用統計特徵
+            print(f"STL decomposition skipped for {col}: insufficient data length ({len(series)}), using statistics")
             features = np.array([
                 [np.mean(series), np.std(series), np.max(series), np.min(series)]
             ]).T
             names = [f'{col}_mean', f'{col}_std', f'{col}_max', f'{col}_min']
         else:
+            # 自動選擇合適的季節性參數
+            auto_seasonal = max(2, min(seasonal, len(series) // 4))
+            min_required_length = 2 * auto_seasonal + 1
+            
+            if len(series) < min_required_length:
+                auto_seasonal = max(2, len(series) // 3)
+            
             try:
-                # 嘗試多個季節性參數
-                seasonal_attempts = [seasonal, 3, 5, 2]  # 嘗試不同的週期
-                stl_success = False
+                stl = STL(series, seasonal=auto_seasonal, robust=True)
+                result = stl.fit()
                 
-                for attempt_seasonal in seasonal_attempts:
-                    if len(series) >= 2 * attempt_seasonal + 1:
-                        try:
-                            stl = STL(series, seasonal=attempt_seasonal, robust=True)
-                            result = stl.fit()
-                            
-                            if return_components:
-                                # 返回所有組件
-                                trend = result.trend.fillna(series.mean()).values
-                                seasonal_comp = result.seasonal.fillna(0).values
-                                residual = result.resid.fillna(0).values
-                                
-                                features = np.column_stack([trend, seasonal_comp, residual])
-                                names = [f'{col}_trend', f'{col}_seasonal', f'{col}_residual']
-                            else:
-                                # 只返回趨勢
-                                features = result.trend.fillna(series.mean()).values.reshape(-1, 1)
-                                names = [f'{col}_trend']
-                            
-                            stl_success = True
-                            break
-                        except Exception as e_inner:
-                            continue
-                
-                if not stl_success:
-                    print(f"STL decomposition failed for {col}: trying all seasonal periods")
-                    # 回退到統計特徵
-                    features = np.array([
-                        [np.mean(series), np.std(series), np.max(series), np.min(series)]
-                    ]).T
-                    names = [f'{col}_mean', f'{col}_std', f'{col}_max', f'{col}_min']
+                if return_components:
+                    # 返回所有組件
+                    trend = result.trend.fillna(series.mean()).values
+                    seasonal_comp = result.seasonal.fillna(0).values
+                    residual = result.resid.fillna(0).values
                     
+                    features = np.column_stack([trend, seasonal_comp, residual])
+                    names = [f'{col}_trend', f'{col}_seasonal', f'{col}_residual']
+                else:
+                    # 只返回趨勢
+                    features = result.trend.fillna(series.mean()).values.reshape(-1, 1)
+                    names = [f'{col}_trend']
+                
+                print(f"✓ STL decomposition for {col}: seasonal={auto_seasonal}")
+                
             except Exception as e:
-                print(f"STL decomposition failed for {col}: {e}")
+                print(f"STL decomposition failed for {col}: {e}, using statistics")
                 # 回退到統計特徵
                 features = np.array([
                     [np.mean(series), np.std(series), np.max(series), np.min(series)]
