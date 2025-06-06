@@ -10,129 +10,6 @@ import numpy as np
 import math
 
 
-class FastKANLayer(nn.Module):
-    """
-    GPU 優化的 KAN 層實現
-    使用 B-spline 基函數的向量化計算
-    """
-    
-    def __init__(self, input_dim, output_dim, grid_size=5, spline_order=3, 
-                 scale_noise=0.1, scale_base=1.0, scale_spline=1.0):
-        super(FastKANLayer, self).__init__()
-        self.input_dim = input_dim
-        self.output_dim = output_dim
-        self.grid_size = grid_size
-        self.spline_order = spline_order
-        
-        # 創建 B-spline 網格 (固定在 [-1, 1] 範圍)
-        h = 2.0 / grid_size
-        grid = torch.linspace(-1 - h * spline_order, 1 + h * spline_order, 
-                             grid_size + 2 * spline_order + 1)
-        self.register_buffer('grid', grid)
-        
-        # B-spline 係數 (可學習參數)
-        self.spline_weight = nn.Parameter(
-            torch.randn(output_dim, input_dim, grid_size + spline_order) * scale_spline
-        )
-        
-        # 基礎線性變換
-        self.base_weight = nn.Parameter(torch.randn(output_dim, input_dim) * scale_base)
-        
-        # 初始化
-        self.reset_parameters()
-    
-    def reset_parameters(self):
-        """初始化參數"""
-        nn.init.kaiming_uniform_(self.spline_weight, a=math.sqrt(5))
-        nn.init.kaiming_uniform_(self.base_weight, a=math.sqrt(5))
-    
-    def b_splines(self, x):
-        """
-        GPU 優化的 B-spline 基函數計算
-        使用向量化操作避免循環
-        """
-        # 將輸入限制在 [-1, 1] 範圍
-        x = torch.clamp(x, -0.99, 0.99)
-        
-        # 擴展維度進行廣播
-        x = x.unsqueeze(-1)  # [batch, input_dim, 1]
-        grid = self.grid.unsqueeze(0).unsqueeze(0)  # [1, 1, grid_points]
-        
-        # 計算 B-spline 基函數 (使用快速算法)
-        bases = self.fast_b_spline_basis(x, grid, self.spline_order)
-        
-        return bases
-    
-    def fast_b_spline_basis(self, x, grid, k):
-        """
-        快速 B-spline 基函數計算
-        使用遞歸關係的向量化版本
-        """
-        # 找到 x 在 grid 中的位置
-        # 使用 searchsorted 進行批量搜索
-        batch_size, input_dim, _ = x.shape
-        x_flat = x.view(-1)
-        grid_flat = grid.view(-1)
-        
-        # 找到每個 x 值對應的網格區間
-        indices = torch.searchsorted(grid_flat, x_flat, right=False)
-        indices = torch.clamp(indices - 1, 0, len(grid_flat) - k - 2)
-        indices = indices.view(batch_size, input_dim)
-        
-        # 初始化基函數矩陣
-        n_basis = grid.shape[-1] - k - 1
-        bases = torch.zeros(batch_size, input_dim, n_basis, 
-                           device=x.device, dtype=x.dtype)
-        
-        # 使用 Cox-de Boor 遞歸公式的向量化版本
-        # 0 階基函數
-        for i in range(batch_size):
-            for j in range(input_dim):
-                idx = indices[i, j]
-                if 0 <= idx < n_basis:
-                    bases[i, j, idx] = 1.0
-        
-        # 遞歸計算高階基函數
-        for r in range(1, k + 1):
-            bases_new = torch.zeros_like(bases)
-            for i in range(n_basis - r):
-                # 左邊項
-                denom1 = grid[0, 0, i + r] - grid[0, 0, i]
-                if denom1 > 1e-8:
-                    alpha1 = (x.squeeze(-1) - grid[0, 0, i]) / denom1
-                    bases_new[:, :, i] += alpha1 * bases[:, :, i]
-                
-                # 右邊項
-                if i + 1 < n_basis:
-                    denom2 = grid[0, 0, i + r + 1] - grid[0, 0, i + 1]
-                    if denom2 > 1e-8:
-                        alpha2 = (grid[0, 0, i + r + 1] - x.squeeze(-1)) / denom2
-                        bases_new[:, :, i] += alpha2 * bases[:, :, i + 1]
-            
-            bases = bases_new
-        
-        return bases
-    
-    def forward(self, x):
-        """
-        快速前向傳播
-        """
-        batch_size = x.shape[0]
-        
-        # 基礎線性變換
-        base_output = F.linear(x, self.base_weight)  # [batch, output_dim]
-        
-        # B-spline 變換 (向量化)
-        spline_bases = self.b_splines(x)  # [batch, input_dim, n_basis]
-        
-        # 使用 einsum 進行高效張量乘法
-        # spline_weight: [output_dim, input_dim, n_basis]
-        # spline_bases: [batch, input_dim, n_basis]
-        spline_output = torch.einsum('oij,bij->bo', self.spline_weight, spline_bases)
-        
-        return base_output + spline_output
-
-
 class SimplifiedKANLayer(nn.Module):
     """
     簡化版 KAN 層 - 更快的計算
@@ -273,16 +150,16 @@ class OptimizedGNNKANEncoder(nn.Module):
         if kan_type == 'fast':
             KANLayer = FastKANLayer
         elif kan_type == 'simplified':
-            KANLayer = SimplifiedKANLayer
+            KANLayerClass = SimplifiedKANLayer
         else:  # 'ultra_fast'
-            KANLayer = UltraFastKANLayer
+            KANLayerClass = UltraFastKANLayer
         
         # 構建層
         layers = []
         dims = [input_dim] + hidden_dims + [output_dim]
         
         for i in range(len(dims) - 1):
-            layers.append(KANLayer(dims[i], dims[i + 1]))
+            layers.append(KANLayerClass(dims[i], dims[i + 1]))
             if i < len(dims) - 2:  # 不在最後一層添加 dropout
                 layers.append(nn.Dropout(dropout))
         
@@ -345,4 +222,162 @@ class OptimizedGNNKANEncoder(nn.Module):
         
         return current_x
 
-# ...existing code...
+
+class KANLayer(nn.Module):
+    """
+    原始 KAN 層實現 (向後兼容)
+    為了保持導入兼容性，這裡使用 SimplifiedKANLayer 的實現
+    """
+    
+    def __init__(self, input_dim, output_dim, grid_size=5, spline_order=3):
+        super(KANLayer, self).__init__()
+        # 使用簡化實現來提供向後兼容性
+        self.simplified_kan = SimplifiedKANLayer(input_dim, output_dim, num_basis=grid_size)
+        
+    def forward(self, x):
+        return self.simplified_kan(x)
+
+
+class GNNKANEncoder(nn.Module):
+    """
+    原始 GNN-KAN 編碼器 (向後兼容)
+    為了保持導入兼容性，這裡使用 OptimizedGNNKANEncoder 的實現
+    """
+    
+    def __init__(self, input_dim, hidden_dims, output_dim, num_layers=2, dropout=0.1):
+        super(GNNKANEncoder, self).__init__()
+        # 使用優化實現來提供向後兼容性
+        self.optimized_encoder = OptimizedGNNKANEncoder(
+            input_dim=input_dim,
+            hidden_dims=hidden_dims,
+            output_dim=output_dim,
+            num_layers=num_layers,
+            kan_type='simplified',  # 使用平衡的版本
+            dropout=dropout
+        )
+        
+    def forward(self, x, edge_index):
+        return self.optimized_encoder(x, edge_index)
+
+
+class FastKANLayer(nn.Module):
+    """
+    GPU 優化的 KAN 層實現
+    使用 B-spline 基函數的向量化計算
+    """
+    
+    def __init__(self, input_dim, output_dim, grid_size=5, spline_order=3, 
+                 scale_noise=0.1, scale_base=1.0, scale_spline=1.0):
+        super(FastKANLayer, self).__init__()
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.grid_size = grid_size
+        self.spline_order = spline_order
+        
+        # 創建 B-spline 網格 (固定在 [-1, 1] 範圍)
+        h = 2.0 / grid_size
+        grid = torch.linspace(-1 - h * spline_order, 1 + h * spline_order, 
+                             grid_size + 2 * spline_order + 1)
+        self.register_buffer('grid', grid)
+        
+        # B-spline 係數 (可學習參數)
+        self.spline_weight = nn.Parameter(
+            torch.randn(output_dim, input_dim, grid_size + spline_order) * scale_spline
+        )
+        
+        # 基礎線性變換
+        self.base_weight = nn.Parameter(torch.randn(output_dim, input_dim) * scale_base)
+        
+        # 初始化
+        self.reset_parameters()
+    
+    def reset_parameters(self):
+        """初始化參數"""
+        nn.init.kaiming_uniform_(self.spline_weight, a=math.sqrt(5))
+        nn.init.kaiming_uniform_(self.base_weight, a=math.sqrt(5))
+    
+    def b_splines(self, x):
+        """
+        GPU 優化的 B-spline 基函數計算
+        使用向量化操作避免循環
+        """
+        # 將輸入限制在 [-1, 1] 範圍
+        x = torch.clamp(x, -0.99, 0.99)
+        
+        # 擴展維度進行廣播
+        x = x.unsqueeze(-1)  # [batch, input_dim, 1]
+        grid = self.grid.unsqueeze(0).unsqueeze(0)  # [1, 1, grid_points]
+        
+        # 計算 B-spline 基函數 (使用快速算法)
+        bases = self.fast_b_spline_basis(x, grid, self.spline_order)
+        
+        return bases
+    
+    def fast_b_spline_basis(self, x, grid, k):
+        """
+        快速 B-spline 基函數計算
+        使用遞歸關係的向量化版本
+        """
+        # 找到 x 在 grid 中的位置
+        # 使用 searchsorted 進行批量搜索
+        batch_size, input_dim, _ = x.shape
+        x_flat = x.view(-1)
+        grid_flat = grid.view(-1)
+        
+        # 找到每個 x 值對應的網格區間
+        indices = torch.searchsorted(grid_flat, x_flat, right=False)
+        indices = torch.clamp(indices - 1, 0, len(grid_flat) - k - 2)
+        indices = indices.view(batch_size, input_dim)
+        
+        # 初始化基函數矩陣
+        n_basis = grid.shape[-1] - k - 1
+        bases = torch.zeros(batch_size, input_dim, n_basis, 
+                           device=x.device, dtype=x.dtype)
+        
+        # 使用 Cox-de Boor 遞歸公式的向量化版本
+        # 0 階基函數
+        for i in range(batch_size):
+            for j in range(input_dim):
+                idx = indices[i, j]
+                if 0 <= idx < n_basis:
+                    bases[i, j, idx] = 1.0
+        
+        # 遞歸計算高階基函數
+        for r in range(1, k + 1):
+            bases_new = torch.zeros_like(bases)
+            for i in range(n_basis - r):
+                # 左邊項
+                denom1 = grid[0, 0, i + r] - grid[0, 0, i]
+                if denom1 > 1e-8:
+                    alpha1 = (x.squeeze(-1) - grid[0, 0, i]) / denom1
+                    bases_new[:, :, i] += alpha1 * bases[:, :, i]
+                
+                # 右邊項
+                if i + 1 < n_basis:
+                    denom2 = grid[0, 0, i + r + 1] - grid[0, 0, i + 1]
+                    if denom2 > 1e-8:
+                        alpha2 = (grid[0, 0, i + r + 1] - x.squeeze(-1)) / denom2
+                        bases_new[:, :, i] += alpha2 * bases[:, :, i + 1]
+            
+            bases = bases_new
+        
+        return bases
+    
+    def forward(self, x):
+        """
+        快速前向傳播
+        """
+        batch_size = x.shape[0]
+        
+        # 基礎線性變換
+        base_output = F.linear(x, self.base_weight)  # [batch, output_dim]
+        
+        # B-spline 變換 (向量化)
+        spline_bases = self.b_splines(x)  # [batch, input_dim, n_basis]
+        
+        # 使用 einsum 進行高效張量乘法
+        # spline_weight: [output_dim, input_dim, n_basis]
+        # spline_bases: [batch, input_dim, n_basis]
+        spline_output = torch.einsum('oij,bij->bo', self.spline_weight, spline_bases)
+        
+        return base_output + spline_output
