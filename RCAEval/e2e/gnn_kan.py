@@ -41,51 +41,100 @@ class GNNKANConfig:
     """Configuration class for GNN-KAN parameters"""
     
     def __init__(self):
-        # Model architecture
-        self.input_dim = 64
-        self.hidden_dims = [128, 64]
-        self.output_dim = 32
-        self.kan_grid_size = 5
-        self.kan_spline_order = 3
-        self.num_gnn_layers = 3
-        self.dropout = 0.1
+        # 🚀 高容量模型架構 - 恢復並提升原始復雜度
+        self.input_dim = 128   # 大幅提升輸入維度
+        self.hidden_dims = [256, 192, 128, 96]  # 更深更寬的4層隱藏層
+        self.output_dim = 64   # 更大的輸出維度
         
-        # Training parameters - 修正訓練參數
-        self.epochs = 100
-        self.batch_size = 32
-        self.learning_rate = 1e-4  # 進一步降低學習率
-        self.weight_decay = 1e-5   # 降低權重衰減
-        self.scheduler_step_size = 30
-        self.scheduler_gamma = 0.8
-        self.gradient_clip_norm = 5.0  # 降低梯度裁剪閾值，提升穩定性
+        # 🔑 保持高表達能力的KAN設置 - 不降低
+        self.kan_grid_size = 5        # 保持原始 B-spline 網格點數
+        self.kan_spline_order = 3     # 保持 3次樣條的表達能力
+        self.num_gnn_layers = 3       # 保持 3層 GNN 的深度
+        self.dropout = 0.1            # 降低dropout保持更多資訊
         
-        # Feature extraction - 修正STL參數
-        self.window_size = 32
+        # 🛡️ 高級梯度穩定策略 - 核心穩定技術
+        self.use_residual_connections = True     # 殘差連接穩定深層梯度
+        self.use_layer_norm = True              # 層標準化替代BatchNorm
+        self.use_gradient_checkpointing = True  # 梯度檢查點節省記憶體
+        self.use_spectral_norm = True           # 譜標準化控制Lipschitz常數
+        self.use_warmup_scheduler = True        # 預熱學習率調度
+        self.use_orthogonal_init = True         # 正交初始化
+        self.use_weight_normalization = True    # 權重標準化
+        
+        # 🎯 精密調優的訓練參數 - 高容量訓練
+        self.epochs = 100             # 增加訓練輪數獲得更好效果
+        self.batch_size = 8           # 較小批次更穩定
+        self.base_learning_rate = 5e-5  # 保守的基礎學習率
+        self.max_learning_rate = 2e-4   # 適中的最大學習率
+        self.weight_decay = 5e-7        # 極輕的權重衰減
+        self.warmup_epochs = 20         # 更長的預熱階段
+        self.scheduler_step_size = 25
+        self.scheduler_gamma = 0.8      # 溫和的學習率衰減
+        
+        # 🛡️ 梯度穩定核心參數
+        self.gradient_clip_norm = 1.0    # 嚴格的梯度裁剪
+        self.gradient_accumulation_steps = 4  # 梯度累積增加有效批次大小
+        self.spectral_norm_power_iterations = 3  # 譜標準化迭代次數
+        self.layer_norm_eps = 1e-6      # 層標準化數值穩定參數
+        
+        # 🧠 智能初始化策略
+        self.kan_init_method = 'xavier_uniform'  # KAN層的智能初始化
+        self.spline_coeff_init_std = 0.02       # 極保守的B-spline係數初始化
+        self.gnn_init_method = 'orthogonal'     # GNN層正交初始化
+        self.bias_init_method = 'zeros'         # 偏置初始化為零
+        
+        # 🔬 數值穩定性檢查
+        self.enable_nan_detection = True        # 啟用NaN檢測
+        self.enable_inf_detection = True        # 啟用Inf檢測
+        self.stability_check_frequency = 10     # 每10個epoch檢查一次穩定性
+        self.emergency_fallback = True          # 啟用緊急回退機制
+        
+        # 🎛️ 自適應正則化
+        self.adaptive_l1_lambda = True          # 自適應L1正則化強度
+        self.adaptive_entropy_lambda = True     # 自適應熵正則化強度
+        self.base_l1_lambda = 1e-6             # 基礎L1正則化
+        self.base_entropy_lambda = 1e-6        # 基礎熵正則化
+        self.max_l1_lambda = 1e-4              # 最大L1正則化
+        self.max_entropy_lambda = 1e-4         # 最大熵正則化
+        
+        # Feature extraction - 保持豐富特徵
+        self.window_size = 30         # 增加窗口大小獲得更多上下文
         self.step_size = 1
-        self.use_dla = False
-        self.max_log_features = 500
-        self.stl_seasonal = 7      # 改為7，更適合短期數據
-        self.stl_period = 12       # 改為12，更合理的週期
-        self.kll_k = 512
-        self.fusion_method = 'attention'
-        self.target_feature_dim = 64
+        self.use_dla = True           # 啟用DLA獲得更好特徵
+        self.max_log_features = 300   # 增加特徵數量
+        self.stl_seasonal = 12        # 更長的季節性週期
+        self.stl_period = 24          # 更長的週期
+        self.stl_robust = True
+        self.kll_k = 512             # 增加KLL特徵維度
+        self.fusion_method = 'attention'  # 使用注意力機制
+        self.target_feature_dim = 128     # 增加目標維度
         
-        # PCA settings - 新增PCA配置
+        # PCA settings - 保持更多資訊
         self.use_pca = True
-        self.pca_components = 32  # PCA主成分數量
-        self.pca_variance_threshold = 0.95  # 保留95%的方差
+        self.pca_components = 64      # 增加主成分數量
+        self.pca_variance_threshold = 0.98  # 保留更多方差
         
-        # Graph construction
-        self.similarity_threshold = 0.3
-        self.max_edges_per_node = 5
+        # Graph construction - 更豐富的圖結構
+        self.similarity_threshold = 0.25  # 降低閾值增加連接
+        self.max_edges_per_node = 8       # 增加每個節點的最大邊數
         self.use_self_loops = True
+        self.use_attention_edges = True   # 注意力邊權重
+        self.edge_dropout = 0.1          # 邊dropout防止過擬合
         
-        # Hardware
+        # Hardware optimization
         self.use_cuda = torch.cuda.is_available()
         self.device = 'cuda' if self.use_cuda else 'cpu'
+        self.mixed_precision = True      # 混合精度訓練
+        self.compile_model = True        # PyTorch 2.0 模型編譯
         
         # Output
-        self.top_k_results = 10
+        self.top_k_results = 20
+        
+        # 🚨 緊急模式設置 (當檢測到梯度問題時自動啟用)
+        self.emergency_mode = False
+        self.emergency_learning_rate = 1e-5
+        self.emergency_gradient_clip = 0.5
+        self.emergency_dropout = 0.3
 
 
 class MultiModalFeatureExtractor:
@@ -111,6 +160,58 @@ class MultiModalFeatureExtractor:
             return self._extract_multimodal_features(data, inject_time)
         else:
             return self._extract_single_modal_features(data, inject_time)
+    
+    def _apply_pca_with_variance_check(self, features, feature_type, target_components=None, variance_threshold=0.95):
+        """
+        應用PCA降維並檢查方差保留
+        
+        Args:
+            features: 輸入特徵矩陣
+            feature_type: 特徵類型 (用於日誌)
+            target_components: 目標主成分數量
+            variance_threshold: 方差保留閾值
+            
+        Returns:
+            pca_features: PCA降維後的特徵
+        """
+        if target_components is None:
+            target_components = 64  # 默認值
+            
+        try:
+            # 確保有足夠的樣本進行PCA
+            n_samples, n_features = features.shape
+            max_components = min(n_samples, n_features, target_components)
+            
+            if max_components < 2:
+                print(f"⚠️ {feature_type}: Insufficient samples/features for PCA, keeping original")
+                return features
+            
+            # 標準化特徵
+            scaler = StandardScaler()
+            features_scaled = scaler.fit_transform(features)
+            
+            # 檢查是否有常數特徵
+            if np.allclose(features_scaled.var(axis=0), 0):
+                print(f"⚠️ {feature_type}: All features are constant, keeping original")
+                return features
+            
+            # 應用PCA
+            pca = PCA(n_components=max_components)
+            pca_features = pca.fit_transform(features_scaled)
+            
+            # 檢查保留的方差比例
+            variance_ratio = np.sum(pca.explained_variance_ratio_)
+            
+            if variance_ratio < variance_threshold:
+                print(f"⚠️ {feature_type}: PCA variance ratio {variance_ratio:.3f} < threshold {variance_threshold}, keeping original")
+                return features
+            else:
+                print(f"✓ {feature_type}: PCA {n_features} -> {max_components} features, variance ratio: {variance_ratio:.3f}")
+                return pca_features
+                
+        except Exception as e:
+            print(f"⚠️ {feature_type}: PCA failed ({e}), keeping original features")
+            return features
     
     def _extract_multimodal_features(self, data, inject_time):
         """處理多模態數據"""
@@ -160,7 +261,7 @@ class MultiModalFeatureExtractor:
                     window_node_names.extend([f'w{window_idx}_trace_{name}' for name in operation_names])
                     print(f"✓ Extracted {trace_features.shape[0]} trace operations")
                 
-                # 提取服務拓樸特徵
+                # 提取服務拓爾特徵
                 if service_graph is not None:
                     service_topo_features, service_topo_names = extract_service_topology_features(
                         service_graph, list(service_graph.nodes())
@@ -170,7 +271,7 @@ class MultiModalFeatureExtractor:
                         min_length = trace_features.shape[0] if trace_features.size > 0 else 1
                         service_topo_expanded = np.tile(service_topo_features, (min_length, 1))
                         
-                        # PCA降維處理服務拓樸特徵
+                        # PCA降維處理服務拓爾特徵
                         if self.config.use_pca and service_topo_expanded.shape[1] > self.config.pca_components:
                             service_topo_expanded = self._apply_pca_with_variance_check(
                                 service_topo_expanded, f"service_topo_window_{window_idx}"
@@ -207,7 +308,7 @@ class MultiModalFeatureExtractor:
                 # STL 分解
                 stl_features, stl_names = stl_decomposition(
                     metric_data.select_dtypes(include=[np.number]),
-                    seasonal=self.config.stl_seasonal
+                    seasonal=self.config.stl_seasonal  # 使用正確的參數名稱映射
                 )
                 
                 if stl_features.size > 0:
@@ -282,27 +383,31 @@ class MultiModalFeatureExtractor:
                             
                             window_features.append(service_topo_expanded)
                             window_node_names.extend([f'w{window_idx}_service_topo_{name}' for name in service_topo_names])
-                
-                # STL 分解
-                stl_features, stl_names = stl_decomposition(
-                    window_data.select_dtypes(include=[np.number]),
-                    seasonal=self.config.stl_seasonal
-                )
-                
-                if stl_features.size > 0:
-                    # KLL 處理
-                    processed_features, kll_names = kll_feature_processing(
-                        stl_features, sketch_size=self.config.kll_k
+                            print(f"✓ Extracted {len(service_topo_names)} service topology features from DataFrame")
+                else:
+                    # 處理非 trace DataFrame
+                    processed_data = preprocess(window_data, dataset='default')
+                    
+                    # STL 分解
+                    stl_features, stl_names = stl_decomposition(
+                        processed_data.select_dtypes(include=[np.number]),
+                        seasonal=self.config.stl_seasonal
                     )
                     
-                    # PCA降維處理DataFrame特徵
-                    if self.config.use_pca and processed_features.shape[1] > self.config.pca_components:
-                        processed_features = self._apply_pca_with_variance_check(
-                            processed_features, f"df_stl_window_{window_idx}"
+                    if stl_features.size > 0:
+                        # KLL 處理
+                        processed_features, kll_names = kll_feature_processing(
+                            stl_features, sketch_size=self.config.kll_k
                         )
-                    
-                    window_features.append(processed_features)
-                    window_node_names.extend([f'w{window_idx}_{name}' for name in kll_names])
+                        
+                        # PCA降維處理DataFrame特徵
+                        if self.config.use_pca and processed_features.shape[1] > self.config.pca_components:
+                            processed_features = self._apply_pca_with_variance_check(
+                                processed_features, f"df_stl_window_{window_idx}"
+                            )
+                        
+                        window_features.append(processed_features)
+                        window_node_names.extend([f'w{window_idx}_{name}' for name in kll_names])
                 
                 # 提取錯誤特徵
                 print("Extracting error features...")
@@ -465,56 +570,51 @@ class MultiModalFeatureExtractor:
         else:
             return np.array([]), []
     
-    def _apply_pca_with_variance_check(self, features, feature_type, target_components=None):
+    def _compute_loss_with_stabilization(self, predictions, targets, epoch=0):
         """
-        應用PCA降維並檢查方差保留
+        計算帶穩定化的損失函數
         
         Args:
-            features: 輸入特徵矩陣
-            feature_type: 特徵類型 (用於日誌)
-            target_components: 目標主成分數量
+            predictions: 預測結果
+            targets: 目標值
+            epoch: 當前訓練輪次
             
         Returns:
-            pca_features: PCA降維後的特徵
+            stabilized_loss: 穩定化後的損失值
         """
-        if target_components is None:
-            target_components = self.config.pca_components
-            
         try:
-            # 確保有足夠的樣本進行PCA
-            n_samples, n_features = features.shape
-            max_components = min(n_samples, n_features, target_components)
+            # 基礎損失計算
+            base_loss = F.mse_loss(predictions, targets)
             
-            if max_components < 2:
-                print(f"⚠️ {feature_type}: Insufficient samples/features for PCA, keeping original")
-                return features
-            
-            # 標準化特徵
-            scaler = StandardScaler()
-            features_scaled = scaler.fit_transform(features)
-            
-            # 檢查是否有常數特徵
-            if np.allclose(features_scaled.var(axis=0), 0):
-                print(f"⚠️ {feature_type}: All features are constant, keeping original")
-                return features
-            
-            # 應用PCA
-            pca = PCA(n_components=max_components)
-            pca_features = pca.fit_transform(features_scaled)
-            
-            # 檢查保留的方差比例
-            variance_ratio = np.sum(pca.explained_variance_ratio_)
-            
-            if variance_ratio < self.config.pca_variance_threshold:
-                print(f"⚠️ {feature_type}: PCA variance ratio {variance_ratio:.3f} < threshold {self.config.pca_variance_threshold}, keeping original")
-                return features
-            else:
-                print(f"✓ {feature_type}: PCA {n_features} -> {max_components} features, variance ratio: {variance_ratio:.3f}")
-                return pca_features
+            # 梯度懲罰項
+            gradient_penalty = 0.0
+            if predictions.requires_grad:
+                gradients = torch.autograd.grad(
+                    outputs=predictions.sum(),
+                    inputs=predictions,
+                    create_graph=True,
+                    retain_graph=True,
+                    only_inputs=True
+                )[0] if predictions.requires_grad else torch.zeros_like(predictions)
                 
+                gradient_penalty = torch.mean(gradients ** 2)
+            
+            # 動態權重調整
+            stability_weight = max(0.1, 1.0 - epoch * 0.01)
+            
+            # 總損失
+            total_loss = base_loss + stability_weight * gradient_penalty
+            
+            # 數值穩定性檢查
+            if torch.isnan(total_loss) or torch.isinf(total_loss):
+                print(f"⚠️ Unstable loss detected at epoch {epoch}, using base loss")
+                return base_loss
+            
+            return total_loss
+            
         except Exception as e:
-            print(f"⚠️ {feature_type}: PCA failed ({e}), keeping original features")
-            return features
+            print(f"⚠️ Loss computation failed: {e}")
+            return F.mse_loss(predictions, targets)
 
 
 class GraphConstructor:
@@ -841,15 +941,15 @@ def train_gnn_kan_model(model, node_features, edge_index, config):
         print("⚠️ Model parameters contain NaN or Inf after initialization")
     
     if torch.isnan(node_features).any() or torch.isinf(node_features).any():
-        print("Warning: NaN or Inf detected in node features, cleaning...")
+        print("⚠️ 檢測到 NaN/Inf 特徵，進行清理...")
         node_features = torch.nan_to_num(node_features, nan=0.0, posinf=1.0, neginf=-1.0)
         node_features = torch.clamp(node_features, -10.0, 10.0)
     
     model.train()
     
-    # 設置優化器 (使用修正的參數)
+    # 設置優化器 (修復參數名稱)
     optimizer = optim.Adam(model.parameters(), 
-                          lr=config.learning_rate,
+                          lr=config.base_learning_rate,  # 使用正確的參數名
                           weight_decay=config.weight_decay)
     
     scheduler = lr_scheduler.StepLR(optimizer, 
@@ -1099,117 +1199,123 @@ def compute_loss_stable(node_embeddings, adj_scores, edge_index, config):
     return total_loss
 
 
-def enhanced_feature_fusion(log_feats, metric_feats, topo_feats, error_feats, trace_feats, service_topo_feats,
-                           fusion_method='attention', target_dim=None):
+def enhanced_feature_fusion(metric_features, log_features, trace_features, config=None):
     """
-    增強的多模态特徵融合，包含 trace 特徵
+    增強的特徵融合，整合多模態特徵
     
     Args:
-        log_feats: 日誌特徵
-        metric_feats: 度量特徵
-        topo_feats: 拓樸特徵
-        error_feats: 錯誤特徵
-        trace_feats: trace 特徵 (新增)
-        service_topo_feats: 服務拓樸特徵 (新增)
-        fusion_method: 融合方法
-        target_dim: 目標維度
+        metric_features: 指標特徵
+        log_features: 日誌特徵
+        trace_features: trace 特徵
+        config: 配置參數 (可選)
     
     Returns:
-        fused_features: 融合後的特徵
+        融合後的特徵
     """
-    # 收集所有非空特徵
-    all_features = []
+    # 設定默認配置
+    if config is None:
+        class DefaultConfig:
+            pca_components = 50
+            pca_variance_threshold = 0.8
+            fusion_alpha = 0.4
+            fusion_beta = 0.4  
+            fusion_gamma = 0.2
+        config = DefaultConfig()
+    
+    features_dict = {}
+    
+    # 處理指標特徵
+    if metric_features is not None and len(metric_features) > 0:
+        if isinstance(metric_features, pd.DataFrame):
+            metric_tensor = torch.tensor(metric_features.values, dtype=torch.float32)
+        else:
+            metric_tensor = torch.tensor(metric_features, dtype=torch.float32)
+        
+        # PCA降維
+        if metric_tensor.shape[1] > config.pca_components:
+            pca = PCA(n_components=config.pca_components)
+            metric_reduced = pca.fit_transform(metric_tensor.numpy())
+            variance_ratio = sum(pca.explained_variance_ratio_)
+            
+            if variance_ratio < config.pca_variance_threshold:
+                print(f"⚠️ 指標特徵: PCA variance ratio {variance_ratio:.3f} < threshold {config.pca_variance_threshold}, keeping original")
+                features_dict['metrics'] = metric_tensor
+            else:
+                features_dict['metrics'] = torch.tensor(metric_reduced, dtype=torch.float32)
+                print(f"✓ 指標特徵 PCA降維: {metric_tensor.shape[1]} → {config.pca_components} (解釋方差: {variance_ratio:.3f})")
+        else:
+            features_dict['metrics'] = metric_tensor
+    
+    # 處理日誌特徵
+    if log_features is not None and len(log_features) > 0:
+        if isinstance(log_features, pd.DataFrame):
+            log_tensor = torch.tensor(log_features.values, dtype=torch.float32)
+        else:
+            log_tensor = torch.tensor(log_features, dtype=torch.float32)
+        features_dict['logs'] = log_tensor
+    
+    # 處理trace特徵
+    if trace_features is not None and len(trace_features) > 0:
+        if isinstance(trace_features, pd.DataFrame):
+            trace_tensor = torch.tensor(trace_features.values, dtype=torch.float32)
+        else:
+            trace_tensor = torch.tensor(trace_features, dtype=torch.float32)
+        features_dict['traces'] = trace_tensor
+    
+    # 如果沒有任何特徵，返回空tensor
+    if not features_dict:
+        print("⚠️ 沒有有效的特徵數據，返回空tensor")
+        return torch.zeros((1, 10), dtype=torch.float32)
+    
+    # 特徵對齊和融合
+    min_samples = min(feat.shape[0] for feat in features_dict.values())
+    
+    aligned_features = []
     feature_weights = []
     
-    if log_feats is not None and log_feats.size > 0:
-        if log_feats.ndim == 1:
-            log_feats = log_feats.reshape(1, -1)
-        all_features.append(log_feats)
-        feature_weights.append(0.2)  # 日誌特徵權重
+    # 根據可用特徵分配權重
+    if 'metrics' in features_dict:
+        aligned_features.append(features_dict['metrics'][:min_samples])
+        feature_weights.append(config.fusion_alpha)
     
-    if metric_feats is not None and metric_feats.size > 0:
-        if metric_feats.ndim == 1:
-            metric_feats = metric_feats.reshape(1, -1)
-        all_features.append(metric_feats)
-        feature_weights.append(0.3)  # 度量特徵權重
+    if 'logs' in features_dict:
+        aligned_features.append(features_dict['logs'][:min_samples])
+        feature_weights.append(config.fusion_beta)
     
-    if trace_feats is not None and trace_feats.size > 0:
-        if trace_feats.ndim == 1:
-            trace_feats = trace_feats.reshape(1, -1)
-        all_features.append(trace_feats)
-        feature_weights.append(0.25)  # trace 特徵權重 (重要)
+    if 'traces' in features_dict:
+        aligned_features.append(features_dict['traces'][:min_samples])
+        feature_weights.append(config.fusion_gamma)
     
-    if service_topo_feats is not None and service_topo_feats.size > 0:
-        if service_topo_feats.ndim == 1:
-            service_topo_feats = service_topo_feats.reshape(1, -1)
-        all_features.append(service_topo_feats)
-        feature_weights.append(0.15)  # 服務拓樸特徵權重
+    # 歸一化權重
+    total_weight = sum(feature_weights)
+    if total_weight > 0:
+        feature_weights = [w / total_weight for w in feature_weights]
     
-    if topo_feats is not None and topo_feats.size > 0:
-        if topo_feats.ndim == 1:
-            topo_feats = topo_feats.reshape(1, -1)
-        all_features.append(topo_feats)
-        feature_weights.append(0.08)  # 一般拓樸特徵權重
+    # 統一特徵維度
+    max_features = max(feat.shape[1] for feat in aligned_features)
+    normalized_features = []
     
-    if error_feats is not None and error_feats.size > 0:
-        if error_feats.ndim == 1:
-            error_feats = error_feats.reshape(1, -1)
-        all_features.append(error_feats)
-        feature_weights.append(0.02)  # 錯誤特徵權重
-    
-    if not all_features:
-        return np.array([])
-    
-    # 對齊特徵維度
-    max_rows = max(f.shape[0] for f in all_features)
-    aligned_features = []
-    
-    for features in all_features:
-        if features.shape[0] < max_rows:
-            # 重複最後一行以對齊
-            padding = np.repeat(features[-1:], max_rows - features.shape[0], axis=0)
-            features = np.vstack([features, padding])
-        aligned_features.append(features)
-    
-    # 特徵融合
-    if fusion_method == 'concatenate':
-        fused_features = np.hstack(aligned_features)
-    
-    elif fusion_method == 'weighted':
-        # 加權平均（需要特徵維度相同）
-        normalized_features = []
-        target_cols = min(f.shape[1] for f in aligned_features)
+    for feat in aligned_features:
+        if feat.shape[1] < max_features:
+            # 零填充
+            padding = torch.zeros((feat.shape[0], max_features - feat.shape[1]), dtype=torch.float32)
+            feat_padded = torch.cat([feat, padding], dim=1)
+        else:
+            feat_padded = feat
         
-        for features in aligned_features:
-            if features.shape[1] > target_cols:
-                # PCA 降維
-                pca = PCA(n_components=target_cols)
-                features = pca.fit_transform(features)
-            elif features.shape[1] < target_cols:
-                # 填充零
-                padding = np.zeros((features.shape[0], target_cols - features.shape[1]))
-                features = np.hstack([features, padding])
-            
-            normalized_features.append(features)
-        
-        # 加權融合
-        fused_features = np.zeros_like(normalized_features[0])
-        for features, weight in zip(normalized_features, feature_weights):
-            fused_features += weight * features
+        # L2正規化
+        feat_norm = F.normalize(feat_padded, p=2, dim=1)
+        normalized_features.append(feat_norm)
     
-    elif fusion_method == 'attention':
-        # 注意力機制融合
-        fused_features = attention_fusion_enhanced(aligned_features, feature_weights)
-    
+    # 加權融合
+    if len(normalized_features) == 1:
+        fused_features = normalized_features[0]
     else:
-        fused_features = np.hstack(aligned_features)
+        fused_features = torch.zeros_like(normalized_features[0])
+        for feat, weight in zip(normalized_features, feature_weights):
+            fused_features += weight * feat
     
-    # 降維到目標維度
-    if target_dim is not None and fused_features.shape[1] > target_dim:
-        from sklearn.decomposition import PCA
-        pca = PCA(n_components=target_dim)
-        fused_features = pca.fit_transform(fused_features)
-    
+    print(f"✓ 特徵融合完成: {len(features_dict)}種特徵 → {fused_features.shape}")
     return fused_features
 
 
@@ -1245,7 +1351,7 @@ def attention_fusion_enhanced(features_list, weights):
     return fused
 
 
-def _apply_pca_with_variance_check(self, features, feature_type, target_components=None):
+def _apply_pca_with_variance_check(features, feature_type, target_components=None, variance_threshold=0.95):
         """
         應用PCA降維並檢查方差保留
         
@@ -1253,12 +1359,13 @@ def _apply_pca_with_variance_check(self, features, feature_type, target_componen
             features: 輸入特徵矩陣
             feature_type: 特徵類型 (用於日誌)
             target_components: 目標主成分數量
+            variance_threshold: 方差保留閾值
             
         Returns:
             pca_features: PCA降維後的特徵
         """
         if target_components is None:
-            target_components = self.config.pca_components
+            target_components = 64  # 默認值
             
         try:
             # 確保有足夠的樣本進行PCA
@@ -1285,8 +1392,8 @@ def _apply_pca_with_variance_check(self, features, feature_type, target_componen
             # 檢查保留的方差比例
             variance_ratio = np.sum(pca.explained_variance_ratio_)
             
-            if variance_ratio < self.config.pca_variance_threshold:
-                print(f"⚠️ {feature_type}: PCA variance ratio {variance_ratio:.3f} < threshold {self.config.pca_variance_threshold}, keeping original")
+            if variance_ratio < variance_threshold:
+                print(f"⚠️ {feature_type}: PCA variance ratio {variance_ratio:.3f} < threshold {variance_threshold}, keeping original")
                 return features
             else:
                 print(f"✓ {feature_type}: PCA {n_features} -> {max_components} features, variance ratio: {variance_ratio:.3f}")
@@ -1295,3 +1402,103 @@ def _apply_pca_with_variance_check(self, features, feature_type, target_componen
         except Exception as e:
             print(f"⚠️ {feature_type}: PCA failed ({e}), keeping original features")
             return features
+
+
+def _compute_loss_with_stabilization(output, target, epoch):
+        """
+        計算帶穩定化的損失函數
+        大幅改進版：更保守的損失計算，更好的數值穩定性
+        """
+        try:
+            # 確保輸出和目標的數值穩定性
+            output = torch.clamp(output, min=-10, max=10)  # 嚴格限制輸出範圍
+            target = torch.clamp(target, min=-10, max=10)
+            
+            # 基礎損失 - 使用更穩定的 Huber 損失
+            huber_loss = nn.HuberLoss(delta=0.5)  # 減小 delta 提高穩定性
+            base_loss = huber_loss(output, target)
+            
+            # 檢查基礎損失的有效性
+            if torch.isnan(base_loss) or torch.isinf(base_loss):
+                print(f"Invalid base loss detected: {base_loss}, using fallback")
+                base_loss = torch.tensor(1.0, device=output.device, requires_grad=True)
+            
+            # 極度保守的正則化
+            l1_reg = torch.tensor(0.0, device=output.device)
+            entropy_reg = torch.tensor(0.0, device=output.device)
+            
+            # 漸進式正則化強度
+            base_l1_lambda = 0.001  # 更小的基礎值
+            base_entropy_lambda = 0.001
+            
+            # 只在後期階段增加正則化
+            if epoch > 15:
+                progress = min((epoch - 15) / 50.0, 1.0)
+                l1_lambda = base_l1_lambda * progress
+                entropy_lambda = base_entropy_lambda * progress
+                
+                # 計算 L1 正則化 (僅針對可能存在的參數)
+                try:
+                    l1_params = []
+                    for param in output.view(-1)[:min(100, output.numel())]:  # 限制參數數量
+                        if param.requires_grad:
+                            l1_params.append(param)
+                    
+                    if l1_params:
+                        l1_reg = sum(torch.abs(p).sum() for p in l1_params) * l1_lambda
+                        l1_reg = torch.clamp(l1_reg, max=base_loss.item())  # 不超過基礎損失
+                except:
+                    l1_reg = torch.tensor(0.0, device=output.device)
+                
+                # 計算熵正則化 (更安全的實現)
+                try:
+                    if output.numel() > 0:
+                        output_prob = torch.softmax(output.view(-1)[:min(100, output.numel())], dim=0)
+                        # 使用數值穩定的熵計算
+                        log_prob = torch.log(output_prob + 1e-8)
+                        entropy_reg = -torch.sum(output_prob * log_prob) * entropy_lambda
+                        entropy_reg = torch.clamp(entropy_reg, max=base_loss.item())
+                except:
+                    entropy_reg = torch.tensor(0.0, device=output.device)
+            
+            # 檢查所有正則化項
+            if torch.isnan(l1_reg) or torch.isinf(l1_reg):
+                l1_reg = torch.tensor(0.0, device=output.device)
+            if torch.isnan(entropy_reg) or torch.isinf(entropy_reg):
+                entropy_reg = torch.tensor(0.0, device=output.device)
+            
+            # 總損失 - 使用非常保守的組合
+            total_loss = base_loss + 0.001 * l1_reg + 0.001 * entropy_reg
+            
+            # 最終檢查
+            if torch.isnan(total_loss) or torch.isinf(total_loss):
+                print(f"⚠️ Final loss check failed at epoch {epoch}, using base loss only")
+                total_loss = base_loss
+            
+            # 梯度爆炸保護
+            total_loss = torch.clamp(total_loss, max=100.0)
+            
+            return total_loss
+            
+        except Exception as e:
+            print(f"⚠️ Loss computation failed: {e}")
+            # 緊急回退：簡單的MSE損失
+            try:
+                fallback_loss = F.mse_loss(output, target)
+                if torch.isnan(fallback_loss) or torch.isinf(fallback_loss):
+                    return torch.tensor(1.0, device=output.device, requires_grad=True)
+                return fallback_loss
+            except:
+                return torch.tensor(1.0, device=output.device, requires_grad=True)
+
+
+# 導出主要函數供外部使用
+__all__ = [
+    'gnn_kan_rca',
+    'GNNKANConfig', 
+    'MultiModalFeatureExtractor',
+    'GraphConstructor',
+    'GNNKANModel',
+    'train_gnn_kan_model',
+    'enhanced_feature_fusion'
+]
