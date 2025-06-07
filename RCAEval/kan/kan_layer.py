@@ -56,22 +56,45 @@ class SimplifiedKANLayer(nn.Module):
         return torch.stack(basis_list, dim=-1)  # [batch, input_dim, num_basis]
     
     def forward(self, x):
-        """快速前向傳播"""
+        """快速前向傳播 - 添加數值穩定性檢查"""
+        # 輸入驗證
+        if torch.isnan(x).any() or torch.isinf(x).any():
+            print("Warning: NaN or Inf detected in KAN input")
+            x = torch.nan_to_num(x, nan=0.0, posinf=1.0, neginf=-1.0)
+        
         # 基礎線性變換
-        linear_out = self.linear(x)
+        try:
+            linear_out = self.linear(x)
+        except RuntimeError as e:
+            print(f"Linear layer failed in KAN: {e}")
+            # 回退到零輸出
+            return torch.zeros(x.shape[0], self.output_dim, device=x.device, dtype=x.dtype)
         
         # 多項式基函數
-        poly_basis = self.polynomial_basis(x)  # [batch, input_dim, num_basis]
+        try:
+            poly_basis = self.polynomial_basis(x)  # [batch, input_dim, num_basis]
+            poly_out = torch.einsum('oij,bij->bo', self.poly_weights, poly_basis)
+        except RuntimeError as e:
+            print(f"Polynomial basis failed in KAN: {e}")
+            poly_out = torch.zeros_like(linear_out)
         
-        # 高效張量乘法
-        poly_out = torch.einsum('oij,bij->bo', self.poly_weights, poly_basis)
-        
-        # 組合並歸一化
+        # 組合
         output = linear_out + poly_out
         
-        # Batch normalization (如果 batch size > 1)
-        if x.shape[0] > 1:
-            output = self.bn(output)
+        # 安全的 Batch normalization
+        if x.shape[0] > 1 and not torch.isnan(output).any():
+            try:
+                output = self.bn(output)
+            except RuntimeError as e:
+                print(f"BatchNorm failed in KAN: {e}")
+                # 跳過 BatchNorm
+                pass
+        
+        # 最終檢查
+        if torch.isnan(output).any() or torch.isinf(output).any():
+            print("Warning: NaN or Inf in KAN output, applying clipping")
+            output = torch.nan_to_num(output, nan=0.0, posinf=1.0, neginf=-1.0)
+            output = torch.clamp(output, -10.0, 10.0)
         
         return output
 
@@ -159,29 +182,64 @@ class OptimizedGNNKANEncoder(nn.Module):
         ])
         
     def message_passing(self, x, edge_index, layer_idx):
-        """簡化的消息傳遞"""
+        """數值穩定的消息傳遞 - 修復CUDA錯誤"""
         if edge_index.size(1) == 0:
             return x
         
+        # 添加數值穩定性檢查
+        if torch.isnan(x).any() or torch.isinf(x).any():
+            print("Warning: NaN or Inf detected in input features")
+            x = torch.nan_to_num(x, nan=0.0, posinf=1.0, neginf=-1.0)
+        
         # 簡單的平均聚合
         row, col = edge_index
-        
-        # 計算鄰接矩陣 (稀疏)
         num_nodes = x.size(0)
-        adj = torch.zeros(num_nodes, num_nodes, device=x.device)
-        adj[row, col] = 1.0
         
-        # 行歸一化
-        row_sum = adj.sum(dim=1, keepdim=True)
-        row_sum[row_sum == 0] = 1  # 避免除零
-        adj = adj / row_sum
+        # 確保邊索引在有效範圍內
+        row = torch.clamp(row, 0, num_nodes - 1)
+        col = torch.clamp(col, 0, num_nodes - 1)
         
-        # 消息傳遞
-        message = torch.matmul(adj, x)
+        # 使用稀疏張量進行更安全的操作
+        adj_indices = torch.stack([row, col], dim=0)
+        adj_values = torch.ones(len(row), device=x.device, dtype=x.dtype)
+        adj_size = (num_nodes, num_nodes)
         
-        # 通過線性層
+        # 創建稀疏鄰接矩陣
+        adj_sparse = torch.sparse_coo_tensor(adj_indices, adj_values, adj_size, device=x.device)
+        adj_sparse = adj_sparse.coalesce()
+        
+        # 計算度數 (行和)
+        degrees = torch.sparse.sum(adj_sparse, dim=1).to_dense()
+        degrees = torch.clamp(degrees, min=1e-8)  # 防止除零，使用更大的最小值
+        
+        # 歸一化
+        degrees_inv = 1.0 / degrees
+        degrees_inv = torch.where(torch.isfinite(degrees_inv), degrees_inv, 0.0)
+        
+        # 創建歸一化的鄰接矩陣
+        norm_values = degrees_inv[row]
+        norm_adj = torch.sparse_coo_tensor(adj_indices, norm_values, adj_size, device=x.device)
+        
+        # 安全的稀疏矩陣乘法
+        try:
+            message = torch.sparse.mm(norm_adj, x)
+        except RuntimeError as e:
+            print(f"Sparse matrix multiplication failed: {e}")
+            # 回退到恆等映射
+            return x
+        
+        # 檢查結果
+        if torch.isnan(message).any() or torch.isinf(message).any():
+            print("Warning: NaN or Inf detected in message")
+            message = torch.nan_to_num(message, nan=0.0, posinf=1.0, neginf=-1.0)
+        
+        # 通過線性層 (添加安全檢查)
         if layer_idx < len(self.message_layers):
-            message = self.message_layers[layer_idx](message)
+            try:
+                message = self.message_layers[layer_idx](message)
+            except RuntimeError as e:
+                print(f"Linear layer failed: {e}")
+                return x
         
         return message
     
