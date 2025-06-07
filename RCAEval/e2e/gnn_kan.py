@@ -16,6 +16,7 @@ from torch_geometric.data import Data, Batch
 from torch_geometric.utils import to_networkx
 import networkx as nx
 from sknetwork.ranking import PageRank
+from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics.pairwise import cosine_similarity
 import scipy.sparse as sp
@@ -47,23 +48,30 @@ class GNNKANConfig:
         self.num_gnn_layers = 3
         self.dropout = 0.1
         
-        # Training parameters
+        # Training parameters - 修正訓練參數
         self.epochs = 100
         self.batch_size = 32
-        self.learning_rate = 1e-3
-        self.weight_decay = 1e-4
-        self.scheduler_step_size = 50
-        self.scheduler_gamma = 0.5
+        self.learning_rate = 1e-4  # 進一步降低學習率
+        self.weight_decay = 1e-5   # 降低權重衰減
+        self.scheduler_step_size = 30
+        self.scheduler_gamma = 0.8
+        self.gradient_clip_norm = 5.0  # 降低梯度裁剪閾值，提升穩定性
         
-        # Feature extraction
+        # Feature extraction - 修正STL參數
         self.window_size = 32
         self.step_size = 1
         self.use_dla = False
         self.max_log_features = 500
-        self.stl_seasonal = 7
+        self.stl_seasonal = 7      # 改為7，更適合短期數據
+        self.stl_period = 12       # 改為12，更合理的週期
         self.kll_k = 512
         self.fusion_method = 'attention'
         self.target_feature_dim = 64
+        
+        # PCA settings - 新增PCA配置
+        self.use_pca = True
+        self.pca_components = 32  # PCA主成分數量
+        self.pca_variance_threshold = 0.95  # 保留95%的方差
         
         # Graph construction
         self.similarity_threshold = 0.3
@@ -140,6 +148,12 @@ class MultiModalFeatureExtractor:
                 )
                 
                 if trace_features.size > 0:
+                    # PCA降維處理trace特徵
+                    if self.config.use_pca and trace_features.shape[1] > self.config.pca_components:
+                        trace_features = self._apply_pca_with_variance_check(
+                            trace_features, f"trace_window_{window_idx}"
+                        )
+                    
                     window_features.append(trace_features)
                     window_node_names.extend([f'w{window_idx}_trace_{name}' for name in operation_names])
                     print(f"✓ Extracted {trace_features.shape[0]} trace operations")
@@ -153,6 +167,13 @@ class MultiModalFeatureExtractor:
                         # 廣播服務拓樸特徵到窗口長度
                         min_length = trace_features.shape[0] if trace_features.size > 0 else 1
                         service_topo_expanded = np.tile(service_topo_features, (min_length, 1))
+                        
+                        # PCA降維處理服務拓樸特徵
+                        if self.config.use_pca and service_topo_expanded.shape[1] > self.config.pca_components:
+                            service_topo_expanded = self._apply_pca_with_variance_check(
+                                service_topo_expanded, f"service_topo_window_{window_idx}"
+                            )
+                        
                         window_features.append(service_topo_expanded)
                         window_node_names.extend([f'w{window_idx}_service_topo_{name}' for name in service_topo_names])
                         print(f"✓ Extracted {len(service_topo_names)} service topology features")
@@ -192,6 +213,13 @@ class MultiModalFeatureExtractor:
                     processed_features, kll_names = kll_feature_processing(
                         stl_features, sketch_size=self.config.kll_k
                     )
+                    
+                    # PCA降維處理metric特徵
+                    if self.config.use_pca and processed_features.shape[1] > self.config.pca_components:
+                        processed_features = self._apply_pca_with_variance_check(
+                            processed_features, f"metric_window_{window_idx}"
+                        )
+                    
                     window_features.append(processed_features)
                     window_node_names.extend([f'w{window_idx}_{name}' for name in kll_names])
             
@@ -205,6 +233,12 @@ class MultiModalFeatureExtractor:
                 )
                 
                 if log_features.size > 0:
+                    # PCA降維處理log特徵
+                    if self.config.use_pca and log_features.shape[1] > self.config.pca_components:
+                        log_features = self._apply_pca_with_variance_check(
+                            log_features, f"log_window_{window_idx}"
+                        )
+                    
                     window_features.append(log_features)
                     window_node_names.extend([f'w{window_idx}_{name}' for name in log_names])
             
@@ -219,6 +253,12 @@ class MultiModalFeatureExtractor:
                     )
                     
                     if trace_features.size > 0:
+                        # PCA降維處理DataFrame trace特徵
+                        if self.config.use_pca and trace_features.shape[1] > self.config.pca_components:
+                            trace_features = self._apply_pca_with_variance_check(
+                                trace_features, f"df_trace_window_{window_idx}"
+                            )
+                        
                         window_features.append(trace_features)
                         window_node_names.extend([f'w{window_idx}_trace_{name}' for name in operation_names])
                         print(f"✓ Extracted {trace_features.shape[0]} trace operations from DataFrame")
@@ -231,6 +271,13 @@ class MultiModalFeatureExtractor:
                         if service_topo_features.size > 0:
                             min_length = trace_features.shape[0] if trace_features.size > 0 else 1
                             service_topo_expanded = np.tile(service_topo_features, (min_length, 1))
+                            
+                            # PCA降維處理DataFrame服務拓 topology特徵
+                            if self.config.use_pca and service_topo_expanded.shape[1] > self.config.pca_components:
+                                service_topo_expanded = self._apply_pca_with_variance_check(
+                                    service_topo_expanded, f"df_service_topo_window_{window_idx}"
+                                )
+                            
                             window_features.append(service_topo_expanded)
                             window_node_names.extend([f'w{window_idx}_service_topo_{name}' for name in service_topo_names])
                 
@@ -245,6 +292,13 @@ class MultiModalFeatureExtractor:
                     processed_features, kll_names = kll_feature_processing(
                         stl_features, sketch_size=self.config.kll_k
                     )
+                    
+                    # PCA降維處理DataFrame特徵
+                    if self.config.use_pca and processed_features.shape[1] > self.config.pca_components:
+                        processed_features = self._apply_pca_with_variance_check(
+                            processed_features, f"df_stl_window_{window_idx}"
+                        )
+                    
                     window_features.append(processed_features)
                     window_node_names.extend([f'w{window_idx}_{name}' for name in kll_names])
                 
@@ -252,7 +306,15 @@ class MultiModalFeatureExtractor:
                 print("Extracting error features...")
                 error_features, error_names = extract_error_features(window_data)
                 if error_features.size > 0:
-                    window_features.append(error_features.reshape(1, -1) if error_features.ndim == 1 else error_features)
+                    error_features_reshaped = error_features.reshape(1, -1) if error_features.ndim == 1 else error_features
+                    
+                    # PCA降維處理錯誤特徵
+                    if self.config.use_pca and error_features_reshaped.shape[1] > self.config.pca_components:
+                        error_features_reshaped = self._apply_pca_with_variance_check(
+                            error_features_reshaped, f"error_window_{window_idx}"
+                        )
+                    
+                    window_features.append(error_features_reshaped)
                     window_node_names.extend([f'w{window_idx}_{name}' for name in error_names])
             
             # 收集當前窗口的特徵
@@ -305,6 +367,13 @@ class MultiModalFeatureExtractor:
                 if topology_features.size > 0:
                     # 將拓樸特徵廣播到所有節點
                     topo_features_expanded = np.tile(topology_features, (min_length, 1))
+                    
+                    # PCA降維處理拓樸特徵
+                    if self.config.use_pca and topo_features_expanded.shape[1] > self.config.pca_components:
+                        topo_features_expanded = self._apply_pca_with_variance_check(
+                            topo_features_expanded, "topology_features"
+                        )
+                    
                     aligned_features.append(topo_features_expanded)
                     node_names.extend([f'topology_{name}' for name in topology_names])
         
@@ -365,7 +434,15 @@ class MultiModalFeatureExtractor:
             # 回退方案：直接拼接
             fused_features = np.hstack(aligned_features)
         
+        # 最終PCA降維確保特徵維度符合要求
+        if self.config.use_pca and fused_features.shape[1] > self.config.target_feature_dim:
+            print(f"Applying final PCA: {fused_features.shape[1]} -> {self.config.target_feature_dim}")
+            fused_features = self._apply_pca_with_variance_check(
+                fused_features, "final_fusion", target_components=self.config.target_feature_dim
+            )
+        
         return fused_features, node_names
+    
     def _extract_single_modal_features(self, data, inject_time):
         """處理單一模態數據"""
         # 預處理數據
@@ -673,7 +750,7 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False, **kwargs):
 
 def train_gnn_kan_model(model, node_features, edge_index, config):
     """
-    數值穩定的 GNN-KAN 模型訓練 - 修復CUDA錯誤
+    數值穩定的 GNN-KAN 模型訓練 - 修復梯度爆炸問題
     
     Args:
         model: GNN-KAN 模型
@@ -697,9 +774,9 @@ def train_gnn_kan_model(model, node_features, edge_index, config):
     
     model.train()
     
-    # 設置優化器 (使用更保守的參數)
+    # 設置優化器 (使用修正的參數)
     optimizer = optim.Adam(model.parameters(), 
-                          lr=config.learning_rate * 0.1,  # 降低學習率
+                          lr=config.learning_rate,  # 使用配置中已降低的學習率
                           weight_decay=config.weight_decay)
     
     scheduler = lr_scheduler.StepLR(optimizer, 
@@ -744,21 +821,25 @@ def train_gnn_kan_model(model, node_features, edge_index, config):
                     print(f"Backward pass failed at epoch {epoch}: {e}")
                     continue
                 
-                # 梯度裁剪 (更激進)
-                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
+                # 修正後的梯度裁剪 - 使用更嚴格的閾值提升穩定性
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 
+                                                         max_norm=config.gradient_clip_norm)
                 
-                # 檢查梯度是否過大
-                if grad_norm > 5.0:  # 降低閾值從10.0到5.0
-                    print(f"Large gradient norm {grad_norm} at epoch {epoch}, skipping update...")
-                    continue
+                # 使用更嚴格的梯度檢查閾值 - 提升數值穩定性
+                if grad_norm > 8.0:  # 適中的閾值，平衡穩定性和學習效率
+                    if epoch % 50 == 0:  # 減少日志輸出頻率
+                        print(f"Large gradient norm {grad_norm:.3f} at epoch {epoch}, continuing with clipped gradients...")
+                    # 繼續使用裁剪後的梯度，PCA預處理應該能減少這種情況
                 
+                # 優化器更新
                 optimizer.step()
                 scheduler.step()
                 
                 successful_epochs += 1
                 
-                if epoch % 10 == 0:
-                    print(f"Epoch {epoch}/{config.epochs}, Loss: {loss.item():.6f}, Grad norm: {grad_norm:.6f}")
+                if epoch % 20 == 0 or successful_epochs <= 5:  # 前5個成功epoch都顯示
+                    print(f"Epoch {epoch}/{config.epochs}, Loss: {loss.item():.6f}, "
+                          f"Grad norm: {grad_norm:.6f}, Successful: {successful_epochs}")
                     
                     # GPU 記憶體監控
                     if torch.cuda.is_available():
@@ -790,7 +871,12 @@ def train_gnn_kan_model(model, node_features, edge_index, config):
         import traceback
         traceback.print_exc()
     
-    print(f"Training completed with {successful_epochs} successful epochs")
+    print(f"Training completed with {successful_epochs} successful epochs out of {config.epochs}")
+    
+    # 如果成功訓練的epoch太少，使用簡化策略
+    if successful_epochs < 5:
+        print("Too few successful epochs, using simplified adjacency calculation...")
+        return train_on_cpu_fallback(model, node_features, edge_index, config)
     
     # 獲取最終的鄰接矩陣 (添加安全機制)
     print("Getting final adjacency matrix...")
@@ -911,7 +997,7 @@ def compute_loss_stable(node_embeddings, adj_scores, edge_index, config):
 def enhanced_feature_fusion(log_feats, metric_feats, topo_feats, error_feats, trace_feats, service_topo_feats,
                            fusion_method='attention', target_dim=None):
     """
-    增強的多模態特徵融合，包含 trace 特徵
+    增強的多模态特徵融合，包含 trace 特徵
     
     Args:
         log_feats: 日誌特徵
@@ -992,7 +1078,6 @@ def enhanced_feature_fusion(log_feats, metric_feats, topo_feats, error_feats, tr
         for features in aligned_features:
             if features.shape[1] > target_cols:
                 # PCA 降維
-                from sklearn.decomposition import PCA
                 pca = PCA(n_components=target_cols)
                 features = pca.fit_transform(features)
             elif features.shape[1] < target_cols:
@@ -1053,3 +1138,55 @@ def attention_fusion_enhanced(features_list, weights):
         fused += weight * features
     
     return fused
+
+
+def _apply_pca_with_variance_check(self, features, feature_type, target_components=None):
+        """
+        應用PCA降維並檢查方差保留
+        
+        Args:
+            features: 輸入特徵矩陣
+            feature_type: 特徵類型 (用於日誌)
+            target_components: 目標主成分數量
+            
+        Returns:
+            pca_features: PCA降維後的特徵
+        """
+        if target_components is None:
+            target_components = self.config.pca_components
+            
+        try:
+            # 確保有足夠的樣本進行PCA
+            n_samples, n_features = features.shape
+            max_components = min(n_samples, n_features, target_components)
+            
+            if max_components < 2:
+                print(f"⚠️ {feature_type}: Insufficient samples/features for PCA, keeping original")
+                return features
+            
+            # 標準化特徵
+            scaler = StandardScaler()
+            features_scaled = scaler.fit_transform(features)
+            
+            # 檢查是否有常數特徵
+            if np.allclose(features_scaled.var(axis=0), 0):
+                print(f"⚠️ {feature_type}: All features are constant, keeping original")
+                return features
+            
+            # 應用PCA
+            pca = PCA(n_components=max_components)
+            pca_features = pca.fit_transform(features_scaled)
+            
+            # 檢查保留的方差比例
+            variance_ratio = np.sum(pca.explained_variance_ratio_)
+            
+            if variance_ratio < self.config.pca_variance_threshold:
+                print(f"⚠️ {feature_type}: PCA variance ratio {variance_ratio:.3f} < threshold {self.config.pca_variance_threshold}, keeping original")
+                return features
+            else:
+                print(f"✓ {feature_type}: PCA {n_features} -> {max_components} features, variance ratio: {variance_ratio:.3f}")
+                return pca_features
+                
+        except Exception as e:
+            print(f"⚠️ {feature_type}: PCA failed ({e}), keeping original features")
+            return features

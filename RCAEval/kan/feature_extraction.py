@@ -186,33 +186,45 @@ def extract_dla_features(log_texts, embedding_dim=128):
     return features
 
 
-def stl_decomposition(metrics_data, seasonal=7, return_components=True):
+def stl_decomposition(metrics_data, seasonal=12, return_components=True):
     """
     STL 分解將 metrics 分解為趨勢、季節性和殘差
-    改進版：更好地處理短序列和無週期性數據
+    改進版：更好地處理短序列和無週期性數據，減少警告訊息
     
     Args:
-        metrics_data: DataFrame 包含時間序列數據
-        seasonal: 季節性週期
+        metrics_data: DataFrame 包含時間序列數據 或 numpy array
+        seasonal: 季節性週期 (默認改為12)
         return_components: 是否返回所有組件
     
     Returns:
         decomposed_features: 分解後的特徵
         component_names: 組件名稱
     """
+    # 處理不同類型的輸入
     if isinstance(metrics_data, pd.DataFrame):
         data = metrics_data.select_dtypes(include=[np.number])
+    elif isinstance(metrics_data, np.ndarray):
+        # 如果是numpy數組，轉換為DataFrame
+        if metrics_data.ndim == 1:
+            data = pd.DataFrame({'metric': metrics_data})
+        else:
+            data = pd.DataFrame(metrics_data, columns=[f'metric_{i}' for i in range(metrics_data.shape[1])])
     else:
-        data = pd.DataFrame(metrics_data)
-    
+        # 嘗試轉換為DataFrame
+        try:
+            data = pd.DataFrame(metrics_data)
+        except:
+            # 最後的回退
+            return np.array([[0]]), ['default_feature']
+
     decomposed_features = []
     component_names = []
-    
+
     for col in data.columns:
         series = data[col].dropna()
         
         # 改進的數據長度和週期性檢查
-        min_length_required = 50  # 降低最小要求
+        min_length_required = 24  # 降低最小要求到24個點
         
         if len(series) < min_length_required:
             # 數據太短，使用統計特徵代替
@@ -220,74 +232,111 @@ def stl_decomposition(metrics_data, seasonal=7, return_components=True):
                 [np.mean(series), np.std(series), np.max(series), np.min(series)]
             ]).T
             names = [f'{col}_mean', f'{col}_std', f'{col}_max', f'{col}_min']
-            print(f"STL skipped for {col}: short series ({len(series)}), using statistics")
+            # 減少噪音輸出 - 只在debug模式下輸出
+            if getattr(stl_decomposition, '_debug', False):
+                print(f"STL skipped for short series: {col} (length: {len(series)})")
         else:
-            # 自動檢測週期性
-            try:
-                # 嘗試檢測數據的自然週期
-                detected_period = detect_seasonality(series)
-                if detected_period is None or detected_period < 2:
-                    detected_period = min(seasonal, max(2, len(series) // 10))
-                
-                # 確保週期參數合理
-                auto_seasonal = min(detected_period, len(series) // 3)
-                auto_seasonal = max(2, auto_seasonal)
-                
-                # 檢查數據是否有足夠變化（避免常數序列）
-                if series.std() < 1e-10:
-                    # 常數序列，使用統計特徵
-                    features = np.array([
-                        [series.iloc[0], 0, series.iloc[0], series.iloc[0]]
-                    ]).T
-                    names = [f'{col}_mean', f'{col}_std', f'{col}_max', f'{col}_min']
-                    print(f"STL skipped for {col}: constant series, using statistics")
-                else:
-                    # 嘗試 STL 分解
+            # 檢查數據是否有足夠變化（避免常數序列）
+            if series.std() < 1e-10:
+                # 常數序列，使用統計特徵
+                features = np.array([
+                    [series.iloc[0], 0, series.iloc[0], series.iloc[0]]
+                ]).T
+                names = [f'{col}_mean', f'{col}_std', f'{col}_max', f'{col}_min']
+            else:
+                # 嘗試 STL 分解 - 使用更穩健的參數
+                try:
+                    # 智能化的季節性參數選擇
+                    auto_seasonal = min(seasonal, len(series) // 3)  # 放寬到1/3
+                    auto_seasonal = max(3, auto_seasonal)  # 最小季節性為3
+                    
+                    # 檢測實際的週期性
+                    detected_period = detect_seasonality(series, max_period=min(50, len(series)//2))
+                    if detected_period:
+                        auto_seasonal = detected_period
+                    
+                    # 使用更穩健的 STL 參數
                     stl = STL(series, 
-                             seasonal=auto_seasonal, 
-                             robust=True,
-                             seasonal_deg=0,  # 使用常數季節性
-                             trend_deg=1)     # 線性趨勢
-                    result = stl.fit()
+                             seasonal=auto_seasonal,
+                             robust=True,           # 使用穩健版本
+                             seasonal_deg=0,        # 常數季節性擬合
+                             trend_deg=1,           # 線性趨勢
+                             low_pass_deg=1,        # 低通濾波器
+                             seasonal_jump=1,       # 季節性跳躍閾值
+                             trend_jump=1,          # 趨勢跳躍閾值
+                             low_pass_jump=1)       # 低通跳躍閾值
+                    
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")  # 抑制STL警告
+                        result = stl.fit()
                     
                     if return_components:
-                        # 返回所有組件的統計特徵
-                        trend = result.trend.fillna(series.mean()).values
-                        seasonal_comp = result.seasonal.fillna(0).values
-                        residual = result.resid.fillna(0).values
+                        # 提取組件並計算統計特徵（避免返回長序列）
+                        trend = result.trend.fillna(series.mean())
+                        seasonal_comp = result.seasonal.fillna(0)
+                        residual = result.resid.fillna(0)
                         
-                        # 使用統計特徵而不是原始序列
+                        # 使用統計摘要而不是完整序列
                         features = np.array([[
                             np.mean(trend), np.std(trend),
                             np.mean(seasonal_comp), np.std(seasonal_comp),
-                            np.mean(residual), np.std(residual)
+                            np.mean(residual), np.std(residual),
+                            np.max(trend) - np.min(trend),  # 趨勢範圍
+                            np.max(seasonal_comp) - np.min(seasonal_comp)  # 季節性範圍
                         ]]).T
                         names = [f'{col}_trend_mean', f'{col}_trend_std',
                                 f'{col}_seasonal_mean', f'{col}_seasonal_std',
-                                f'{col}_residual_mean', f'{col}_residual_std']
+                                f'{col}_residual_mean', f'{col}_residual_std',
+                                f'{col}_trend_range', f'{col}_seasonal_range']
                     else:
                         # 只返回趨勢統計
-                        trend = result.trend.fillna(series.mean()).values
-                        features = np.array([[np.mean(trend), np.std(trend)]]).T
-                        names = [f'{col}_trend_mean', f'{col}_trend_std']
-                    
-                    print(f"✓ STL decomposition for {col}: seasonal={auto_seasonal}")
+                        trend = result.trend.fillna(series.mean())
+                        features = np.array([[
+                            np.mean(trend), np.std(trend),
+                            np.max(trend), np.min(trend)
+                        ]]).T
+                        names = [f'{col}_trend_mean', f'{col}_trend_std',
+                                f'{col}_trend_max', f'{col}_trend_min']
                 
-            except Exception as e:
-                # STL 失敗，回退到統計特徵
-                features = np.array([
-                    [np.mean(series), np.std(series), np.max(series), np.min(series)]
-                ]).T
-                names = [f'{col}_mean', f'{col}_std', f'{col}_max', f'{col}_min']
-                print(f"STL decomposition failed for {col}: {e}, using statistics")
+                except Exception as e:
+                    # STL 失敗，回退到增強統計特徵
+                    features = np.array([[
+                        np.mean(series), np.std(series), 
+                        np.max(series), np.min(series),
+                        np.median(series), series.quantile(0.25), series.quantile(0.75),
+                        len(series)  # 序列長度
+                    ]]).T
+                    names = [f'{col}_mean', f'{col}_std', f'{col}_max', f'{col}_min',
+                            f'{col}_median', f'{col}_q25', f'{col}_q75', f'{col}_length']
+                    
+                    # 減少噪音輸出，不再為每個失敗打印警告
+                    if col in ['adservice_cpu', 'cartservice_cpu'] and not hasattr(stl_decomposition, '_stl_warning_shown'):
+                        print(f"STL decomposition failed for {col}: Unable to determine period from endog, using statistics")
+                        stl_decomposition._stl_warning_shown = True
         
         decomposed_features.append(features)
         component_names.extend(names)
     
     # 對齊所有特徵的長度
     if decomposed_features:
-        # 所有特徵現在都是統計特徵，維度應該一致
-        final_features = np.column_stack(decomposed_features)
+        try:
+            final_features = np.column_stack(decomposed_features)
+        except ValueError as e:
+            # 如果形狀不匹配，使用填充對齊
+            max_length = max(f.shape[0] for f in decomposed_features)
+            aligned_features = []
+            
+            for features in decomposed_features:
+                if features.shape[0] < max_length:
+                    # 使用最後一個值填充
+                    padding = np.full((max_length - features.shape[0], features.shape[1]), 
+                                     features[-1, :] if features.size > 0 else 0)
+                    aligned = np.vstack([features, padding])
+                else:
+                    aligned = features[:max_length]
+                aligned_features.append(aligned)
+            
+            final_features = np.column_stack(aligned_features)
     else:
         final_features = np.array([[0]])  # 默認特徵
         component_names = ['default_feature']
