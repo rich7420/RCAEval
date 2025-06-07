@@ -96,7 +96,7 @@ def benchmark_kan_layers():
             # 2. 測試 UltraFastKANLayer
             print("\n2. UltraFastKANLayer:")
             model_ultra = UltraFastKANLayer(
-                config['input'], config['output'], table_size=256
+                config['input'], config['output'], num_activations=4
             ).to(device)
             
             # 預熱
