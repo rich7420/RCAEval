@@ -1161,11 +1161,11 @@ if __name__ == "__main__":
 def enhanced_feature_fusion(log_feats, metric_feats, topo_feats, error_feats, trace_feats, service_topo_feats, 
                            fusion_method='attention', target_dim=128):
     """
-    增強的特徵融合，支持多種模態包括trace和service topology
+    增強的特徵融合，支援多種模態包括trace和service topology
     
     Args:
         log_feats: 日誌特徵 (第一個參數)
-        metric_feats: 指標特徵 (第二個參數)
+        metric_feats: 指標特徵 (第二個參數)  
         topo_feats: 拓樸特徵
         error_feats: 錯誤特徵
         trace_feats: 追蹤特徵
@@ -1179,7 +1179,7 @@ def enhanced_feature_fusion(log_feats, metric_feats, topo_feats, error_feats, tr
     available_features = []
     feature_names = []
     
-    # 收集可用特徵
+    # 收集可用特徵 - 按照統一的順序
     if log_feats is not None and log_feats.size > 0:
         available_features.append(log_feats)
         feature_names.append('log')
@@ -1203,13 +1203,13 @@ def enhanced_feature_fusion(log_feats, metric_feats, topo_feats, error_feats, tr
     if service_topo_feats is not None and service_topo_feats.size > 0:
         available_features.append(service_topo_feats)
         feature_names.append('service_topology')
-    
+
     if not available_features:
-        print("⚠️ No valid features available for fusion")
+        print("⚠️ 沒有可用的特徵進行融合")
         return np.array([])
-    
-    print(f"Fusing {len(available_features)} feature types: {feature_names}")
-    
+
+    print(f"正在融合 {len(available_features)} 種特徵類型: {feature_names}")
+
     try:
         # 對齊特徵維度
         min_rows = min(feat.shape[0] for feat in available_features)
@@ -1238,7 +1238,7 @@ def enhanced_feature_fusion(log_feats, metric_feats, topo_feats, error_feats, tr
             fused = _weighted_fusion(aligned_features, weights)
             
         else:
-            # 默認拼接
+            # 預設拼接
             fused = np.hstack(aligned_features)
         
         # 降維到目標維度
@@ -1252,12 +1252,12 @@ def enhanced_feature_fusion(log_feats, metric_feats, topo_feats, error_feats, tr
             pca = PCA(n_components=min(target_dim, fused_scaled.shape[1]))
             fused = pca.fit_transform(fused_scaled)
             
-            print(f"✓ Feature fusion: {sum(f.shape[1] for f in aligned_features)} -> {fused.shape[1]} dims")
+            print(f"✓ 特徵融合: {sum(f.shape[1] for f in aligned_features)} -> {fused.shape[1]} 維度")
         
         return fused
         
     except Exception as e:
-        print(f"⚠️ Feature fusion failed: {e}, using simple concatenation")
+        print(f"⚠️ 特徵融合失敗: {e}，使用簡單拼接")
         # 回退到簡單拼接
         return np.hstack(aligned_features)
 
