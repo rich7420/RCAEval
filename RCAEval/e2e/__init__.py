@@ -139,7 +139,11 @@ def nsigma(data, inject_time=None, dataset=None, num_loop=None, sli=None, anomal
 def e_diagnosis(
     data, inject_time=None, dataset=None, num_loop=None, sli=None, anomalies=None, **kwargs
 ):
-    from pyrca.analyzers.epsilon_diagnosis import EpsilonDiagnosis
+    try:
+        from pyrca.analyzers.epsilon_diagnosis import EpsilonDiagnosis
+    except ImportError:
+        print("Warning: PyRCA not installed. e_diagnosis functionality unavailable.")
+        return dummy(data, inject_time, dataset, **kwargs)
 
     alpha = float(os.getenv("E_ALPHA", 0.01))
     # print(f"=========== E alpha: {alpha} ===========")
@@ -187,9 +191,13 @@ def e_diagnosis(
 
 
 def ht(data, inject_time=None, dataset=None, num_loop=None, sli=None, anomalies=None, **kwargs):
-    from pyrca.analyzers.ht import HT, HTConfig
-    from pyrca.graphs.causal.fges import FGES, FGESConfig
-    from pyrca.graphs.causal.pc import PC
+    try:
+        from pyrca.analyzers.ht import HT, HTConfig
+        from pyrca.graphs.causal.fges import FGES, FGESConfig
+        from pyrca.graphs.causal.pc import PC
+    except ImportError:
+        print("Warning: PyRCA not installed. ht functionality unavailable.")
+        return dummy(data, inject_time, dataset, **kwargs)
 
     if anomalies is None:
         normal_df = data[data["time"] < inject_time]

@@ -189,11 +189,11 @@ class MultiModalFeatureExtractor:
                 
                 if stl_features.size > 0:
                     # KLL 處理
-                    processed_features = kll_feature_processing(
-                        stl_features, k=self.config.kll_k
+                    processed_features, kll_names = kll_feature_processing(
+                        stl_features, sketch_size=self.config.kll_k
                     )
                     window_features.append(processed_features)
-                    window_node_names.extend([f'w{window_idx}_{name}' for name in stl_names])
+                    window_node_names.extend([f'w{window_idx}_{name}' for name in kll_names])
             
             # 處理 log 數據
             if 'log' in window_data:
@@ -242,11 +242,11 @@ class MultiModalFeatureExtractor:
                 
                 if stl_features.size > 0:
                     # KLL 處理
-                    processed_features = kll_feature_processing(
-                        stl_features, k=self.config.kll_k
+                    processed_features, kll_names = kll_feature_processing(
+                        stl_features, sketch_size=self.config.kll_k
                     )
                     window_features.append(processed_features)
-                    window_node_names.extend([f'w{window_idx}_{name}' for name in stl_names])
+                    window_node_names.extend([f'w{window_idx}_{name}' for name in kll_names])
                 
                 # 提取錯誤特徵
                 print("Extracting error features...")
@@ -379,8 +379,8 @@ class MultiModalFeatureExtractor:
         
         if stl_features.size > 0:
             # KLL 處理
-            processed_features = kll_feature_processing(
-                stl_features, k=self.config.kll_k
+            processed_features, kll_names = kll_feature_processing(
+                stl_features, sketch_size=self.config.kll_k
             )
             return processed_features, node_names
         else:

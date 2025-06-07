@@ -927,6 +927,77 @@ def extract_service_topology_features(service_graph, service_names=None):
     return np.array(features).reshape(1, -1), feature_names
 
 
+def kll_feature_processing(data, sketch_size=1024):
+    """
+    KLL (K-ary Lossy List) 特徵處理
+    用於大規模數據的分位數估計和特徵提取
+    
+    Args:
+        data: 輸入數據 (DataFrame 或 numpy array)
+        sketch_size: KLL sketch 大小
+    
+    Returns:
+        kll_features: KLL 處理後的特徵
+        feature_names: 特徵名稱
+    """
+    print("Processing KLL features...")
+    
+    if isinstance(data, pd.DataFrame):
+        numeric_data = data.select_dtypes(include=[np.number])
+    else:
+        numeric_data = pd.DataFrame(data) if not isinstance(data, pd.DataFrame) else data
+    
+    features = []
+    feature_names = []
+    
+    for col in numeric_data.columns:
+        series = numeric_data[col].dropna()
+        
+        if len(series) == 0:
+            continue
+            
+        try:
+            # 簡化版 KLL：計算關鍵分位數
+            quantiles = [0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99]
+            kll_quantiles = [series.quantile(q) for q in quantiles]
+            
+            # 額外的統計特徵
+            additional_stats = [
+                series.mean(),                    # 均值
+                series.std(),                     # 標準差
+                series.skew(),                    # 偏度
+                series.kurtosis(),                # 峰度
+                (series.max() - series.min()),    # 範圍
+                len(series.unique()) / len(series) if len(series) > 0 else 0,  # 唯一值比例
+            ]
+            
+            # 合併特徵
+            col_features = kll_quantiles + additional_stats
+            features.extend(col_features)
+            
+            # 特徵名稱
+            quantile_names = [f'{col}_q{int(q*100):02d}' for q in quantiles]
+            stat_names = [f'{col}_mean', f'{col}_std', f'{col}_skew', 
+                         f'{col}_kurtosis', f'{col}_range', f'{col}_unique_ratio']
+            feature_names.extend(quantile_names + stat_names)
+            
+        except Exception as e:
+            print(f"KLL processing failed for {col}: {e}")
+            # 回退到基本統計
+            basic_stats = [series.mean(), series.std(), series.min(), series.max()]
+            features.extend(basic_stats)
+            feature_names.extend([f'{col}_mean', f'{col}_std', f'{col}_min', f'{col}_max'])
+    
+    if not features:
+        print("No KLL features extracted, returning empty array")
+        return np.array([]), []
+    
+    kll_features = np.array(features).reshape(1, -1)
+    print(f"✓ Extracted {kll_features.shape[1]} KLL features")
+    
+    return kll_features, feature_names
+
+
 # 測試函數
 def test_feature_extraction():
     """測試特徵提取功能"""
