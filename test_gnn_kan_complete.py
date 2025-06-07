@@ -107,8 +107,8 @@ def test_gnn_kan_features():
         print(f"✓ STL 分解: 特徵形狀 {stl_features.shape}")
         
         # 測試 KLL 處理
-        kll_features = kll_feature_processing(stl_features, k=32)
-        print(f"✓ KLL 處理: 特徵形狀 {kll_features.shape}")
+        kll_features, feature_names = kll_feature_processing(stl_features, sketch_size=32)
+        print(f"✓ KLL 處理: 特徵形狀 {kll_features.shape}, 特徵名稱數量: {len(feature_names)}")
         
         # 測試日誌特徵
         log_features, log_names = extract_log_features(test_data[['log_text']])
