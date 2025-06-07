@@ -748,7 +748,7 @@ def train_gnn_kan_model(model, node_features, edge_index, config):
                 grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
                 
                 # 檢查梯度是否過大
-                if grad_norm > 10.0:
+                if grad_norm > 5.0:  # 降低閾值從10.0到5.0
                     print(f"Large gradient norm {grad_norm} at epoch {epoch}, skipping update...")
                     continue
                 

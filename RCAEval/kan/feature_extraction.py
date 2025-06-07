@@ -1035,3 +1035,263 @@ def test_feature_extraction():
 
 if __name__ == "__main__":
     test_feature_extraction()
+
+def enhanced_feature_fusion(metric_features, log_features, trace_features, 
+                          topology_features, error_features, 
+                          fusion_method='adaptive', target_dim=64):
+    """
+    增强的多模态特征融合，专为 GNN-KAN 设计
+    
+    Args:
+        metric_features: 度量特徵 (時間序列)
+        log_features: 日誌特徵 
+        trace_features: 追蹤特徵
+        topology_features: 拓樸特徵
+        error_features: 錯誤特徵
+        fusion_method: 融合方法 ('adaptive', 'attention', 'weighted', 'concatenate')
+        target_dim: 目標特徵維度
+    
+    Returns:
+        fused_features: 融合後的特徵矩陣
+        feature_names: 特徵名稱列表
+    """
+    print(f"Enhanced feature fusion with method: {fusion_method}")
+    
+    # 收集有效特徵
+    valid_features = []
+    feature_sources = []
+    all_feature_names = []
+    
+    # 處理度量特徵
+    if metric_features is not None and metric_features.size > 0:
+        if metric_features.ndim == 1:
+            metric_features = metric_features.reshape(1, -1)
+        valid_features.append(metric_features)
+        feature_sources.append('metric')
+        all_feature_names.extend([f'metric_{i}' for i in range(metric_features.shape[1])])
+    
+    # 處理日誌特徵
+    if log_features is not None and log_features.size > 0:
+        if log_features.ndim == 1:
+            log_features = log_features.reshape(1, -1)
+        valid_features.append(log_features)
+        feature_sources.append('log')
+        all_feature_names.extend([f'log_{i}' for i in range(log_features.shape[1])])
+    
+    # 處理追蹤特徵
+    if trace_features is not None and trace_features.size > 0:
+        if trace_features.ndim == 1:
+            trace_features = trace_features.reshape(1, -1)
+        valid_features.append(trace_features)
+        feature_sources.append('trace')
+        all_feature_names.extend([f'trace_{i}' for i in range(trace_features.shape[1])])
+    
+    # 處理拓樸特徵
+    if topology_features is not None and topology_features.size > 0:
+        if topology_features.ndim == 1:
+            topology_features = topology_features.reshape(1, -1)
+        valid_features.append(topology_features)
+        feature_sources.append('topology')
+        all_feature_names.extend([f'topo_{i}' for i in range(topology_features.shape[1])])
+    
+    # 處理錯誤特徵
+    if error_features is not None and error_features.size > 0:
+        if error_features.ndim == 1:
+            error_features = error_features.reshape(1, -1)
+        valid_features.append(error_features)
+        feature_sources.append('error')
+        all_feature_names.extend([f'error_{i}' for i in range(error_features.shape[1])])
+    
+    if not valid_features:
+        print("No valid features for fusion, returning empty array")
+        return np.array([]), []
+    
+    # 對齊特徵維度
+    max_rows = max(f.shape[0] for f in valid_features)
+    aligned_features = []
+    
+    for features in valid_features:
+        if features.shape[0] < max_rows:
+            # 重複行以對齊
+            repeat_times = max_rows // features.shape[0]
+            remainder = max_rows % features.shape[0]
+            
+            repeated = np.tile(features, (repeat_times, 1))
+            if remainder > 0:
+                extra = features[:remainder]
+                features_aligned = np.vstack([repeated, extra])
+            else:
+                features_aligned = repeated
+        else:
+            features_aligned = features[:max_rows]
+        
+        aligned_features.append(features_aligned)
+    
+    # 特徵融合
+    if fusion_method == 'adaptive':
+        fused_features = _adaptive_fusion(aligned_features, feature_sources)
+    elif fusion_method == 'attention':
+        fused_features = _attention_fusion_enhanced(aligned_features, feature_sources)
+    elif fusion_method == 'weighted':
+        weights = _compute_feature_weights(feature_sources)
+        fused_features = _weighted_fusion(aligned_features, weights)
+    else:  # concatenate
+        fused_features = np.hstack(aligned_features)
+    
+    # 降維到目標維度
+    if target_dim is not None and fused_features.shape[1] > target_dim:
+        try:
+            from sklearn.decomposition import PCA
+            pca = PCA(n_components=min(target_dim, fused_features.shape[1]))
+            fused_features = pca.fit_transform(fused_features)
+            
+            # 更新特徵名稱
+            final_feature_names = [f'pca_{i}' for i in range(fused_features.shape[1])]
+        except:
+            # 如果 PCA 失敗，截斷特徵
+            fused_features = fused_features[:, :target_dim]
+            final_feature_names = all_feature_names[:target_dim]
+    else:
+        final_feature_names = all_feature_names[:fused_features.shape[1]] if len(all_feature_names) >= fused_features.shape[1] else all_feature_names
+    
+    print(f"✓ Enhanced fusion completed: {fused_features.shape}")
+    return fused_features, final_feature_names
+
+
+def _adaptive_fusion(features_list, feature_sources):
+    """自適應特徵融合"""
+    # 計算每個特徵源的重要性權重
+    importance_weights = {
+        'metric': 0.35,    # 度量特徵最重要
+        'log': 0.25,       # 日誌特徵
+        'trace': 0.20,     # 追蹤特徵  
+        'topology': 0.15,  # 拓樸特徵
+        'error': 0.05      # 錯誤特徵
+    }
+    
+    # 標準化所有特徵到相同尺度
+    from sklearn.preprocessing import StandardScaler
+    
+    normalized_features = []
+    for features in features_list:
+        scaler = StandardScaler()
+        try:
+            normalized = scaler.fit_transform(features)
+        except:
+            normalized = features
+        normalized_features.append(normalized)
+    
+    # 找到最小的特徵維度
+    min_cols = min(f.shape[1] for f in normalized_features)
+    
+    # 截斷或填充特徵到相同維度
+    aligned_features = []
+    for features in normalized_features:
+        if features.shape[1] > min_cols:
+            # 取前 min_cols 個特徵
+            aligned = features[:, :min_cols]
+        elif features.shape[1] < min_cols:
+            # 用零填充
+            padding = np.zeros((features.shape[0], min_cols - features.shape[1]))
+            aligned = np.hstack([features, padding])
+        else:
+            aligned = features
+        aligned_features.append(aligned)
+    
+    # 加權融合
+    fused = np.zeros_like(aligned_features[0])
+    for features, source in zip(aligned_features, feature_sources):
+        weight = importance_weights.get(source, 0.1)
+        fused += weight * features
+    
+    return fused
+
+
+def _attention_fusion_enhanced(features_list, feature_sources):
+    """增強的注意力機制融合"""
+    # 計算注意力權重 (基於特徵方差)
+    attention_scores = []
+    
+    for features in features_list:
+        # 使用特徵方差作為注意力分數
+        variance_score = np.mean(np.var(features, axis=0))
+        attention_scores.append(variance_score)
+    
+    # 軟件最大化
+    attention_scores = np.array(attention_scores)
+    attention_weights = np.exp(attention_scores) / np.sum(np.exp(attention_scores))
+    
+    # 標準化特徵維度
+    target_cols = min(f.shape[1] for f in features_list)
+    normalized_features = []
+    
+    for features in features_list:
+        if features.shape[1] != target_cols:
+            # 使用平均池化調整維度
+            if features.shape[1] > target_cols:
+                # 降維：平均池化
+                pool_size = features.shape[1] // target_cols
+                pooled = []
+                for i in range(target_cols):
+                    start_idx = i * pool_size
+                    end_idx = min((i + 1) * pool_size, features.shape[1])
+                    pooled_col = np.mean(features[:, start_idx:end_idx], axis=1, keepdims=True)
+                    pooled.append(pooled_col)
+                features = np.hstack(pooled)
+            else:
+                # 升維：重複最後一列
+                padding = np.repeat(features[:, -1:], target_cols - features.shape[1], axis=1)
+                features = np.hstack([features, padding])
+        
+        normalized_features.append(features)
+    
+    # 注意力加權融合
+    fused = np.zeros_like(normalized_features[0])
+    for features, weight in zip(normalized_features, attention_weights):
+        fused += weight * features
+    
+    return fused
+
+
+def _weighted_fusion(features_list, weights):
+    """加權特徵融合"""
+    # 對齊特徵維度
+    target_cols = min(f.shape[1] for f in features_list)
+    aligned_features = []
+    
+    for features in features_list:
+        if features.shape[1] > target_cols:
+            aligned = features[:, :target_cols]
+        elif features.shape[1] < target_cols:
+            padding = np.zeros((features.shape[0], target_cols - features.shape[1]))
+            aligned = np.hstack([features, padding])
+        else:
+            aligned = features
+        aligned_features.append(aligned)
+    
+    # 加權融合
+    fused = np.zeros_like(aligned_features[0])
+    for features, weight in zip(aligned_features, weights):
+        fused += weight * features
+    
+    return fused
+
+
+def _compute_feature_weights(feature_sources):
+    """計算特徵權重"""
+    weight_map = {
+        'metric': 0.4,
+        'log': 0.25,
+        'trace': 0.2,
+        'topology': 0.1,
+        'error': 0.05
+    }
+    
+    weights = [weight_map.get(source, 0.1) for source in feature_sources]
+    
+    # 歸一化權重
+    total_weight = sum(weights)
+    if total_weight > 0:
+        weights = [w / total_weight for w in weights]
+    
+    return weights

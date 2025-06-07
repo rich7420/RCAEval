@@ -158,7 +158,7 @@ class OptimizedGNNKANEncoder(nn.Module):
         
         # 選擇 KAN 層類型
         if kan_type == 'fast':
-            KANLayer = FastKANLayer
+            KANLayerClass = FastKANLayer
         elif kan_type == 'simplified':
             KANLayerClass = SimplifiedKANLayer
         else:  # 'ultra_fast'
