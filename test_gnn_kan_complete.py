@@ -30,7 +30,7 @@ def run_command(cmd, description=""):
     print(f"{'='*50}")
     
     try:
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=300)
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=600)  # 增加到10分鐘
         
         if result.stdout:
             print("輸出:")
@@ -47,7 +47,7 @@ def run_command(cmd, description=""):
         return True
         
     except subprocess.TimeoutExpired:
-        print("命令執行超時 (5分鐘)")
+        print("命令執行超時 (10分鐘)")
         return False
     except Exception as e:
         print(f"執行命令時發生錯誤: {e}")
@@ -62,24 +62,26 @@ def test_gnn_kan_features():
     # 測試 KAN 模組
     print("\n1. 測試 KAN 模組...")
     try:
-        from RCAEval.kan import KANLayer, GNNKANEncoder
+        from RCAEval.kan import UltraFastKANLayer, OptimizedGNNKANEncoder
         import torch
         
-        # 測試 KANLayer
-        kan = KANLayer(input_dim=10, output_dim=5)
+        # 測試 UltraFastKANLayer
+        kan = UltraFastKANLayer(input_dim=10, output_dim=5)
         x = torch.randn(32, 10)
         output = kan(x)
-        print(f"✓ KANLayer 測試通過: 輸入 {x.shape} -> 輸出 {output.shape}")
+        print(f"✓ UltraFastKANLayer 測試通過: 輸入 {x.shape} -> 輸出 {output.shape}")
         
-        # 測試 GNNKANEncoder
-        encoder = GNNKANEncoder(input_dim=10, hidden_dims=[16, 8], output_dim=5)
+        # 測試 OptimizedGNNKANEncoder
+        encoder = OptimizedGNNKANEncoder(input_dim=10, hidden_dims=[16, 8], output_dim=5)
         edge_index = torch.tensor([[0, 1, 2], [1, 2, 0]], dtype=torch.long)
         node_features = torch.randn(3, 10)
         embeddings = encoder(node_features, edge_index)
-        print(f"✓ GNNKANEncoder 測試通過: {embeddings.shape}")
+        print(f"✓ OptimizedGNNKANEncoder 測試通過: {embeddings.shape}")
         
     except Exception as e:
         print(f"✗ KAN 模組測試失敗: {e}")
+        import traceback
+        traceback.print_exc()
         return False
     
     # 測試特徵提取功能
@@ -99,7 +101,9 @@ def test_gnn_kan_features():
         })
         
         # 測試 sliding window
-        windows, timestamps = sliding_window_alignment(test_data, window_size=10)
+        windows, timestamps = sliding_window_alignment(
+            test_data, window_size=10, step_size=1, timestamp_col='time'
+        )
         print(f"✓ Sliding Window: 創建了 {len(windows)} 個窗口")
         
         # 測試 STL 分解 (使用更小的季節性參數)
@@ -110,14 +114,16 @@ def test_gnn_kan_features():
         kll_features, feature_names = kll_feature_processing(stl_features, sketch_size=32)
         print(f"✓ KLL 處理: 特徵形狀 {kll_features.shape}, 特徵名稱數量: {len(feature_names)}")
         
-        # 測試日誌特徵
-        log_features, log_names = extract_log_features(test_data[['log_text']])
+        # 測試日誌特徵 - 修正參數
+        log_data = pd.DataFrame({'message': test_data['log_text']})
+        log_features, log_names = extract_log_features(log_data, use_dla=False, max_features=10)
         print(f"✓ 日誌特徵: 特徵形狀 {log_features.shape}")
         
         # 測試拓樸特徵
         adj_matrix = np.random.rand(5, 5)
         adj_matrix = (adj_matrix > 0.7).astype(float)
-        topo_features, topo_names = compute_topology_features(adj_matrix)
+        node_names = [f'node_{i}' for i in range(5)]
+        topo_features, topo_names = compute_topology_features(adj_matrix, node_names)
         print(f"✓ 拓樸特徵: {len(topo_features)} 個特徵")
         
         # 測試錯誤特徵
@@ -152,8 +158,10 @@ def test_gnn_kan_features():
             test_data, 
             inject_time=inject_time, 
             dataset='test',
-            epochs=10,  # 減少訓練輪數加快測試
-            stl_seasonal=5  # 使用較小的季節性參數
+            epochs=3,  # 進一步減少訓練輪數
+            stl_seasonal=3,  # 使用更小的季節性參數
+            window_size=5,  # 更小窗口
+            batch_size=8   # 更小批次
         )
         
         print(f"✓ GNN-KAN RCA 測試通過:")

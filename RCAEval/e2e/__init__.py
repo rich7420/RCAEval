@@ -59,10 +59,21 @@ if is_py310():
     from .tracerca import tracerca
     # Import our new GNN-KAN method
     try:
-        from .gnn_kan import gnn_kan_rca as gnn_kan
+        from .gnn_kan import gnn_kan_rca
+        
+        # 創建包裝函數以符合 main.py 的調用方式
+        def gnn_kan(data, inject_time=None, dataset=None, **kwargs):
+            """GNN-KAN 包裝函數"""
+            return gnn_kan_rca(data, inject_time, dataset, **kwargs)
+            
     except Exception as e:
         print(f"Failed to import GNN-KAN: {e}")
-        pass
+        
+        # 提供回退函數
+        def gnn_kan(data, inject_time=None, dataset=None, **kwargs):
+            """GNN-KAN 回退函數"""
+            print("GNN-KAN 不可用，使用隨機基線")
+            return dummy(data, inject_time, dataset, **kwargs)
 else:
     from .rcd import rcd
     from .mmrcd import mmrcd

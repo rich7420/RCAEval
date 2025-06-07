@@ -5,8 +5,10 @@ KAN (Kolmogorov-Arnold Networks) module for RCAEval
 
 from .kan_layer import (
     KANLayer, GNNKANEncoder,
-    SimplifiedKANLayer, UltraFastKANLayer, FastKANLayer, OptimizedGNNKANEncoder
+    SimplifiedKANLayer, UltraFastKANLayer, FastKANLayer, OptimizedGNNKANEncoder,
+    AdvancedKANLayer
 )
+from .gradient_stabilizer import GradientStabilizer, StabilizedKANLayer
 from .feature_extraction import (
     sliding_window_alignment,
     extract_log_features,
@@ -26,12 +28,17 @@ __all__ = [
     'GNNKANEncoder',
     
     # GPU 優化的 KAN 層
+    'AdvancedKANLayer',
     'SimplifiedKANLayer',
     'UltraFastKANLayer', 
     'FastKANLayer',
     'OptimizedGNNKANEncoder',
     
-    # 特徵提取功能
+    # 梯度穩定化組件
+    'GradientStabilizer',
+    'StabilizedKANLayer',
+    
+    # 特徵提取函數
     'sliding_window_alignment',
     'extract_log_features',
     'stl_decomposition',

@@ -20,15 +20,17 @@ from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics.pairwise import cosine_similarity
 import scipy.sparse as sp
+import traceback
 
 # Import our optimized KAN modules
 from RCAEval.kan import (
-    SimplifiedKANLayer, UltraFastKANLayer, OptimizedGNNKANEncoder,
-    sliding_window_alignment, extract_log_features, stl_decomposition,
-    kll_feature_processing, compute_topology_features,
-    feature_fusion, extract_error_features,
-    extract_trace_features, build_service_dependency_graph,
-    extract_service_topology_features
+    OptimizedGNNKANEncoder, UltraFastKANLayer, 
+    GradientStabilizer, StabilizedKANLayer,
+    sliding_window_alignment, extract_log_features,
+    stl_decomposition, kll_feature_processing,
+    compute_topology_features, extract_error_features,
+    feature_fusion, extract_trace_features,
+    build_service_dependency_graph, extract_service_topology_features
 )
 from RCAEval.io.time_series import preprocess, drop_constant
 
@@ -462,6 +464,57 @@ class MultiModalFeatureExtractor:
             return processed_features, node_names
         else:
             return np.array([]), []
+    
+    def _apply_pca_with_variance_check(self, features, feature_type, target_components=None):
+        """
+        應用PCA降維並檢查方差保留
+        
+        Args:
+            features: 輸入特徵矩陣
+            feature_type: 特徵類型 (用於日誌)
+            target_components: 目標主成分數量
+            
+        Returns:
+            pca_features: PCA降維後的特徵
+        """
+        if target_components is None:
+            target_components = self.config.pca_components
+            
+        try:
+            # 確保有足夠的樣本進行PCA
+            n_samples, n_features = features.shape
+            max_components = min(n_samples, n_features, target_components)
+            
+            if max_components < 2:
+                print(f"⚠️ {feature_type}: Insufficient samples/features for PCA, keeping original")
+                return features
+            
+            # 標準化特徵
+            scaler = StandardScaler()
+            features_scaled = scaler.fit_transform(features)
+            
+            # 檢查是否有常數特徵
+            if np.allclose(features_scaled.var(axis=0), 0):
+                print(f"⚠️ {feature_type}: All features are constant, keeping original")
+                return features
+            
+            # 應用PCA
+            pca = PCA(n_components=max_components)
+            pca_features = pca.fit_transform(features_scaled)
+            
+            # 檢查保留的方差比例
+            variance_ratio = np.sum(pca.explained_variance_ratio_)
+            
+            if variance_ratio < self.config.pca_variance_threshold:
+                print(f"⚠️ {feature_type}: PCA variance ratio {variance_ratio:.3f} < threshold {self.config.pca_variance_threshold}, keeping original")
+                return features
+            else:
+                print(f"✓ {feature_type}: PCA {n_features} -> {max_components} features, variance ratio: {variance_ratio:.3f}")
+                return pca_features
+                
+        except Exception as e:
+            print(f"⚠️ {feature_type}: PCA failed ({e}), keeping original features")
+            return features
 
 
 class GraphConstructor:
@@ -750,7 +803,8 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False, **kwargs):
 
 def train_gnn_kan_model(model, node_features, edge_index, config):
     """
-    數值穩定的 GNN-KAN 模型訓練 - 修復梯度爆炸問題
+    基於 KAN 論文優化的 GNN-KAN 模型訓練
+    集成梯度穩定化器，實施所有論文中提到的梯度爆炸緩解技術
     
     Args:
         model: GNN-KAN 模型
@@ -766,7 +820,26 @@ def train_gnn_kan_model(model, node_features, edge_index, config):
     print(f"Node features shape: {node_features.shape}")
     print(f"Edge index shape: {edge_index.shape}")
     
+    # 初始化梯度穩定化器
+    stabilizer = GradientStabilizer(
+        l1_lambda=1e-2,           # 論文建議的 L1 正則化強度
+        entropy_lambda=1e-2,      # 熵正則化強度
+        grad_clip_value=config.gradient_clip_norm,
+        pruning_threshold=1e-2,   # 論文中的剪枝閾值 θ = 10^-2
+        enable_dynamic_scaling=True
+    )
+    
+    # 應用 Xavier 初始化到所有 KAN 層
+    print("Applying Xavier initialization to KAN layers...")
+    for module in model.modules():
+        if hasattr(module, 'spline_coeffs') or hasattr(module, 'activation_weights'):
+            stabilizer.xavier_init_kan_layer(module)
+    
     # 檢查輸入數據的數值穩定性
+    stability_report = stabilizer.check_numerical_stability(model, node_features)
+    if stability_report['parameter_nan_count'] > 0 or stability_report['parameter_inf_count'] > 0:
+        print("⚠️ Model parameters contain NaN or Inf after initialization")
+    
     if torch.isnan(node_features).any() or torch.isinf(node_features).any():
         print("Warning: NaN or Inf detected in node features, cleaning...")
         node_features = torch.nan_to_num(node_features, nan=0.0, posinf=1.0, neginf=-1.0)
@@ -776,7 +849,7 @@ def train_gnn_kan_model(model, node_features, edge_index, config):
     
     # 設置優化器 (使用修正的參數)
     optimizer = optim.Adam(model.parameters(), 
-                          lr=config.learning_rate,  # 使用配置中已降低的學習率
+                          lr=config.learning_rate,
                           weight_decay=config.weight_decay)
     
     scheduler = lr_scheduler.StepLR(optimizer, 
@@ -785,6 +858,8 @@ def train_gnn_kan_model(model, node_features, edge_index, config):
     
     # 訓練循環
     successful_epochs = 0
+    loss_history = []
+    
     try:
         for epoch in range(config.epochs):
             try:
@@ -802,44 +877,63 @@ def train_gnn_kan_model(model, node_features, edge_index, config):
                     print(f"NaN/Inf in adj_scores at epoch {epoch}, skipping...")
                     continue
                 
-                # 計算損失 (添加數值穩定性檢查)
+                # 計算基礎損失
                 try:
-                    loss = compute_loss_stable(node_embeddings, adj_scores, edge_index, config)
+                    base_loss = compute_loss_stable(node_embeddings, adj_scores, edge_index, config)
                 except RuntimeError as e:
                     print(f"Loss computation failed at epoch {epoch}: {e}")
                     continue
                 
+                # 使用梯度穩定化器計算總損失（包含正則化）
+                total_loss = stabilizer.compute_total_regularization_loss(model, base_loss)
+                
                 # 檢查 loss 是否為 NaN
-                if torch.isnan(loss) or torch.isinf(loss):
-                    print(f"Invalid loss at epoch {epoch}: {loss.item()}")
+                if torch.isnan(total_loss) or torch.isinf(total_loss):
+                    print(f"Invalid total loss at epoch {epoch}: {total_loss.item()}")
                     continue
                 
                 # 反向傳播 (添加異常處理)
                 try:
-                    loss.backward()
+                    total_loss.backward()
                 except RuntimeError as e:
                     print(f"Backward pass failed at epoch {epoch}: {e}")
                     continue
                 
-                # 修正後的梯度裁剪 - 使用更嚴格的閾值提升穩定性
-                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 
-                                                         max_norm=config.gradient_clip_norm)
+                # 應用梯度裁剪和檢查
+                grad_norm = stabilizer.apply_gradient_clipping(model, clip_type='norm')
                 
-                # 使用更嚴格的梯度檢查閾值 - 提升數值穩定性
-                if grad_norm > 8.0:  # 適中的閾值，平衡穩定性和學習效率
-                    if epoch % 50 == 0:  # 減少日志輸出頻率
-                        print(f"Large gradient norm {grad_norm:.3f} at epoch {epoch}, continuing with clipped gradients...")
-                    # 繼續使用裁剪後的梯度，PCA預處理應該能減少這種情況
+                # 數值穩定性檢查
+                if epoch % stabilizer.stability_check_freq == 0:
+                    stability_report = stabilizer.check_numerical_stability(model)
+                    if stability_report['gradient_nan_count'] > 0 or stability_report['gradient_inf_count'] > 0:
+                        print(f"⚠️ Epoch {epoch}: Gradient stability issues detected")
+                
+                # 梯度爆炸檢查 - 使用更嚴格的閾值
+                if grad_norm > 8.0:
+                    if epoch % 50 == 0:
+                        print(f"Large gradient norm {grad_norm:.3f} at epoch {epoch}, applying stabilization...")
                 
                 # 優化器更新
                 optimizer.step()
                 scheduler.step()
                 
                 successful_epochs += 1
+                loss_history.append(total_loss.item())
                 
-                if epoch % 20 == 0 or successful_epochs <= 5:  # 前5個成功epoch都顯示
-                    print(f"Epoch {epoch}/{config.epochs}, Loss: {loss.item():.6f}, "
-                          f"Grad norm: {grad_norm:.6f}, Successful: {successful_epochs}")
+                # 動態調整正則化強度
+                if len(loss_history) >= 10:
+                    stabilizer.adaptive_regularization_scaling(total_loss.item(), loss_history)
+                
+                # 動態剪枝 (每50個epoch執行一次)
+                if successful_epochs % 50 == 0 and successful_epochs > 0:
+                    pruning_ratio = stabilizer.apply_dynamic_pruning(model)
+                    if pruning_ratio > 0:
+                        print(f"Epoch {epoch}: Applied pruning, ratio: {pruning_ratio:.3f}")
+                
+                if epoch % 20 == 0 or successful_epochs <= 5:
+                    print(f"Epoch {epoch}/{config.epochs}, Base Loss: {base_loss.item():.6f}, "
+                          f"Total Loss: {total_loss.item():.6f}, Grad norm: {grad_norm:.6f}")
+                    print(f"L1 λ: {stabilizer.l1_lambda:.6f}, Entropy λ: {stabilizer.entropy_lambda:.6f}")
                     
                     # GPU 記憶體監控
                     if torch.cuda.is_available():
@@ -848,7 +942,7 @@ def train_gnn_kan_model(model, node_features, edge_index, config):
                         print(f"GPU memory: {allocated:.2f}GB allocated, {cached:.2f}GB cached")
                         
                         # 如果記憶體使用過高，切換到CPU
-                        if allocated > 8.0:  # 如果超過8GB
+                        if allocated > 8.0:
                             print("GPU memory usage too high, switching to CPU...")
                             return train_on_cpu_fallback(model, node_features, edge_index, config)
                             
@@ -872,6 +966,17 @@ def train_gnn_kan_model(model, node_features, edge_index, config):
         traceback.print_exc()
     
     print(f"Training completed with {successful_epochs} successful epochs out of {config.epochs}")
+    
+    # 打印最終穩定性報告
+    final_report = stabilizer.get_stability_report()
+    if "message" not in final_report:
+        print("=== 梯度穩定性報告 ===")
+        print(f"平均梯度範數: {final_report['gradient_statistics']['mean_grad_norm']:.6f}")
+        print(f"最大梯度範數: {final_report['gradient_statistics']['max_grad_norm']:.6f}")
+        print(f"梯度裁剪次數: {final_report['gradient_statistics']['gradient_clips']}")
+        print(f"穩定性違規次數: {final_report['stability_violations']}")
+        print(f"最終 L1 λ: {final_report['regularization_config']['l1_lambda']:.6f}")
+        print(f"最終熵 λ: {final_report['regularization_config']['entropy_lambda']:.6f}")
     
     # 如果成功訓練的epoch太少，使用簡化策略
     if successful_epochs < 5:
@@ -927,7 +1032,7 @@ def train_on_cpu_fallback(model, node_features, edge_index, config):
             similarity_matrix = torch.mm(normalized_features, normalized_features.t())
             
             # 應用閾值和sigmoid
-            final_adj = torch.sigmoid(similarity_matrix * 3.0)  # 增強對比度
+            final_adj = torch.sigmoid(similarity_matrix * 3.0) # 增強對比度
             
             # 確保對角線為高值 (自相似性)
             final_adj.fill_diagonal_(0.9)
