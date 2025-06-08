@@ -950,21 +950,39 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False, **kwargs):
         print("Training GNN-KAN model...")
         model = GNNKANModel(config, len(node_names))
         
-        if config.use_cuda:
-            model = model.cuda()
-            edge_index = edge_index.cuda()
-            node_features = torch.tensor(node_features, dtype=torch.float).cuda()
+        # 🔧 設備管理優化
+        device = 'cuda' if config.use_cuda and torch.cuda.is_available() else 'cpu'
+        
+        if device == 'cuda':
+            try:
+                model = model.cuda()
+                edge_index = edge_index.cuda()
+                node_features = torch.tensor(node_features, dtype=torch.float).cuda()
+            except RuntimeError as e:
+                print(f"CUDA initialization failed: {e}, falling back to CPU")
+                device = 'cpu'
+                model = model.cpu()
+                edge_index = edge_index.cpu()
+                node_features = torch.tensor(node_features, dtype=torch.float).cpu()
         else:
-            node_features = torch.tensor(node_features, dtype=torch.float)
+            model = model.cpu()
+            node_features = torch.tensor(node_features, dtype=torch.float).cpu()
+            edge_index = edge_index.cpu()
         
         # 訓練模型
         model, final_adj = train_gnn_kan_model(
             model, node_features, edge_index, config
         )
         
-        # 獲取最終的鄰接矩陣 (添加安全機制)
+        # 🔧 關鍵修正：確保最終評估時的設備一致性
         print("Getting final adjacency matrix...")
         model.eval()
+        
+        # 確保所有張量在相同設備上
+        model_device = next(model.parameters()).device
+        node_features = node_features.to(model_device)
+        edge_index = edge_index.to(model_device)
+        
         try:
             with torch.no_grad():
                 _, final_adj = model(node_features, edge_index)
@@ -973,17 +991,28 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False, **kwargs):
                 if torch.isnan(final_adj).any() or torch.isinf(final_adj).any():
                     print("NaN/Inf in final adjacency, using fallback...")
                     num_nodes = node_features.size(0)
-                    final_adj = torch.eye(num_nodes, device=node_features.device) * 0.8
-                    final_adj += torch.rand(num_nodes, num_nodes, device=node_features.device) * 0.2
+                    final_adj = torch.eye(num_nodes, device=model_device) * 0.8
+                    final_adj += torch.rand(num_nodes, num_nodes, device=model_device) * 0.2
                     
         except RuntimeError as e:
-            if "CUDA" in str(e):
-                print(f"CUDA error in final evaluation: {e}")
-                return train_on_cpu_fallback(model, node_features, edge_index, config)
+            if "CUDA" in str(e) or "device" in str(e).lower():
+                print(f"Device error in final evaluation: {e}")
+                # 強制切換到CPU並重新計算
+                model = model.cpu()
+                node_features = node_features.cpu()
+                edge_index = edge_index.cpu()
+                
+                with torch.no_grad():
+                    try:
+                        _, final_adj = model(node_features, edge_index)
+                    except:
+                        # 最終回退
+                        num_nodes = node_features.size(0)
+                        final_adj = torch.eye(num_nodes, device='cpu')
             else:
                 print(f"Error getting final adjacency: {e}")
                 num_nodes = node_features.size(0)
-                final_adj = torch.eye(num_nodes, device=node_features.device)
+                final_adj = torch.eye(num_nodes, device=model_device)
         
         # 5. 計算 PageRank 排名
         print("Computing PageRank rankings...")
@@ -1026,12 +1055,6 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False, **kwargs):
         return {"adj": np.array([]), "node_names": [], "ranks": []}
     except Exception as e:
         print(f"Critical error in GNN-KAN RCA: {e}")
-        if "CUDA" in str(e):
-            print("CUDA error detected, falling back to CPU...")
-            try:
-                return train_on_cpu_fallback(model, node_features, edge_index, config)
-            except:
-                pass
         import traceback
         traceback.print_exc()
         
@@ -1244,18 +1267,33 @@ def train_on_cpu_fallback(model, node_features, edge_index, config):
     
     # 🔧 確保所有數據都移動到 CPU 並且設備一致
     try:
-        model = model.cpu()
-        node_features = node_features.cpu()
-        edge_index = edge_index.cpu()
+        # 強制移動到 CPU
+        if hasattr(model, 'cpu'):
+            model = model.cpu()
+        if hasattr(node_features, 'cpu'):
+            node_features = node_features.cpu()
+        if hasattr(edge_index, 'cpu'):
+            edge_index = edge_index.cpu()
         
         # 簡化模型結構以適應 CPU
         print("Using simplified training for CPU...")
         
-        # 直接返回簡單的鄰接矩陣
-        num_nodes = node_features.size(0)
+        # 獲取節點數量
+        if hasattr(node_features, 'size'):
+            num_nodes = node_features.size(0)
+        elif hasattr(node_features, 'shape'):
+            num_nodes = node_features.shape[0]
+        else:
+            num_nodes = len(node_features)
         
         # 基於特徵相似性構建鄰接矩陣
         with torch.no_grad():
+            # 確保 node_features 是正確的 tensor 格式
+            if not isinstance(node_features, torch.Tensor):
+                node_features = torch.tensor(node_features, dtype=torch.float, device='cpu')
+            else:
+                node_features = node_features.to('cpu')
+            
             # 計算餘弦相似性 - 確保所有張量在CPU上
             normalized_features = F.normalize(node_features, p=2, dim=1)
             similarity_matrix = torch.mm(normalized_features, normalized_features.t())
@@ -1272,10 +1310,22 @@ def train_on_cpu_fallback(model, node_features, edge_index, config):
     except Exception as e:
         print(f"CPU fallback also failed: {e}")
         # 最終回退：恆等矩陣
-        num_nodes = node_features.size(0) if hasattr(node_features, 'size') else len(node_features)
+        try:
+            if hasattr(node_features, 'size'):
+                num_nodes = node_features.size(0)
+            elif hasattr(node_features, 'shape'):
+                num_nodes = node_features.shape[0]
+            else:
+                num_nodes = len(node_features)
+        except:
+            num_nodes = 10  # 默認值
+            
         final_adj = torch.eye(num_nodes, device='cpu')
     
     print("CPU fallback completed")
+    # 確保返回的模型也在 CPU 上
+    if hasattr(model, 'cpu'):
+        model = model.cpu()
     return model, final_adj
 
 
