@@ -292,7 +292,7 @@ class MultiModalFeatureExtractor:
                         window_node_names.extend([f'trace_{name}' for name in operation_names[:pca_trace_features.shape[1]]])
                         basic_features_extracted = True
                     
-                    # 提取服務拓撲特徵
+                    # 提取服務拓扑特徵
                     if service_graph is not None:
                         service_topo_features, service_names = extract_service_topology_features(service_graph)
                         if service_topo_features.size > 0:

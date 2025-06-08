@@ -181,8 +181,12 @@ class GradientStabilizer:
         l1_reg = self.compute_l1_regularization(model)
         entropy_reg = self.compute_entropy_regularization(model)
         
+        # 確保 lambda 值是數值而不是配置對象
+        l1_lambda_val = float(self.l1_lambda) if not isinstance(self.l1_lambda, (int, float)) else self.l1_lambda
+        entropy_lambda_val = float(self.entropy_lambda) if not isinstance(self.entropy_lambda, (int, float)) else self.entropy_lambda
+        
         # 論文中 μ1 = μ2 = 1
-        reg_loss = self.l1_lambda * (l1_reg + entropy_reg)
+        reg_loss = l1_lambda_val * l1_reg + entropy_lambda_val * entropy_reg
         total_loss = pred_loss + reg_loss
         
         # 記錄正則化歷史
