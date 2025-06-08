@@ -41,7 +41,7 @@ class GNNKANConfig:
     """Configuration class for GNN-KAN parameters"""
     
     def __init__(self):
-        # 🚀 高容量模型架構 - 恢復並提升原始復雜度
+        # 🚀 高容量模型架構 - 恢復並提升原始複雜度
         self.input_dim = 128   # 大幅提升輸入維度
         self.hidden_dims = [256, 192, 128, 96]  # 更深更寬的4層隱藏層
         self.output_dim = 64   # 更大的輸出維度
@@ -163,15 +163,15 @@ class MultiModalFeatureExtractor:
     
     def _apply_pca_with_variance_check(self, features, feature_type, target_components=None):
         """
-        应用 PCA 降维，包含方差检查
+        應用 PCA 降維，包含方差檢查
         
         Args:
-            features: 输入特征矩阵
-            feature_type: 特征类型标识
-            target_components: 目标降维维度
+            features: 輸入特徵矩陣
+            feature_type: 特徵類型標識
+            target_components: 目標降維維度
             
         Returns:
-            降维后的特征矩阵
+            降維後的特徵矩陣
         """
         try:
             from sklearn.decomposition import PCA
@@ -180,51 +180,51 @@ class MultiModalFeatureExtractor:
             if features.size == 0:
                 return features
                 
-            # 确保特征矩阵有足够的样本和特征
+            # 確保特徵矩陣有足夠的樣本和特徵
             n_samples, n_features = features.shape
             if n_samples < 2 or n_features < 2:
-                print(f"⚠️ {feature_type}: 特征矩阵太小 ({n_samples}x{n_features})，跳过 PCA")
+                print(f"⚠️ {feature_type}: 特徵矩陣太小 ({n_samples}x{n_features})，跳過 PCA")
                 return features
             
-            # 设置目标组件数
+            # 設置目標組件數
             if target_components is None:
                 target_components = min(self.config.pca_components, n_features, n_samples)
             else:
                 target_components = min(target_components, n_features, n_samples)
             
             if target_components >= n_features:
-                print(f"⚠️ {feature_type}: 目标维度 {target_components} >= 原始维度 {n_features}，跳过 PCA")
+                print(f"⚠️ {feature_type}: 目標維度 {target_components} >= 原始維度 {n_features}，跳過 PCA")
                 return features
             
-            # 标准化
+            # 標準化
             scaler = StandardScaler()
             features_scaled = scaler.fit_transform(features)
             
-            # 检查方差
+            # 檢查方差
             feature_var = np.var(features_scaled, axis=0)
             valid_features = feature_var > 1e-8
             
             if not np.any(valid_features):
-                print(f"⚠️ {feature_type}: 所有特征方差过小，跳过 PCA")
+                print(f"⚠️ {feature_type}: 所有特徵方差過小，跳過 PCA")
                 return features
             
-            # 过滤低方差特征
+            # 過濾低方差特徵
             features_filtered = features_scaled[:, valid_features]
             if features_filtered.shape[1] <= target_components:
-                print(f"⚠️ {feature_type}: 过滤后特征数 {features_filtered.shape[1]} <= 目标维度 {target_components}")
+                print(f"⚠️ {feature_type}: 過濾後特徵數 {features_filtered.shape[1]} <= 目標維度 {target_components}")
                 return features_filtered
             
-            # 应用 PCA
+            # 應用 PCA
             pca = PCA(n_components=target_components, random_state=42)
             features_pca = pca.fit_transform(features_filtered)
             
             explained_variance = np.sum(pca.explained_variance_ratio_)
-            print(f"✓ {feature_type}: PCA {features.shape[1]} -> {target_components}, 解释方差: {explained_variance:.3f}")
+            print(f"✓ {feature_type}: PCA {features.shape[1]} -> {target_components}, 解釋方差: {explained_variance:.3f}")
             
             return features_pca
             
         except Exception as e:
-            print(f"⚠️ {feature_type}: PCA 失败 {e}，返回原始特征")
+            print(f"⚠️ {feature_type}: PCA 失敗 {e}，返回原始特徵")
             return features
     
     def _extract_multimodal_features(self, data, inject_time):
@@ -536,7 +536,7 @@ class MultiModalFeatureExtractor:
         最终化特征处理
         
         Args:
-            all_features: 所有特征列表
+            all_features: 所有特徵列表
             node_names: 节点名称列表
             
         Returns:

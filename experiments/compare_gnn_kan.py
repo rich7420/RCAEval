@@ -34,7 +34,7 @@ class RCAComparator:
         self.results = defaultdict(list)
         
     def _run_gnn_kan(self, data, inject_time, dataset):
-        """運行 GNN-KAN 方法"""
+        """執行 GNN-KAN 方法"""
         try:
             from RCAEval.e2e.gnn_kan import gnn_kan_rca
             start_time = time.time()
@@ -46,7 +46,7 @@ class RCAComparator:
             return {"adj": np.array([]), "node_names": [], "ranks": []}, 0
     
     def _run_causalrca(self, data, inject_time, dataset):
-        """運行 CausalRCA 方法"""
+        """執行 CausalRCA 方法"""
         try:
             from RCAEval.e2e.causalrca import causalrca
             start_time = time.time()
@@ -58,7 +58,7 @@ class RCAComparator:
             return {"adj": np.array([]), "node_names": [], "ranks": []}, 0
     
     def _run_nsigma(self, data, inject_time, dataset):
-        """運行 NSigma 方法"""
+        """執行 NSigma 方法"""
         try:
             from RCAEval.e2e import nsigma
             start_time = time.time()
@@ -70,7 +70,7 @@ class RCAComparator:
             return {"node_names": [], "ranks": []}, 0
     
     def _run_microcause(self, data, inject_time, dataset):
-        """運行 MicroCause 方法"""
+        """執行 MicroCause 方法"""
         try:
             from RCAEval.e2e.microcause import microcause
             start_time = time.time()
@@ -82,7 +82,7 @@ class RCAComparator:
             return {"adj": np.array([]), "node_names": [], "ranks": []}, 0
     
     def _run_dummy(self, data, inject_time, dataset):
-        """運行 Dummy 方法（基線）"""
+        """執行 Dummy 方法（基線）"""
         try:
             from RCAEval.e2e import dummy
             start_time = time.time()
