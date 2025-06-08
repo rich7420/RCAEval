@@ -1059,8 +1059,15 @@ def train_gnn_kan_model(model, node_features, edge_index, config):
     """
     print("Starting GNN-KAN model training...")
     
-    # 梯度穩定化器
-    stabilizer = GradientStabilizer(config)
+    # 梯度穩定化器 - 修正參數傳遞
+    stabilizer = GradientStabilizer(
+        l1_lambda=config.base_l1_lambda,
+        entropy_lambda=config.base_entropy_lambda,
+        grad_clip_value=config.gradient_clip_norm,
+        pruning_threshold=1e-2,
+        enable_dynamic_scaling=True,
+        stability_check_freq=config.stability_check_frequency
+    )
     
     # 優化器設置
     optimizer = optim.AdamW(
