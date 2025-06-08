@@ -1239,24 +1239,24 @@ def train_gnn_kan_model(model, node_features, edge_index, config):
 
 
 def train_on_cpu_fallback(model, node_features, edge_index, config):
-    """CPU 回退訓練函數"""
+    """CPU 回退訓練函數 - 確保設備一致性"""
     print("=== CPU FALLBACK MODE ===")
     
-    # 移動所有數據到 CPU
-    model = model.cpu()
-    node_features = node_features.cpu()
-    edge_index = edge_index.cpu()
-    
-    # 簡化模型結構以適應 CPU
-    print("Using simplified training for CPU...")
-    
-    # 直接返回簡單的鄰接矩陣
-    num_nodes = node_features.size(0)
-    
-    # 基於特徵相似性構建鄰接矩陣
+    # 🔧 確保所有數據都移動到 CPU 並且設備一致
     try:
+        model = model.cpu()
+        node_features = node_features.cpu()
+        edge_index = edge_index.cpu()
+        
+        # 簡化模型結構以適應 CPU
+        print("Using simplified training for CPU...")
+        
+        # 直接返回簡單的鄰接矩陣
+        num_nodes = node_features.size(0)
+        
+        # 基於特徵相似性構建鄰接矩陣
         with torch.no_grad():
-            # 計算餘弦相似性
+            # 計算餘弦相似性 - 確保所有張量在CPU上
             normalized_features = F.normalize(node_features, p=2, dim=1)
             similarity_matrix = torch.mm(normalized_features, normalized_features.t())
             
@@ -1266,10 +1266,14 @@ def train_on_cpu_fallback(model, node_features, edge_index, config):
             # 確保對角線為高值 (自相似性)
             final_adj.fill_diagonal_(0.9)
             
+            # 確保結果在CPU上
+            final_adj = final_adj.cpu()
+            
     except Exception as e:
         print(f"CPU fallback also failed: {e}")
         # 最終回退：恆等矩陣
-        final_adj = torch.eye(num_nodes)
+        num_nodes = node_features.size(0) if hasattr(node_features, 'size') else len(node_features)
+        final_adj = torch.eye(num_nodes, device='cpu')
     
     print("CPU fallback completed")
     return model, final_adj

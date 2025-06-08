@@ -181,12 +181,25 @@ class GradientStabilizer:
         l1_reg = self.compute_l1_regularization(model)
         entropy_reg = self.compute_entropy_regularization(model)
         
-        # 確保 lambda 值是數值而不是配置對象
-        l1_lambda_val = float(self.l1_lambda) if not isinstance(self.l1_lambda, (int, float)) else self.l1_lambda
-        entropy_lambda_val = float(self.entropy_lambda) if not isinstance(self.entropy_lambda, (int, float)) else self.entropy_lambda
+        # 🔧 確保 lambda 值是數值而不是配置對象 - 修正關鍵錯誤
+        if isinstance(self.l1_lambda, (int, float)):
+            l1_lambda_val = float(self.l1_lambda)
+        else:
+            # 如果傳入了配置對象，使用其屬性值
+            l1_lambda_val = float(getattr(self.l1_lambda, 'base_l1_lambda', 1e-6))
+        
+        if isinstance(self.entropy_lambda, (int, float)):
+            entropy_lambda_val = float(self.entropy_lambda)
+        else:
+            # 如果傳入了配置對象，使用其屬性值
+            entropy_lambda_val = float(getattr(self.entropy_lambda, 'base_entropy_lambda', 1e-6))
         
         # 論文中 μ1 = μ2 = 1
         reg_loss = l1_lambda_val * l1_reg + entropy_lambda_val * entropy_reg
+        
+        # 確保正則化損失不會過大
+        reg_loss = torch.clamp(reg_loss, max=pred_loss.item() * 0.5)
+        
         total_loss = pred_loss + reg_loss
         
         # 記錄正則化歷史
