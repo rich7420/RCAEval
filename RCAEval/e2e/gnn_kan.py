@@ -1027,8 +1027,21 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False, **kwargs):
             ranked_indices = np.argsort(scores)[::-1]
             top_k_indices = ranked_indices[:config.top_k_results]
             
-            # 🔧 關鍵修正：返回字符串列表而不是元組列表
-            ranks = [node_names[i] for i in top_k_indices]
+            # 🔧 關鍵修正：確保返回字符串列表，處理可能的嵌套列表
+            ranks = []
+            for i in top_k_indices:
+                if i < len(node_names):
+                    node_name = node_names[i]
+                    # 如果 node_name 是列表，取第一个元素；如果是字符串，直接使用
+                    if isinstance(node_name, (list, tuple)):
+                        if len(node_name) > 0:
+                            ranks.append(str(node_name[0]))
+                        else:
+                            ranks.append(f"node_{i}")
+                    else:
+                        ranks.append(str(node_name))
+                else:
+                    ranks.append(f"node_{i}")
             
         except Exception as e:
             print(f"PageRank computation failed: {e}, using degree centrality")
@@ -1036,8 +1049,22 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False, **kwargs):
             degrees = np.sum(adj_numpy, axis=1)
             ranked_indices = np.argsort(degrees)[::-1]
             top_k_indices = ranked_indices[:config.top_k_results]
-            # 🔧 關鍵修正：返回字符串列表而不是元組列表
-            ranks = [node_names[i] for i in top_k_indices]
+            
+            # 🔧 關鍵修正：確保返回字符串列表，處理可能的嵌套列表
+            ranks = []
+            for i in top_k_indices:
+                if i < len(node_names):
+                    node_name = node_names[i]
+                    # 如果 node_name 是列表，取第一个元素；如果是字符串，直接使用
+                    if isinstance(node_name, (list, tuple)):
+                        if len(node_name) > 0:
+                            ranks.append(str(node_name[0]))
+                        else:
+                            ranks.append(f"node_{i}")
+                    else:
+                        ranks.append(str(node_name))
+                else:
+                    ranks.append(f"node_{i}")
         
         # 6. 組織結果
         result = {
