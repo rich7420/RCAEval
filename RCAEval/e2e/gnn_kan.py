@@ -1027,7 +1027,8 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False, **kwargs):
             ranked_indices = np.argsort(scores)[::-1]
             top_k_indices = ranked_indices[:config.top_k_results]
             
-            ranks = [(node_names[i], float(scores[i])) for i in top_k_indices]
+            # 🔧 關鍵修正：返回字符串列表而不是元組列表
+            ranks = [node_names[i] for i in top_k_indices]
             
         except Exception as e:
             print(f"PageRank computation failed: {e}, using degree centrality")
@@ -1035,13 +1036,14 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False, **kwargs):
             degrees = np.sum(adj_numpy, axis=1)
             ranked_indices = np.argsort(degrees)[::-1]
             top_k_indices = ranked_indices[:config.top_k_results]
-            ranks = [(node_names[i], float(degrees[i])) for i in top_k_indices]
+            # 🔧 關鍵修正：返回字符串列表而不是元組列表
+            ranks = [node_names[i] for i in top_k_indices]
         
         # 6. 組織結果
         result = {
             "adj": adj_numpy,
             "node_names": node_names,
-            "ranks": ranks
+            "ranks": ranks  # 現在是字符串列表格式
         }
         
         end_time = time.time()

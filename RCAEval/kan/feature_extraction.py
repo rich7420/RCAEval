@@ -268,9 +268,7 @@ def stl_decomposition(metrics_data, seasonal=7, return_components=True):
                              low_pass_deg=1,
                              seasonal_jump=1,
                              trend_jump=1,
-                             low_pass_jump=1,
-                             inner_iter=2,      # 減少內部迭代
-                             outer_iter=1)      # 減少外部迭代
+                             low_pass_jump=1)   # 移除 inner_iter 和 outer_iter 參數
                     
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore", category=RuntimeWarning)
@@ -866,7 +864,7 @@ def _extract_trace_anomaly_features(span_df, inject_time):
             call_rate_change,          # 調用頻率變化
             normal_latency_mean,       # 正常时期平均延遲
             anomal_latency_mean,       # 異常時期平均延遲
-            op_abnormal_count,         # 異常 span 數量
+            op_abnormal_count         # 異常 span 數量
         ])
     
     feature_names = [
