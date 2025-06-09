@@ -189,7 +189,6 @@ def extract_dla_features(log_texts, embedding_dim=128):
 def stl_decomposition(metrics_data, seasonal=7, return_components=True):
     """
     STL 分解將 metrics 分解為趨勢、季節性和殘差
-    大幅改進版：智能週期檢測，更好的參數設置，減少失敗率
     
     Args:
         metrics_data: DataFrame 包含時間序列數據 或 numpy array
@@ -255,49 +254,95 @@ def stl_decomposition(metrics_data, seasonal=7, return_components=True):
                     else:
                         optimal_seasonal = max(3, len(series) // 8)  # 動態調整
                 
-                # 嘗試更穩健的 STL 分解
+                # 嘗試更穩健的 STL 分解 - 完全重写以确保兼容性
                 try:
                     # 數據預處理：處理異常值
                     series_clean = remove_outliers_iqr(series)
                     
-                    stl = STL(series_clean, 
-                             seasonal=optimal_seasonal,
-                             robust=True,
-                             seasonal_deg=1,    # 線性季節性
-                             trend_deg=1,       # 線性趨勢
-                             low_pass_deg=1,
-                             seasonal_jump=1,
-                             trend_jump=1,
-                             low_pass_jump=1)   # 移除 inner_iter 和 outer_iter 參數
+                    # 🔧 智能 STL 参数构建 - 自动检测支持的参数
+                    stl_kwargs = {
+                        'seasonal': optimal_seasonal,
+                        'robust': True
+                    }
                     
+                    # 检查 statsmodels 版本并添加合适的参数
+                    try:
+                        import statsmodels
+                        version = statsmodels.__version__
+                        major_version = int(version.split('.')[0])
+                        minor_version = int(version.split('.')[1])
+                        
+                        # 只为较新版本添加高级参数
+                        if major_version > 0 or (major_version == 0 and minor_version >= 12):
+                            stl_kwargs.update({
+                                'seasonal_deg': 1,
+                                'trend_deg': 1, 
+                                'low_pass_deg': 1,
+                                'seasonal_jump': 1,
+                                'trend_jump': 1,
+                                'low_pass_jump': 1
+                            })
+                    except:
+                        pass  # 使用基本参数
+                    
+                    # 创建 STL 对象时使用动态参数
+                    try:
+                        stl = STL(series_clean, **stl_kwargs)
+                    except TypeError as te:
+                        # 如果参数不支持，回退到最基本的参数
+                        print(f"STL parameter error for {col}, using basic parameters: {te}")
+                        stl = STL(series_clean, seasonal=optimal_seasonal, robust=True)
+                    
+                    # 执行分解
                     with warnings.catch_warnings():
-                        warnings.simplefilter("ignore", category=RuntimeWarning)
-                        warnings.simplefilter("ignore", category=UserWarning)
+                        warnings.simplefilter("ignore")
                         result = stl.fit()
                     
                     if return_components:
-                        # 提取並驗證組件
-                        trend = result.trend.fillna(method='ffill').fillna(method='bfill').fillna(series_clean.mean())
-                        seasonal_comp = result.seasonal.fillna(0)
-                        residual = result.resid.fillna(0)
-                        
-                        # 計算增強的統計特徵
-                        features = np.array([[
-                            np.mean(trend), np.std(trend),
-                            np.mean(seasonal_comp), np.std(seasonal_comp),
-                            np.mean(residual), np.std(residual),
-                            np.max(trend) - np.min(trend),
-                            np.max(seasonal_comp) - np.min(seasonal_comp),
-                            optimal_seasonal,  # 使用的週期
-                            np.corrcoef(series_clean[:-1], series_clean[1:])[0,1] if len(series_clean) > 1 else 0  # 自相關
-                        ]]).T
-                        names = [f'{col}_trend_mean', f'{col}_trend_std',
-                                f'{col}_seasonal_mean', f'{col}_seasonal_std',
-                                f'{col}_residual_mean', f'{col}_residual_std',
-                                f'{col}_trend_range', f'{col}_seasonal_range',
-                                f'{col}_period', f'{col}_autocorr']
+                        # 提取並驗證組件 - 使用更安全的方法
+                        try:
+                            trend = result.trend
+                            seasonal_comp = result.seasonal
+                            residual = result.resid
+                            
+                            # 安全的数据填充
+                            if trend.isna().any():
+                                trend = trend.fillna(method='ffill').fillna(method='bfill').fillna(series_clean.mean())
+                            if seasonal_comp.isna().any():
+                                seasonal_comp = seasonal_comp.fillna(0)
+                            if residual.isna().any():
+                                residual = residual.fillna(0)
+                            
+                            # 計算增強的統計特徵
+                            features = np.array([[
+                                np.mean(trend), np.std(trend),
+                                np.mean(seasonal_comp), np.std(seasonal_comp),
+                                np.mean(residual), np.std(residual),
+                                np.max(trend) - np.min(trend),
+                                np.max(seasonal_comp) - np.min(seasonal_comp),
+                                optimal_seasonal,  # 使用的週期
+                                np.corrcoef(series_clean[:-1], series_clean[1:])[0,1] if len(series_clean) > 1 else 0  # 自相關
+                            ]]).T
+                            names = [f'{col}_trend_mean', f'{col}_trend_std',
+                                    f'{col}_seasonal_mean', f'{col}_seasonal_std',
+                                    f'{col}_residual_mean', f'{col}_residual_std',
+                                    f'{col}_trend_range', f'{col}_seasonal_range',
+                                    f'{col}_period', f'{col}_autocorr']
+                        except Exception as component_error:
+                            # 组件提取失败，使用趋势数据
+                            print(f"STL component extraction failed for {col}: {component_error}")
+                            trend = result.trend.fillna(series_clean.mean())
+                            features = np.array([[
+                                np.mean(trend), np.std(trend),
+                                np.max(trend), np.min(trend)
+                            ]]).T
+                            names = [f'{col}_trend_mean', f'{col}_trend_std',
+                                    f'{col}_trend_max', f'{col}_trend_min']
                     else:
-                        trend = result.trend.fillna(method='ffill').fillna(method='bfill').fillna(series_clean.mean())
+                        # 只返回趋势特征
+                        trend = result.trend
+                        if trend.isna().any():
+                            trend = trend.fillna(method='ffill').fillna(method='bfill').fillna(series_clean.mean())
                         features = np.array([[
                             np.mean(trend), np.std(trend),
                             np.max(trend), np.min(trend)
@@ -307,6 +352,8 @@ def stl_decomposition(metrics_data, seasonal=7, return_components=True):
                 
                 except Exception as e:
                     # STL 完全失敗，使用全面的統計特徵作為備用
+                    print(f"STL decomposition completely failed for {col}: {str(e)[:100]}, using comprehensive statistics")
+                    
                     features = np.array([[
                         np.mean(series), np.std(series), 
                         np.max(series), np.min(series),
@@ -321,11 +368,6 @@ def stl_decomposition(metrics_data, seasonal=7, return_components=True):
                     names = [f'{col}_mean', f'{col}_std', f'{col}_max', f'{col}_min',
                             f'{col}_median', f'{col}_q25', f'{col}_q75', f'{col}_length',
                             f'{col}_skew', f'{col}_kurtosis', f'{col}_change_rate', f'{col}_autocorr']
-                    
-                    # 只對特定失敗情況輸出一次警告
-                    if not hasattr(stl_decomposition, '_warning_shown'):
-                        print(f"STL decomposition failed for {col}: {str(e)[:100]}, using enhanced statistics")
-                        stl_decomposition._warning_shown = True
         
         decomposed_features.append(features)
         component_names.extend(names)
