@@ -181,18 +181,26 @@ class GradientStabilizer:
         l1_reg = self.compute_l1_regularization(model)
         entropy_reg = self.compute_entropy_regularization(model)
         
-        # 🔧 確保 lambda 值是數值而不是配置對象 - 修正關鍵錯誤
-        if isinstance(self.l1_lambda, (int, float)):
-            l1_lambda_val = float(self.l1_lambda)
-        else:
-            # 如果傳入了配置對象，使用其屬性值
-            l1_lambda_val = float(getattr(self.l1_lambda, 'base_l1_lambda', 1e-6))
-        
-        if isinstance(self.entropy_lambda, (int, float)):
-            entropy_lambda_val = float(self.entropy_lambda)
-        else:
-            # 如果傳入了配置對象，使用其屬性值
-            entropy_lambda_val = float(getattr(self.entropy_lambda, 'base_entropy_lambda', 1e-6))
+        # 🔧 統一參數類型處理 - 確保始終為數值
+        try:
+            if isinstance(self.l1_lambda, (int, float)):
+                l1_lambda_val = float(self.l1_lambda)
+            else:
+                # 處理配置對象的情況
+                l1_lambda_val = float(getattr(self.l1_lambda, 'base_l1_lambda', 1e-6))
+                print(f"⚠️ Warning: l1_lambda is not a number, using fallback value {l1_lambda_val}")
+            
+            if isinstance(self.entropy_lambda, (int, float)):
+                entropy_lambda_val = float(self.entropy_lambda)
+            else:
+                # 處理配置對象的情況
+                entropy_lambda_val = float(getattr(self.entropy_lambda, 'base_entropy_lambda', 1e-6))
+                print(f"⚠️ Warning: entropy_lambda is not a number, using fallback value {entropy_lambda_val}")
+                
+        except (AttributeError, TypeError, ValueError) as e:
+            print(f"⚠️ Error processing lambda values: {e}, using default values")
+            l1_lambda_val = 1e-6
+            entropy_lambda_val = 1e-6
         
         # 論文中 μ1 = μ2 = 1
         reg_loss = l1_lambda_val * l1_reg + entropy_lambda_val * entropy_reg
@@ -202,7 +210,10 @@ class GradientStabilizer:
         
         total_loss = pred_loss + reg_loss
         
-        # 記錄正則化歷史
+        # 記錄正則化歷史 (限制歷史記錄長度)
+        if len(self.regularization_history) > 1000:
+            self.regularization_history = self.regularization_history[-500:]  # 保留最近500條記錄
+            
         self.regularization_history.append({
             'l1_reg': l1_reg.item(),
             'entropy_reg': entropy_reg.item(),
