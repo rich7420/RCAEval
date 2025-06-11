@@ -34,6 +34,7 @@ class SimplifiedGNNKANConfig:
         
         # 🎯 GNN-KAN架構配置 - 純粹KAN實現
         self.input_dim = 64
+        self.target_feature_dim = 64       # 目標特徵維度
         self.hidden_dims = [128, 96, 64]   # 3層KAN結構
         self.output_dim = 32
         self.num_gnn_layers = 2
@@ -74,6 +75,12 @@ class SimplifiedGNNKANConfig:
         self.debug = False
         self.verbose = True
         self.save_intermediate = False
+        
+        # 🖥️ 設備配置 - GPU支持
+        self.use_cuda = True                # 啟用CUDA GPU加速
+        self.device = 'auto'                # 'auto', 'cuda', 'cpu'
+        self.gpu_memory_fraction = 0.8      # GPU記憶體使用比例
+        self.cpu_fallback = True            # GPU失敗時自動切換CPU
     
     def get_feature_processing_config(self):
         """獲取特徵處理配置"""
@@ -126,6 +133,15 @@ class SimplifiedGNNKANConfig:
             'min_delta': self.min_delta,
             'gradient_clip_norm': self.gradient_clip_norm,
             'stability_check_freq': self.stability_check_freq
+        }
+    
+    def get_device_config(self):
+        """獲取設備配置"""
+        return {
+            'use_cuda': self.use_cuda,
+            'device': self.device,
+            'gpu_memory_fraction': self.gpu_memory_fraction,
+            'cpu_fallback': self.cpu_fallback
         }
     
     def validate_config(self):
@@ -194,6 +210,7 @@ class HighCapacityGNNKANConfig(SimplifiedGNNKANConfig):
         
         # 🎯 擴展架構 - 深度KAN網絡
         self.input_dim = 128
+        self.target_feature_dim = 128       # 目標特徵維度  
         self.hidden_dims = [256, 192, 128, 96, 64]  # 5層深度
         self.output_dim = 64
         self.num_gnn_layers = 3
@@ -229,6 +246,7 @@ class FastGNNKANConfig(SimplifiedGNNKANConfig):
         
         # 🎯 精簡架構 - 少而精的KAN層
         self.input_dim = 32
+        self.target_feature_dim = 32        # 目標特徵維度
         self.hidden_dims = [64, 48]         # 2層精簡結構
         self.output_dim = 24
         self.num_gnn_layers = 1
