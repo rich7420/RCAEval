@@ -1,6 +1,6 @@
 """
-GNN-KAN Module: Configuration
-統一的配置管理模組
+GNN-KAN 統一配置系統 - 支援最新的特徵處理和純粹KAN實現
+專注於KAN取代MLP的核心價值：可學習激活函數、B-spline基函數
 """
 
 import torch
@@ -8,121 +8,244 @@ import numpy as np
 
 
 class SimplifiedGNNKANConfig:
-    """簡化的GNN-KAN配置類 - 專注核心功能"""
+    """
+    簡化的GNN-KAN配置 - 專注於KAN核心特性
+    新增：ICA、kPCA特徵處理支持
+    強調：KAN vs MLP的本質差異
+    """
     
     def __init__(self):
-        # 🎯 核心KAN架構 - 保持用KAN取代MLP的核心價值
-        self.input_dim = 64           # 簡化輸入維度
-        self.hidden_dims = [128, 64]  # 簡化為2層隱藏層
-        self.output_dim = 32          # 簡化輸出維度
+        # 🎯 核心KAN配置 - 確保純粹性
+        self.kan_grid_size = 8              # 增強B-spline基函數密度
+        self.kan_spline_order = 3           # 樣條階數
+        self.kan_num_basis = 8              # 基函數數量（從5→8）
+        self.adaptive_spline_order = True   # 自適應樣條階數
+        self.learnable_activation = True    # 可學習激活函數（KAN vs MLP關鍵）
+        self.minimize_linear_component = True  # 最小化MLP特性
         
-        # 🔑 KAN設置 - 增強核心表達能力
-        self.kan_grid_size = 8        # 從5增加到8，提升非線性表達
-        self.kan_spline_order = 3
-        self.adaptive_spline_order = True  # 新增：自適應樣條階數
-        self.learnable_edges = True   # 新增：可學習的邊權重
-        self.num_gnn_layers = 2       # 簡化為2層
+        # 🔧 特徵處理配置 - 新增ICA/kPCA選項
+        self.feature_method = 'ica'         # 'ica', 'kpca', 'pca', 'simplified'
+        self.use_stl_decomposition = False  # 移除複雜STL分解
+        self.use_kll_processing = False     # 移除複雜KLL處理
+        self.use_ica = True                 # 啟用ICA特徵提取
+        self.use_kpca = False               # 可選的kPCA
+        self.ica_components = None          # 自動確定ICA成分數
+        self.kpca_kernel = 'rbf'           # kPCA核函數
+        
+        # 🎯 GNN-KAN架構配置 - 純粹KAN實現
+        self.input_dim = 64
+        self.hidden_dims = [128, 96, 64]   # 3層KAN結構
+        self.output_dim = 32
+        self.num_gnn_layers = 2
         self.dropout = 0.1
+        self.learnable_graph = True        # 動態圖結構學習
         
-        # 🎯 訓練參數 - 實用導向
-        self.epochs = 30              # 減少訓練時間
-        self.num_epochs = 30          # 別名，確保兼容性
-        self.batch_size = 16
-        self.learning_rate = 1e-4
-        self.weight_decay = 1e-5
+        # 🚀 訓練配置 - 針對KAN優化
+        self.learning_rate = 0.001
+        self.weight_decay = 1e-4
+        self.num_epochs = 100
+        self.batch_size = 32
+        self.patience = 15
+        self.min_delta = 1e-4
         
-        # 🛡️ 梯度穩定 - 簡化穩定性檢查
-        self.gradient_clip_norm = 1.0
-        self.use_gradient_stabilizer = True
-        self.stability_check_frequency = 50  # 從20增加到50，減少檢查頻率
-        self.base_l1_lambda = 0.001
-        self.base_entropy_lambda = 0.001
-        self.base_learning_rate = 1e-4
-        self.warmup_epochs = 5
+        # 🔧 穩定性配置 - 簡化但有效
+        self.gradient_clip_norm = 1.0      # 保持梯度裁剪
+        self.stability_check_freq = 50     # 減少檢查頻率（從20→50）
+        self.use_layer_norm = True         # 使用LayerNorm
+        self.use_batch_norm = False        # 不使用BatchNorm（避免MLP特性）
         
-        # 🔧 特徵提取 - 簡化特徵融合機制
-        self.window_size = 10         # 簡化窗口大小
-        self.step_size = 1
-        self.use_dla = True
-        self.max_log_features = 20    # 從30減少到20，進一步減少噪音
-        self.target_feature_dim = 64  # 簡化目標維度
-        self.fusion_method = 'simple_concat'  # 簡化融合方法
-        self.use_attention_fusion = False     # 移除複雜注意力機制
-        self.use_stl_decomposition = False    # 簡化STL處理
-        self.use_kll_processing = False       # 簡化KLL處理
-        self.use_multimodal_fusion = False    # 移除過度複雜的多模態融合
+        # 📊 評估配置
+        self.eval_metrics = ['precision', 'recall', 'f1', 'accuracy']
+        self.eval_topk = [1, 3, 5]
         
-        # PCA設置
-        self.use_pca = True
-        self.pca_components = 32      # 減少主成分數量
+        # 🎯 KAN特有的優化配置
+        self.kan_l1_lambda = 1e-3          # B-spline正則化
+        self.kan_entropy_lambda = 1e-3     # 熵正則化
+        self.spline_weight_decay = 1e-5    # 樣條權重衰減
+        self.activation_weight_decay = 1e-5 # 激活權重衰減
         
-        # 圖構建 - 簡化但保持連通性
-        self.similarity_threshold = 0.3
-        self.max_edges_per_node = 5
-        self.use_self_loops = True
+        # 📁 路徑配置
+        self.data_dir = "data"
+        self.output_dir = "results"
+        self.log_dir = "logs"
+        self.model_save_dir = "models"
         
-        # 硬體設置
-        self.use_cuda = torch.cuda.is_available()
-        self.device = 'cuda' if self.use_cuda else 'cpu'
+        # 🔍 調試配置
+        self.debug = False
+        self.verbose = True
+        self.save_intermediate = False
+    
+    def get_feature_processing_config(self):
+        """獲取特徵處理配置"""
+        return {
+            'method': self.feature_method,
+            'use_ica': self.use_ica,
+            'use_kpca': self.use_kpca,
+            'ica_components': self.ica_components,
+            'kpca_kernel': self.kpca_kernel,
+            'use_stl': self.use_stl_decomposition,
+            'use_kll': self.use_kll_processing,
+            'target_dim': self.input_dim
+        }
+    
+    def get_kan_config(self):
+        """獲取純粹KAN配置 - 強調非MLP特性"""
+        return {
+            'grid_size': self.kan_grid_size,
+            'spline_order': self.kan_spline_order,
+            'num_basis': self.kan_num_basis,
+            'adaptive_spline_order': self.adaptive_spline_order,
+            'learnable_activation': self.learnable_activation,
+            'minimize_linear': self.minimize_linear_component,
+            'l1_lambda': self.kan_l1_lambda,
+            'entropy_lambda': self.kan_entropy_lambda,
+            'spline_weight_decay': self.spline_weight_decay,
+            'activation_weight_decay': self.activation_weight_decay
+        }
+    
+    def get_gnn_config(self):
+        """獲取GNN配置"""
+        return {
+            'input_dim': self.input_dim,
+            'hidden_dims': self.hidden_dims,
+            'output_dim': self.output_dim,
+            'num_layers': self.num_gnn_layers,
+            'dropout': self.dropout,
+            'learnable_graph': self.learnable_graph,
+            'kan_config': self.get_kan_config()
+        }
+    
+    def get_training_config(self):
+        """獲取訓練配置"""
+        return {
+            'learning_rate': self.learning_rate,
+            'weight_decay': self.weight_decay,
+            'num_epochs': self.num_epochs,
+            'batch_size': self.batch_size,
+            'patience': self.patience,
+            'min_delta': self.min_delta,
+            'gradient_clip_norm': self.gradient_clip_norm,
+            'stability_check_freq': self.stability_check_freq
+        }
+    
+    def validate_config(self):
+        """驗證配置的合理性"""
+        issues = []
         
-        # 輸出
-        self.top_k_results = 10       # 減少輸出數量
+        # 檢查KAN相關配置
+        if self.kan_grid_size < 3:
+            issues.append("KAN grid_size should be >= 3 for effective B-spline")
         
-        # 高級功能開關 - 專注核心功能
-        self.use_intelligent_graph = True
-        self.use_advanced_training = False
-        self.use_psm_processing = False
+        if self.kan_num_basis < 2:
+            issues.append("KAN num_basis should be >= 2 for non-trivial approximation")
         
-        # 早停設置
-        self.early_stopping_patience = 15
-        self.early_stopping_min_delta = 1e-6
-        self.patience = 15  # 訓練早停耐心值
+        # 檢查維度配置
+        if self.input_dim <= 0 or self.output_dim <= 0:
+            issues.append("Input and output dimensions must be positive")
         
-        # STL分解設置（向後兼容）
-        self.stl_seasonal = 7
+        if len(self.hidden_dims) == 0:
+            issues.append("Hidden dimensions should not be empty")
         
-        # KLL設置（向後兼容）
-        self.kll_k = 128
+        # 檢查特徵處理配置
+        valid_methods = ['ica', 'kpca', 'pca', 'simplified']
+        if self.feature_method not in valid_methods:
+            issues.append(f"Feature method must be one of {valid_methods}")
+        
+        return issues
+    
+    def update_for_kan_purity(self):
+        """更新配置以最大化KAN純粹性，最小化MLP特性"""
+        print("🎯 Updating config for maximum KAN purity...")
+        
+        # 增強KAN特性
+        self.kan_grid_size = max(8, self.kan_grid_size)
+        self.kan_num_basis = max(8, self.kan_num_basis)
+        self.adaptive_spline_order = True
+        self.learnable_activation = True
+        self.minimize_linear_component = True
+        
+        # 移除MLP相關配置
+        self.use_batch_norm = False         # BatchNorm是MLP常用技術
+        self.use_layer_norm = True          # LayerNorm更通用
+        
+        # 使用最佳特徵處理
+        if self.feature_method == 'stl':
+            self.feature_method = 'ica'     # 用ICA替代STL
+        
+        self.use_stl_decomposition = False
+        self.use_kll_processing = False
+        
+        print("✓ Config updated for KAN purity over MLP characteristics")
 
 
-class AdvancedGNNKANConfig(SimplifiedGNNKANConfig):
-    """高級GNN-KAN配置類 - 包含所有先進功能"""
+class HighCapacityGNNKANConfig(SimplifiedGNNKANConfig):
+    """
+    高容量KAN配置 - 保持純粹性的同時提升表達能力
+    專門用於複雜場景和大規模數據
+    """
     
     def __init__(self):
         super().__init__()
         
-        # 🚀 高級架構設置
+        # 🚀 增強KAN容量 - 保持純粹性
+        self.kan_grid_size = 12             # 更高密度的B-spline
+        self.kan_num_basis = 12             # 更多基函數
+        self.kan_spline_order = 4           # 更高階樣條
+        
+        # 🎯 擴展架構 - 深度KAN網絡
         self.input_dim = 128
-        self.hidden_dims = [256, 128, 64]
+        self.hidden_dims = [256, 192, 128, 96, 64]  # 5層深度
         self.output_dim = 64
         self.num_gnn_layers = 3
         
-        # 🎯 高級訓練設置
-        self.epochs = 100
-        self.batch_size = 32
-        self.learning_rate = 5e-5
+        # 🔧 高容量特徵處理
+        self.feature_method = 'ica'         # 高容量場景下ICA更有效
+        self.ica_components = 16            # 更多ICA成分
         
-        # 🔬 高級特徵設置
-        self.target_feature_dim = 128
-        self.max_log_features = 100
-        self.pca_components = 64
-        self.fusion_method = 'attention'
+        # ⚡ 高容量穩定性
+        self.gradient_clip_norm = 0.8       # 更嚴格的梯度控制
+        self.stability_check_freq = 30      # 更頻繁的穩定性檢查
+        self.dropout = 0.15                 # 更強的正則化
         
-        # 📊 高級圖設置
-        self.max_edges_per_node = 10
-        self.similarity_threshold = 0.2
+        # 📈 高容量訓練
+        self.learning_rate = 0.0005         # 更小的學習率
+        self.num_epochs = 150               # 更多訓練輪次
+        self.patience = 25                  # 更大的耐心值
+
+
+class FastGNNKANConfig(SimplifiedGNNKANConfig):
+    """
+    快速KAN配置 - 在保持核心特性的同時優化速度
+    專門用於實時應用和資源受限環境
+    """
+    
+    def __init__(self):
+        super().__init__()
         
-        # ✨ 啟用高級功能
-        self.use_intelligent_graph = True
-        self.use_advanced_training = True
-        self.use_psm_processing = True
+        # ⚡ 快速KAN配置 - 保持核心價值
+        self.kan_grid_size = 6              # 適中的網格密度
+        self.kan_num_basis = 6              # 適中的基函數數
+        self.kan_spline_order = 3           # 標準樣條階數
         
-        # 🔧 高級處理設置
-        self.window_size = 20
-        self.step_size = 5
+        # 🎯 精簡架構 - 少而精的KAN層
+        self.input_dim = 32
+        self.hidden_dims = [64, 48]         # 2層精簡結構
+        self.output_dim = 24
+        self.num_gnn_layers = 1
         
-        # 結果設置
-        self.top_k_results = 15
+        # ⚡ 快速特徵處理
+        self.feature_method = 'simplified'  # 最快的特徵處理
+        self.use_ica = False                # 關閉耗時的ICA
+        
+        # 🚀 快速訓練
+        self.learning_rate = 0.002          # 更大的學習率
+        self.num_epochs = 50                # 更少的訓練輪次
+        self.batch_size = 64                # 更大的batch size
+        self.patience = 10                  # 更小的耐心值
+        
+        # ⚡ 快速穩定性
+        self.stability_check_freq = 100     # 最少的穩定性檢查
+        self.gradient_clip_norm = 1.5       # 更寬鬆的梯度控制
 
 
 class ConfigFactory:
@@ -133,7 +256,8 @@ class ConfigFactory:
         """創建配置對象"""
         config_map = {
             'simplified': SimplifiedGNNKANConfig,
-            'advanced': AdvancedGNNKANConfig
+            'high_capacity': HighCapacityGNNKANConfig,
+            'fast': FastGNNKANConfig
         }
         
         if config_type not in config_map:

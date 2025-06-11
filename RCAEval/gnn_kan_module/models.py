@@ -674,17 +674,35 @@ class SimplifiedGNNKAN(nn.Module):
         )
         
     def _create_gnn_kan_layer(self, input_dim, output_dim, kan_config):
-        """創建 GNN-KAN 層"""
+        """創建純粹的GNN-KAN層 - 使用AdvancedKANLayer"""
         try:
-            # 嘗試使用 KAN 組件
-            from .kan_components import UltraFastKANLayer
-            return UltraFastKANLayer(input_dim, output_dim)
+            # 使用純粹的KAN組件
+            from .kan_components import AdvancedKANLayer
+            
+            # 使用KAN配置創建AdvancedKANLayer
+            if kan_config:
+                return AdvancedKANLayer(
+                    input_dim, output_dim,
+                    num_basis=kan_config.get('num_basis', 8),
+                    spline_order=kan_config.get('spline_order', 3),
+                    grid_size=kan_config.get('grid_size', 8),
+                    adaptive_spline_order=kan_config.get('adaptive_spline_order', True)
+                )
+            else:
+                return AdvancedKANLayer(input_dim, output_dim)
+                
         except ImportError:
-            # 回退到標準線性層
-            return nn.Sequential(
-                nn.Linear(input_dim, output_dim),
-                nn.ReLU()
-            )
+            # 回退到SimplifiedKANLayer
+            try:
+                from .kan_components import SimplifiedKANLayer
+                return SimplifiedKANLayer(input_dim, output_dim)
+            except ImportError:
+                # 最後回退 - 但這表示KAN特性缺失
+                print("⚠️ 警告：KAN層不可用，回退到標準線性層（失去KAN優勢）")
+                return nn.Sequential(
+                    nn.Linear(input_dim, output_dim, bias=False),  # 最小化MLP特性
+                    nn.LayerNorm(output_dim)  # 使用LayerNorm而非BatchNorm
+                )
     
     def forward(self, node_features, edge_index):
         """

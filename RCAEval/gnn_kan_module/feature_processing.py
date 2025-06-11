@@ -1,6 +1,7 @@
 """
 高級特徵處理模組 - 整合所有特徵處理功能
 從大檔案中提取並優化的關鍵函數
+新增：ICA特徵提取，替代複雜的STL分解
 """
 
 import numpy as np
@@ -8,12 +9,264 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from sklearn.decomposition import PCA
+from sklearn.decomposition import PCA, FastICA
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.metrics.pairwise import cosine_similarity
 import warnings
 
 warnings.filterwarnings("ignore")
+
+
+def ica_metric_processing(metrics_data, n_components=None, target_dim=64):
+    """
+    基於ICA的特徵提取 - 專門處理非高斯分布的時序數據
+    替代STL分解，更適合異常檢測和根因分析
+    
+    Args:
+        metrics_data: 指標數據
+        n_components: ICA成分數量（None則自動確定）
+        target_dim: 目標維度
+    
+    Returns:
+        ica_features: ICA特徵
+        feature_names: 特徵名稱
+        ica_model: 訓練好的ICA模型
+    """
+    print("🔧 Using ICA feature processing (replacing STL decomposition)...")
+    
+    try:
+        # 數據預處理
+        if isinstance(metrics_data, pd.DataFrame):
+            data = metrics_data.select_dtypes(include=[np.number])
+        elif isinstance(metrics_data, np.ndarray):
+            data = pd.DataFrame(metrics_data) if metrics_data.ndim == 2 else pd.DataFrame({'metric': metrics_data})
+        else:
+            data = pd.DataFrame(metrics_data)
+        
+        if data.empty or data.shape[1] == 0:
+            return np.array([[0]]), ['default_feature'], None
+        
+        # 處理缺失值和無效數據
+        data = data.fillna(method='ffill').fillna(0)
+        data = data.replace([np.inf, -np.inf], 0)
+        
+        # 標準化數據 - ICA需要標準化輸入
+        scaler = StandardScaler()
+        scaled_data = scaler.fit_transform(data)
+        
+        # 確定ICA成分數量
+        if n_components is None:
+            n_components = min(data.shape[1], max(2, data.shape[1] // 2))
+        n_components = min(n_components, data.shape[1])
+        
+        # 應用FastICA - 專門處理非高斯信號
+        ica = FastICA(
+            n_components=n_components,
+            random_state=42,
+            max_iter=1000,
+            tol=1e-4,
+            whiten='unit-variance'  # 使用單位方差白化
+        )
+        
+        if scaled_data.shape[0] >= n_components:
+            # 正常情況：樣本數 >= 成分數
+            ica_components = ica.fit_transform(scaled_data)
+        else:
+            # 特殊情況：樣本數 < 成分數，使用轉置
+            ica_components = ica.fit_transform(scaled_data.T).T
+        
+        # 🎯 ICA特有的統計特徵提取
+        ica_features = []
+        feature_names = []
+        
+        for i in range(ica_components.shape[1]):
+            component = ica_components[:, i]
+            
+            # 基本統計
+            basic_stats = [
+                np.mean(component),           # 均值
+                np.std(component),            # 標準差
+                np.median(component),         # 中位數
+                np.percentile(component, 25), # Q1
+                np.percentile(component, 75), # Q3
+            ]
+            
+            # 🎯 非高斯性指標 - ICA的核心優勢
+            # 峰度：衡量尖峰程度，非高斯信號的重要指標
+            kurtosis = np.mean(component**4) - 3 * (np.mean(component**2))**2
+            
+            # 偏度：衡量分布不對稱性
+            skewness = np.mean(component**3) / (np.std(component)**3) if np.std(component) > 0 else 0
+            
+            # 負熵近似：衡量非高斯性
+            neg_entropy = _compute_neg_entropy_approx(component)
+            
+            # 互信息減少：ICA的目標函數
+            mutual_info = _compute_mutual_info_reduction(component)
+            
+            # 🎯 動態特性
+            if len(component) > 1:
+                # 變化率
+                diff = np.diff(component)
+                change_rate = np.std(diff) if len(diff) > 0 else 0
+                
+                # 自相關（滯後1）
+                autocorr = np.corrcoef(component[:-1], component[1:])[0, 1] if len(component) > 1 else 0
+                autocorr = autocorr if not np.isnan(autocorr) else 0
+            else:
+                change_rate = 0
+                autocorr = 0
+            
+            # 組合所有特徵
+            component_features = basic_stats + [kurtosis, skewness, neg_entropy, mutual_info, change_rate, autocorr]
+            ica_features.extend(component_features)
+            
+            # 生成特徵名稱
+            comp_names = [
+                f'ica_comp_{i}_mean', f'ica_comp_{i}_std', f'ica_comp_{i}_median',
+                f'ica_comp_{i}_q25', f'ica_comp_{i}_q75', f'ica_comp_{i}_kurtosis',
+                f'ica_comp_{i}_skewness', f'ica_comp_{i}_neg_entropy', f'ica_comp_{i}_mutual_info',
+                f'ica_comp_{i}_change_rate', f'ica_comp_{i}_autocorr'
+            ]
+            feature_names.extend(comp_names)
+        
+        # 轉換為矩陣格式
+        feature_matrix = np.array(ica_features).reshape(1, -1)
+        
+        # 如果特徵數超過目標維度，使用PCA進一步降維
+        if feature_matrix.shape[1] > target_dim:
+            pca = PCA(n_components=target_dim, random_state=42)
+            feature_matrix = pca.fit_transform(feature_matrix)
+            feature_names = [f'ica_pca_component_{i}' for i in range(target_dim)]
+        
+        print(f"✓ ICA processing: {feature_matrix.shape[1]} features from {n_components} ICA components")
+        return feature_matrix, feature_names, ica
+        
+    except Exception as e:
+        print(f"⚠️ ICA processing failed: {e}, falling back to simplified processing")
+        return simplified_metric_processing(metrics_data, target_dim)
+
+
+def _compute_neg_entropy_approx(x):
+    """計算負熵近似 - 衡量非高斯性的關鍵指標"""
+    try:
+        # 標準化
+        x_norm = (x - np.mean(x)) / (np.std(x) + 1e-8)
+        
+        # G函數近似：G(u) = 1/α1 * log(cosh(α1*u))
+        alpha1 = 1.0
+        g_gauss = np.mean(np.log(np.cosh(alpha1 * np.random.randn(len(x_norm)))))
+        g_x = np.mean(np.log(np.cosh(alpha1 * x_norm)))
+        
+        # 負熵近似
+        neg_entropy = (g_x - g_gauss)**2
+        return neg_entropy if not np.isnan(neg_entropy) else 0.0
+    except:
+        return 0.0
+
+
+def _compute_mutual_info_reduction(x):
+    """計算互信息減少 - ICA的優化目標"""
+    try:
+        # 簡化的互信息估計
+        # 基於直方圖的方法
+        hist, _ = np.histogram(x, bins=min(10, len(x)//2), density=True)
+        hist = hist + 1e-8  # 避免log(0)
+        
+        # 計算熵
+        entropy = -np.sum(hist * np.log(hist))
+        
+        # 與高斯分布的熵差異
+        gauss_entropy = 0.5 * np.log(2 * np.pi * np.e * np.var(x))
+        mutual_info_reduction = abs(entropy - gauss_entropy)
+        
+        return mutual_info_reduction if not np.isnan(mutual_info_reduction) else 0.0
+    except:
+        return 0.0
+
+
+def kpca_metric_processing(metrics_data, kernel='rbf', gamma=None, target_dim=64):
+    """
+    基於核PCA (kPCA) 的特徵提取 - 處理非線性關係
+    作為ICA的補充，專門處理非線性模式
+    
+    Args:
+        metrics_data: 指標數據
+        kernel: 核函數類型 ('rbf', 'poly', 'sigmoid')
+        gamma: RBF核參數
+        target_dim: 目標維度
+    
+    Returns:
+        kpca_features: kPCA特徵
+        feature_names: 特徵名稱
+    """
+    print("🔧 Using kernel PCA feature processing...")
+    
+    try:
+        from sklearn.decomposition import KernelPCA
+        
+        # 數據預處理
+        if isinstance(metrics_data, pd.DataFrame):
+            data = metrics_data.select_dtypes(include=[np.number])
+        else:
+            data = pd.DataFrame(metrics_data) if isinstance(metrics_data, np.ndarray) else pd.DataFrame({'metric': [0]})
+        
+        data = data.fillna(0).replace([np.inf, -np.inf], 0)
+        
+        if data.shape[0] < 2 or data.shape[1] == 0:
+            return simplified_metric_processing(metrics_data, target_dim)
+        
+        # 標準化
+        scaler = StandardScaler()
+        scaled_data = scaler.fit_transform(data)
+        
+        # 確定成分數量
+        n_components = min(target_dim, data.shape[0] - 1, data.shape[1])
+        
+        # 應用kPCA
+        if gamma is None:
+            gamma = 1.0 / data.shape[1]
+        
+        kpca = KernelPCA(
+            n_components=n_components,
+            kernel=kernel,
+            gamma=gamma,
+            random_state=42,
+            eigen_solver='auto'
+        )
+        
+        kpca_components = kpca.fit_transform(scaled_data)
+        
+        # 特徵統計提取
+        all_features = []
+        feature_names = []
+        
+        for i in range(kpca_components.shape[1]):
+            component = kpca_components[:, i]
+            
+            # 核空間特徵統計
+            stats = [
+                np.mean(component),
+                np.std(component),
+                np.median(component),
+                np.min(component),
+                np.max(component)
+            ]
+            
+            all_features.extend(stats)
+            feature_names.extend([
+                f'kpca_comp_{i}_mean', f'kpca_comp_{i}_std', f'kpca_comp_{i}_median',
+                f'kpca_comp_{i}_min', f'kpca_comp_{i}_max'
+            ])
+        
+        feature_matrix = np.array(all_features).reshape(1, -1)
+        
+        print(f"✓ kPCA processing: {feature_matrix.shape[1]} features from {n_components} components")
+        return feature_matrix, feature_names
+        
+    except Exception as e:
+        print(f"⚠️ kPCA processing failed: {e}, falling back to simplified processing")
+        return simplified_metric_processing(metrics_data, target_dim)
 
 
 def simplified_metric_processing(metrics_data, target_dim=64):

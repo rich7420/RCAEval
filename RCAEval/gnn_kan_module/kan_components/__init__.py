@@ -1,110 +1,73 @@
 """
-KAN Components Module
-包含所有 KAN 相關的核心組件和功能
+Pure KAN Components Module
+純粹KAN組件模組 - 專注於KAN取代MLP的核心功能
 """
 
-# 核心 KAN 層 - 從 kan_layers.py 導入優化版本
+# 純粹KAN層實現 - 核心組件
 from .kan_layers import (
     AdvancedKANLayer,
     SimplifiedKANLayer,
-    UltraFastKANLayer,
-    FastKANLayer,
     OptimizedGNNKANEncoder,
-    KANLayer,
-    GNNKANEncoder
+    KANLayer,  # 向後兼容
+    GNNKANEncoder  # 向後兼容
 )
 
-# 梯度穩定器
-from .gradient_stabilizer import GradientStabilizer, StabilizedKANLayer
+# 梯度穩定器 - KAN特有的穩定性組件
+from .gradient_stabilizer import (
+    GradientStabilizer
+)
 
-# 高容量穩定 KAN
+# 高容量穩定KAN
 from .high_capacity_stable_kan import (
-    HighCapacityStableKANLayer,
-    create_high_capacity_kan_encoder
+    HighCapacityKANEncoder,
+    StabilizedKANLayer
 )
 
-# 特徵提取功能
-from .feature_extraction import (
-    sliding_window_alignment,
-    extract_log_features,
-    stl_decomposition,
-    kll_feature_processing,
-    compute_topology_features,
-    extract_error_features,
-    feature_fusion,
-    enhanced_feature_fusion,
-    extract_trace_features,
-    build_service_dependency_graph,
-    extract_service_topology_features
-)
-
-# 從 utils 導入統一的權重計算函數
-def compute_service_criticality_weights(node_names):
-    """
-    基於服務名稱計算重要性權重 - 統一實現
-    """
-    # 導入時避免循環依賴
+# 工具函數
+def compute_service_criticality_weights(adj_matrix, method='pagerank', alpha=0.85):
+    """計算服務關鍵性權重 - 用於KAN模型的權重初始化"""
+    import numpy as np
+    
     try:
-        from ..utils import compute_service_criticality_weights as _compute_weights
-        return _compute_weights(node_names)
-    except ImportError:
-        # 回退實現
-        critical_services = {
-            'frontend': 3.0, 'front-end': 3.0,
-            'checkout': 2.8, 'payment': 2.8,
-            'cart': 2.5, 'catalog': 2.2,
-            'currency': 2.0, 'redis': 2.3,
-            'database': 2.5, 'db': 2.5,
-            'email': 1.8, 'ad': 1.6,
-            'recommendation': 1.7
-        }
+        n = adj_matrix.shape[0]
+        if n == 0:
+            return np.array([])
         
-        weights = []
-        for name in node_names:
-            name_str = str(name).lower()
-            weight = 1.0
+        if method == 'pagerank':
+            # 簡化PageRank實現
+            adj_norm = adj_matrix / (np.sum(adj_matrix, axis=1, keepdims=True) + 1e-8)
+            pr = np.ones(n) / n
             
-            for service, service_weight in critical_services.items():
-                if service in name_str:
-                    weight = max(weight, service_weight)
+            for _ in range(100):
+                pr_new = (1 - alpha) / n + alpha * np.dot(adj_norm.T, pr)
+                if np.linalg.norm(pr_new - pr, 1) < 1e-6:
+                    break
+                pr = pr_new
             
-            weights.append(min(weight, 3.0))
-        
-        import torch
-        return torch.tensor(weights, dtype=torch.float)
+            return pr
+        elif method == 'degree':
+            degrees = np.sum(adj_matrix, axis=1)
+            return degrees / (np.sum(degrees) + 1e-8)
+        else:
+            return np.ones(n) / n
+            
+    except Exception:
+        return np.ones(adj_matrix.shape[0]) / max(adj_matrix.shape[0], 1)
 
-# 導出所有重要功能 - 與原始 kan 模組保持一致
+# 確保所有KAN組件都可以被導入
 __all__ = [
-    # 統一的 KAN 編碼器
-    'KANLayer',
-    'GNNKANEncoder',  # 指向 OptimizedGNNKANEncoder
-    'OptimizedGNNKANEncoder',
-    
-    # GPU 優化的 KAN 層
+    # 純粹KAN層
     'AdvancedKANLayer',
-    'SimplifiedKANLayer',
-    'UltraFastKANLayer', 
-    'FastKANLayer',
+    'SimplifiedKANLayer', 
+    'OptimizedGNNKANEncoder',
+    'KANLayer',
+    'GNNKANEncoder',
     
-    # 梯度穩定化組件
+    # 穩定性組件
     'GradientStabilizer',
+    'HighCapacityKANEncoder',
     'StabilizedKANLayer',
     
-    # 高容量穩定 KAN
-    'HighCapacityStableKANLayer',
-    'create_high_capacity_kan_encoder',
-    
-    # 特徵提取函數
-    'sliding_window_alignment',
-    'extract_log_features',
-    'stl_decomposition',
-    'kll_feature_processing',
-    'compute_topology_features',
-    'extract_error_features',
-    'feature_fusion',
-    'enhanced_feature_fusion',
-    'extract_trace_features',
-    'build_service_dependency_graph',
-    'extract_service_topology_features',
+    # 工具函數
     'compute_service_criticality_weights'
 ]

@@ -1,19 +1,22 @@
 """
-GNN-KAN Module: 完整的模組化GNN-KAN實現
-整合所有核心功能到統一模組中
+GNN-KAN Module: 純粹KAN模組化實現
+專注於KAN取代MLP的核心價值，確保功能完整性
 """
 
-# 核心配置
-from .config import SimplifiedGNNKANConfig
-
-# 特徵提取模組
-from .feature_extractors import (
-    MultiModalFeatureExtractor,
-    simplified_feature_fusion,
-    enhanced_feature_fusion  # 別名，指向simplified_feature_fusion
+# 核心配置 - 支持多種配置模式
+from .config import (
+    SimplifiedGNNKANConfig,
+    HighCapacityGNNKANConfig,
+    FastGNNKANConfig
 )
 
-# 模型核心組件
+# 特徵提取模組 - 支持ICA/kPCA新方法
+from .feature_extractors import (
+    MultiModalFeatureExtractor,
+    simplified_feature_fusion
+)
+
+# 模型核心組件 - 純粹KAN實現
 from .models import (
     GNNKANModel,
     SimplifiedGNNKAN,
@@ -22,14 +25,14 @@ from .models import (
     compute_loss_stable
 )
 
-# 訓練模組
+# 訓練模組 - 針對KAN優化
 from .training import (
     train_gnn_kan_model,
     ModelManager,
     AdvancedGNNKANTrainer
 )
 
-# 圖構建
+# 圖構建 - 支持可學習圖結構
 from .graph_constructors import (
     SimplifiedGraphConstructor,
     IntelligentServiceGraphConstructor,
@@ -39,26 +42,24 @@ from .graph_constructors import (
 
 # 高級處理器
 from .advanced_processors import (
-    DynamicModelAdjuster,
     create_advanced_processor
 )
 
-# 特徵處理函數
+# 特徵處理函數 - 新增ICA/kPCA支持
 from .feature_processing import (
+    ica_metric_processing,
+    kpca_metric_processing,
     simplified_metric_processing,
     enhanced_trace_processing,
     psm_metric_processing
 )
 
-# KAN 組件
+# 純粹KAN組件 - 只保留有效的KAN層
 from .kan_components import (
-    OptimizedGNNKANEncoder,
-    UltraFastKANLayer,
-    GradientStabilizer,
-    StabilizedKANLayer,
     AdvancedKANLayer,
     SimplifiedKANLayer,
-    compute_service_criticality_weights
+    OptimizedGNNKANEncoder,
+    GradientStabilizer
 )
 
 # 工具函數
@@ -69,35 +70,56 @@ from .utils import (
 
 # 別名定義 - 確保向後兼容
 AdvancedTrainingManager = AdvancedGNNKANTrainer
+enhanced_feature_fusion = simplified_feature_fusion  # 統一接口
 
 # 確保所有主要組件都可以被導入
 __all__ = [
+    # 配置類
     'SimplifiedGNNKANConfig',
-    'MultiModalFeatureExtractor', 
+    'HighCapacityGNNKANConfig', 
+    'FastGNNKANConfig',
+    
+    # 特徵處理
+    'MultiModalFeatureExtractor',
+    'ica_metric_processing',
+    'kpca_metric_processing', 
+    'simplified_metric_processing',
+    'enhanced_trace_processing',
+    'psm_metric_processing',
+    'simplified_feature_fusion',
+    'enhanced_feature_fusion',
+    
+    # 核心模型
     'GNNKANModel',
     'SimplifiedGNNKAN',
-    'train_gnn_kan_model',
-    'create_model_with_config',
-    'validate_model_setup',
-    'AdvancedTrainingManager',
-    'AdvancedGNNKANTrainer',
-    'SimplifiedGraphConstructor',
-    'IntelligentServiceGraphConstructor', 
-    'LearnableGraphConstructor',
-    'DynamicModelAdjuster',
-    'create_advanced_processor',
-    'enhanced_feature_fusion',
-    'simplified_metric_processing',
-    'enhanced_trace_processing', 
-    'psm_metric_processing',
-    'compute_service_criticality_weights',
     'TemporalAttention',
-    'ModelManager',
+    'create_model_with_config',
+    'compute_loss_stable',
+    
+    # KAN組件
+    'AdvancedKANLayer',
+    'SimplifiedKANLayer', 
     'OptimizedGNNKANEncoder',
-    'UltraFastKANLayer',
     'GradientStabilizer',
-    'StabilizedKANLayer',
-    'compute_loss_stable'
+    
+    # 訓練
+    'train_gnn_kan_model',
+    'ModelManager',
+    'AdvancedGNNKANTrainer',
+    'AdvancedTrainingManager',
+    
+    # 圖構建
+    'SimplifiedGraphConstructor',
+    'IntelligentServiceGraphConstructor',
+    'LearnableGraphConstructor', 
+    'DynamicModelAdjuster',
+    
+    # 高級處理
+    'create_advanced_processor',
+    
+    # 工具函數
+    'compute_service_criticality_weights',
+    'validate_model_setup'
 ]
 
-print("✅ GNN-KAN模組完全載入成功 - 所有功能已模組化")
+print("✅ 純粹KAN模組完全載入成功 - 專注於KAN取代MLP的核心價值")
