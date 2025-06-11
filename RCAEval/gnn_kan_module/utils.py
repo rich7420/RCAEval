@@ -427,3 +427,108 @@ def benchmark_function(func, *args, num_runs=5, **kwargs):
         'max_time': np.max(times),
         'results': results
     }
+
+
+def compute_service_criticality_weights(node_names):
+    """
+    基於服務名稱計算重要性權重
+    
+    Args:
+        node_names: 節點名稱列表
+        
+    Returns:
+        weights: 重要性權重張量
+    """
+    critical_services = {
+        'frontend': 3.0, 'front-end': 3.0,
+        'checkout': 2.8, 'payment': 2.8,
+        'cart': 2.5, 'catalog': 2.2,
+        'currency': 2.0, 'redis': 2.3,
+        'database': 2.5, 'db': 2.5,
+        'email': 1.8, 'ad': 1.6,
+        'recommendation': 1.7
+    }
+    
+    critical_metrics = {
+        'error': 3.0, 'exception': 2.8, 'fail': 2.5,
+        'latency': 2.5, 'delay': 2.2, 'timeout': 2.3,
+        'cpu': 2.0, 'memory': 1.8, 'mem': 1.8,
+        'disk': 1.6, 'network': 1.7, 'connection': 1.5
+    }
+    
+    weights = []
+    for name in node_names:
+        name_str = str(name).lower()
+        weight = 1.0
+        
+        # 檢查關鍵服務
+        for service, service_weight in critical_services.items():
+            if service in name_str:
+                weight = max(weight, service_weight)
+        
+        # 檢查關鍵指標
+        for metric, metric_weight in critical_metrics.items():
+            if metric in name_str:
+                weight = max(weight, metric_weight)
+        
+        # 指標統計類型加權
+        if any(stat in name_str for stat in ['max', 'std', 'trend', 'peak']):
+            weight *= 1.2
+        
+        weights.append(min(weight, 3.0))  # 限制最大權重
+    
+    return torch.tensor(weights, dtype=torch.float)
+
+
+def validate_model_setup(model, node_features, edge_index):
+    """
+    驗證模型設置的完整性
+    
+    Args:
+        model: GNN-KAN模型
+        node_features: 節點特徵張量
+        edge_index: 邊索引張量
+        
+    Returns:
+        bool: 驗證是否通過
+    """
+    try:
+        # 檢查設備一致性
+        model_device = next(model.parameters()).device
+        if node_features.device != model_device:
+            print(f"⚠️ Device mismatch: model on {model_device}, features on {node_features.device}")
+            return False
+            
+        if edge_index.device != model_device:
+            print(f"⚠️ Device mismatch: model on {model_device}, edge_index on {edge_index.device}")
+            return False
+        
+        # 測試前向傳播
+        model.eval()
+        with torch.no_grad():
+            embeddings, adj = model(node_features, edge_index)
+            
+            # 檢查輸出形狀
+            if embeddings.size(0) != node_features.size(0):
+                print(f"⚠️ Embedding shape mismatch: {embeddings.shape} vs {node_features.shape}")
+                return False
+                
+            if adj.size() != (node_features.size(0), node_features.size(0)):
+                print(f"⚠️ Adjacency shape mismatch: {adj.shape}")
+                return False
+            
+            # 檢查數值穩定性
+            if torch.isnan(embeddings).any() or torch.isinf(embeddings).any():
+                print("⚠️ NaN/Inf in embeddings")
+                return False
+                
+            if torch.isnan(adj).any() or torch.isinf(adj).any():
+                print("⚠️ NaN/Inf in adjacency matrix")
+                return False
+        
+        print("✓ Model validation passed")
+        return True
+        
+    except Exception as e:
+        print(f"⚠️ Model validation failed: {e}")
+        return False

@@ -11,9 +11,11 @@ import time
 import warnings
 warnings.filterwarnings('ignore')
 
-from RCAEval.kan import extract_trace_features
-from RCAEval.e2e.gnn_kan import gnn_kan_rca, GNNKANConfig
-from RCAEval.kan.feature_extraction import stl_decomposition, kll_feature_processing
+# 修正import路徑 - 使用模組化結構
+from RCAEval.gnn_kan_module.kan_components.feature_extraction import extract_trace_features
+from RCAEval.e2e.gnnkan import gnn_kan_rca
+from RCAEval.gnn_kan_module.config import SimplifiedGNNKANConfig
+from RCAEval.gnn_kan_module.kan_components.feature_extraction import stl_decomposition, kll_feature_processing
 
 def test_high_capacity_gradient_stability():
     """測試高容量模型的梯度穩定性"""
