@@ -815,10 +815,10 @@ def _build_enhanced_service_graph(trace_data):
         return None
 
 
-def enhanced_feature_fusion(log_feats, metric_feats, topo_feats, error_feats, trace_feats, service_topo_feats, 
-                           fusion_method='attention', target_dim=128):
+def simplified_feature_fusion(log_feats, metric_feats, topo_feats, error_feats, trace_feats, service_topo_feats, 
+                           fusion_method='simple_concat', target_dim=128):
     """
-    增強的特徵融合，整合多模態特徵
+    簡化的特徵融合 - 移除複雜注意力機制，專注核心功能
     
     Args:
         log_feats: 日誌特徵
@@ -827,7 +827,7 @@ def enhanced_feature_fusion(log_feats, metric_feats, topo_feats, error_feats, tr
         error_feats: 錯誤特徵
         trace_feats: trace 特徵
         service_topo_feats: 服務拓撲特徵
-        fusion_method: 融合方法
+        fusion_method: 融合方法（簡化為 'simple_concat' 和 'weighted'）
         target_dim: 目標維度
     
     Returns:
@@ -836,7 +836,7 @@ def enhanced_feature_fusion(log_feats, metric_feats, topo_feats, error_feats, tr
     features_list = []
     feature_names = []
     
-    # 收集所有可用的特徵
+    # 收集所有可用的特徵 - 簡化檢查
     if log_feats is not None and log_feats.size > 0:
         features_list.append(log_feats)
         feature_names.append('log')
@@ -845,94 +845,59 @@ def enhanced_feature_fusion(log_feats, metric_feats, topo_feats, error_feats, tr
         features_list.append(metric_feats)
         feature_names.append('metric')
         
-    if topo_feats is not None and topo_feats.size > 0:
-        features_list.append(topo_feats)
-        feature_names.append('topology')
-        
-    if error_feats is not None and error_feats.size > 0:
-        features_list.append(error_feats)
-        feature_names.append('error')
-        
     if trace_feats is not None and trace_feats.size > 0:
         features_list.append(trace_feats)
         feature_names.append('trace')
         
-    if service_topo_feats is not None and service_topo_feats.size > 0:
-        features_list.append(service_topo_feats)
-        feature_names.append('service_topology')
-    
+    # 簡化：只使用最重要的三種特徵，移除噪音來源
     if not features_list:
         print("⚠️ 沒有可用的特徵進行融合")
         return np.array([])
     
-    # 對齊特徵長度
+    # 簡化的特徵對齊
     min_length = min(f.shape[0] for f in features_list)
     aligned_features = []
     
     for features in features_list:
         if features.shape[0] > min_length:
             aligned_features.append(features[:min_length])
-        elif features.shape[0] < min_length:
-            # 重複最後一行來填充
-            padding = np.repeat(features[-1:], min_length - features.shape[0], axis=0)
-            aligned_features.append(np.vstack([features, padding]))
         else:
             aligned_features.append(features)
     
-    # 根據融合方法進行融合
-    if fusion_method == 'attention':
-        try:
-            # 注意力機制融合
-            weights = [1.0] * len(aligned_features)  # 均等權重
-            fused_features = attention_fusion_enhanced(aligned_features, weights)
-            print(f"✓ 使用注意力機制融合 {len(feature_names)} 種特徵")
-        except Exception as e:
-            print(f"⚠️ 注意力融合失敗: {e}，使用簡單拼接")
-            fused_features = np.hstack(aligned_features)
+    # 簡化融合方法
+    if fusion_method == 'weighted':
+        # 簡化的加權融合：trace=0.5, metric=0.3, log=0.2
+        weights = [0.2, 0.3, 0.5] if len(aligned_features) == 3 else [1.0/len(aligned_features)] * len(aligned_features)
+        
+        # 標準化到相同維度
+        min_cols = min(f.shape[1] for f in aligned_features)
+        normalized_features = [f[:, :min_cols] for f in aligned_features]
+        
+        # 加權組合
+        fused_features = np.zeros_like(normalized_features[0])
+        for features, weight in zip(normalized_features, weights):
+            fused_features += weight * features
     else:
         # 簡單拼接
         fused_features = np.hstack(aligned_features)
         print(f"✓ 簡單拼接融合 {len(feature_names)} 種特徵")
     
-    # PCA 降維到目標維度
+    # 簡化的PCA降維
     if fused_features.shape[1] > target_dim:
         try:
             from sklearn.decomposition import PCA
             pca = PCA(n_components=target_dim, random_state=42)
             fused_features = pca.fit_transform(fused_features)
             print(f"✓ PCA 降維到目標維度: {target_dim}")
-        except Exception as e:
-            print(f"⚠️ PCA 降維失敗: {e}")
+        except Exception:
+            # 簡單截斷
+            fused_features = fused_features[:, :target_dim]
     
     return fused_features
 
 
-def attention_fusion_enhanced(features_list, weights):
-    """增強的注意力機制特徵融合"""
-    from sklearn.preprocessing import MinMaxScaler
-    
-    # 計算注意力權重
-    attention_weights = torch.softmax(torch.tensor(weights), dim=0).numpy()
-    
-    # 標準化特徵維度
-    target_cols = min(f.shape[1] for f in features_list)
-    normalized_features = []
-    
-    for features in features_list:
-        if features.shape[1] != target_cols:
-            scaler = MinMaxScaler()
-            features = scaler.fit_transform(features)
-            if features.shape[1] > target_cols:
-                features = features[:, :target_cols]
-            else:
-                padding = np.zeros((features.shape[0], target_cols - features.shape[1]))
-                features = np.hstack([features, padding])
-        
-        normalized_features.append(features)
-    
-    # 注意力加權
-    fused = np.zeros_like(normalized_features[0])
-    for features, weight in zip(normalized_features, attention_weights):
-        fused += weight * features
-    
-    return fused
+# 簡化的特徵融合函數 - 移除複雜的注意力機制
+# 使用 simplified_feature_fusion 替代原有的 enhanced_feature_fusion
+
+# 為向後兼容性保留別名
+enhanced_feature_fusion = simplified_feature_fusion

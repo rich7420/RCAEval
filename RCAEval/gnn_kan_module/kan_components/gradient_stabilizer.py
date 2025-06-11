@@ -20,31 +20,28 @@ import warnings
 
 class GradientStabilizer:
     """
-    基於 KAN 論文的梯度穩定化器
-    實施所有論文中提到的梯度爆炸緩解技術
+    簡化的梯度穩定化器 - 減少冗餘檢查，專注核心穩定性
     """
     
     def __init__(self, 
-                 l1_lambda: float = 1e-2,      # 論文建議 10^-2 或 10^-3
-                 entropy_lambda: float = 1e-2,  # 熵正則化強度
-                 grad_clip_value: float = 1.0,  # 梯度裁剪閾值
-                 pruning_threshold: float = 1e-2, # 剪枝閾值 θ
-                 enable_dynamic_scaling: bool = True,
-                 stability_check_freq: int = 100):
+                 l1_lambda: float = 1e-2,      
+                 entropy_lambda: float = 1e-2,  
+                 grad_clip_value: float = 1.0,  
+                 pruning_threshold: float = 1e-2,
+                 stability_check_freq: int = 20):  # 減少檢查頻率
         
         self.l1_lambda = l1_lambda
         self.entropy_lambda = entropy_lambda
         self.grad_clip_value = grad_clip_value
         self.pruning_threshold = pruning_threshold
-        self.enable_dynamic_scaling = enable_dynamic_scaling
         self.stability_check_freq = stability_check_freq
         
-        # 監控統計
+        # 簡化監控統計
         self.gradient_norms = []
-        self.parameter_norms = []
-        self.regularization_history = []
         self.stability_violations = 0
         self.step_count = 0
+        self.regularization_history = []
+        self.enable_dynamic_scaling = False  # 默認關閉動態調整
         
     def xavier_init_kan_layer(self, layer):
         """
@@ -86,42 +83,24 @@ class GradientStabilizer:
                 nn.init.zeros_(layer.linear.bias)
     
     def compute_l1_regularization(self, model) -> torch.Tensor:
-        """
-        計算 L1 正則化項：|Φ_l|_1 = (1/N_p) * Σ|φ(x_s^(p))|
-        """
+        """簡化的 L1 正則化計算"""
         l1_reg = torch.tensor(0.0, device=next(model.parameters()).device)
-        param_count = 0
         
         for module in model.modules():
-            # AdvancedKANLayer
+            # 統一處理所有KAN層的主要權重
             if hasattr(module, 'spline_coeffs'):
                 l1_reg += torch.sum(torch.abs(module.spline_coeffs))
-                param_count += module.spline_coeffs.numel()
-                
-            # SimplifiedKANLayer
-            if hasattr(module, 'poly_weights'):
+            elif hasattr(module, 'poly_weights'):
                 l1_reg += torch.sum(torch.abs(module.poly_weights))
-                param_count += module.poly_weights.numel()
-                
-            # FastKANLayer
-            if hasattr(module, 'spline_weight'):
+            elif hasattr(module, 'spline_weight'):
                 l1_reg += torch.sum(torch.abs(module.spline_weight))
-                param_count += module.spline_weight.numel()
-                
-            # UltraFastKANLayer
-            if hasattr(module, 'activation_weights'):
+            elif hasattr(module, 'activation_weights'):
                 l1_reg += torch.sum(torch.abs(module.activation_weights))
-                param_count += module.activation_weights.numel()
-                
+            
             if hasattr(module, 'silu_weight'):
                 l1_reg += torch.sum(torch.abs(module.silu_weight))
-                param_count += module.silu_weight.numel()
         
-        # 歸一化
-        if param_count > 0:
-            l1_reg = l1_reg / param_count
-            
-        return l1_reg
+        return l1_reg * self.l1_lambda
     
     def compute_entropy_regularization(self, model) -> torch.Tensor:
         """
@@ -176,43 +155,26 @@ class GradientStabilizer:
     
     def compute_total_regularization_loss(self, model, pred_loss: torch.Tensor) -> torch.Tensor:
         """
-        計算總損失：L_total = L_pred + λ * Σ(μ1|Φ_l|_1 + μ2*S(Φ_l))
+        簡化的總損失計算：L_total = L_pred + λ * Σ(μ1|Φ_l|_1 + μ2*S(Φ_l))
         """
         l1_reg = self.compute_l1_regularization(model)
         entropy_reg = self.compute_entropy_regularization(model)
         
-        # 🔧 統一參數類型處理 - 確保始終為數值
-        try:
-            if isinstance(self.l1_lambda, (int, float)):
-                l1_lambda_val = float(self.l1_lambda)
-            else:
-                # 處理配置對象的情況
-                l1_lambda_val = float(getattr(self.l1_lambda, 'base_l1_lambda', 1e-6))
-                print(f"⚠️ Warning: l1_lambda is not a number, using fallback value {l1_lambda_val}")
-            
-            if isinstance(self.entropy_lambda, (int, float)):
-                entropy_lambda_val = float(self.entropy_lambda)
-            else:
-                # 處理配置對象的情況
-                entropy_lambda_val = float(getattr(self.entropy_lambda, 'base_entropy_lambda', 1e-6))
-                print(f"⚠️ Warning: entropy_lambda is not a number, using fallback value {entropy_lambda_val}")
-                
-        except (AttributeError, TypeError, ValueError) as e:
-            print(f"⚠️ Error processing lambda values: {e}, using default values")
-            l1_lambda_val = 1e-6
-            entropy_lambda_val = 1e-6
+        # 使用穩定的係數值
+        l1_lambda_val = float(self.l1_lambda) if isinstance(self.l1_lambda, (int, float)) else 1e-4
+        entropy_lambda_val = float(self.entropy_lambda) if isinstance(self.entropy_lambda, (int, float)) else 1e-4
         
-        # 論文中 μ1 = μ2 = 1
+        # 計算正則化損失
         reg_loss = l1_lambda_val * l1_reg + entropy_lambda_val * entropy_reg
         
         # 確保正則化損失不會過大
-        reg_loss = torch.clamp(reg_loss, max=pred_loss.item() * 0.5)
+        reg_loss = torch.clamp(reg_loss, max=pred_loss.item() * 0.3)
         
         total_loss = pred_loss + reg_loss
         
-        # 記錄正則化歷史 (限制歷史記錄長度)
-        if len(self.regularization_history) > 1000:
-            self.regularization_history = self.regularization_history[-500:]  # 保留最近500條記錄
+        # 簡化的歷史記錄
+        if len(self.regularization_history) > 500:
+            self.regularization_history = self.regularization_history[-250:]
             
         self.regularization_history.append({
             'l1_reg': l1_reg.item(),

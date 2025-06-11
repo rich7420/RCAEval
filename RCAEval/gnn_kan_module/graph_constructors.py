@@ -803,7 +803,7 @@ class DynamicModelAdjuster:
         if len(node_names) == 0:
             return 0.5
         
-        # 識別不同類型的服務和指標
+        # 識别不同類型的服務和指標
         categories = {
             'services': set(),
             'metrics': set(),
@@ -859,7 +859,7 @@ class DynamicModelAdjuster:
                     if len(feature_col) > 5:
                         diff = np.diff(feature_col)
                         stationarity = 1.0 / (1.0 + np.std(diff))
-                        stability_scores.append(stationarity)
+                        stability_scores.append(stability)
                 
                 if stability_scores:
                     return np.mean(stability_scores)
@@ -871,3 +871,89 @@ class DynamicModelAdjuster:
         except Exception as e:
             print(f"⚠️ Stability assessment failed: {e}")
             return 0.5
+
+
+class LearnableGraphConstructor(nn.Module):
+    """可學習的圖構建器 - 支持動態邊權重更新"""
+    
+    def __init__(self, config, num_nodes):
+        super(LearnableGraphConstructor, self).__init__()
+        self.config = config
+        self.num_nodes = num_nodes
+        
+        # 可學習的邊權重參數
+        self.edge_weight_mlp = nn.Sequential(
+            nn.Linear(num_nodes * 2, 64),  # 節點對特徵
+            nn.ReLU(),
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Linear(32, 1),
+            nn.Sigmoid()
+        )
+        
+        # 圖結構更新頻率控制
+        self.update_counter = 0
+        self.update_frequency = getattr(config, 'graph_update_frequency', 10)
+        
+        # 保存初始圖結構
+        self.register_buffer('base_edge_index', torch.empty((2, 0), dtype=torch.long))
+        self.register_buffer('base_edge_weights', torch.empty(0))
+        
+    def initialize_base_graph(self, features, node_names):
+        """初始化基礎圖結構"""
+        constructor = SimplifiedGraphConstructor(self.config)
+        edge_index, edge_weights = constructor.build_graph(features, node_names)
+        
+        self.base_edge_index = edge_index
+        self.base_edge_weights = edge_weights
+        
+        return edge_index, edge_weights
+    
+    def update_edge_weights(self, node_features):
+        """動態更新邊權重"""
+        if self.base_edge_index.size(1) == 0:
+            return self.base_edge_index, self.base_edge_weights
+        
+        # 只在指定頻率更新
+        self.update_counter += 1
+        if self.update_counter % self.update_frequency != 0:
+            return self.base_edge_index, self.base_edge_weights
+        
+        # 計算邊特徵
+        edge_features = self._compute_edge_features(node_features, self.base_edge_index)
+        
+        # 通過MLP更新邊權重
+        with torch.no_grad():  # 避免影響主要訓練
+            new_weights = self.edge_weight_mlp(edge_features).squeeze(-1)
+            
+            # 與原始權重結合
+            combined_weights = 0.7 * self.base_edge_weights + 0.3 * new_weights
+            
+            # 過濾弱連接
+            threshold = torch.quantile(combined_weights, 0.3)  # 保留前70%的邊
+            mask = combined_weights > threshold
+            
+            filtered_edges = self.base_edge_index[:, mask]
+            filtered_weights = combined_weights[mask]
+            
+            return filtered_edges, filtered_weights
+    
+    def _compute_edge_features(self, node_features, edge_index):
+        """計算邊特徵"""
+        src_nodes = edge_index[0]
+        dst_nodes = edge_index[1]
+        
+        src_features = node_features[src_nodes]
+        dst_features = node_features[dst_nodes]
+        
+        # 拼接源節點和目標節點特徵
+        edge_features = torch.cat([src_features, dst_features], dim=1)
+        
+        return edge_features
+    
+    def forward(self, node_features=None):
+        """前向傳播 - 返回當前圖結構"""
+        if node_features is not None and self.config.learnable_edges:
+            return self.update_edge_weights(node_features)
+        else:
+            return self.base_edge_index, self.base_edge_weights

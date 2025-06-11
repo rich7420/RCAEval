@@ -3,15 +3,15 @@ KAN Components Module
 包含所有 KAN 相關的核心組件和功能
 """
 
-# 核心 KAN 層
-from .kan_layer import (
-    KANLayer,
-    SimplifiedKANLayer, 
+# 核心 KAN 層 - 從 kan_layers.py 導入優化版本
+from .kan_layers import (
+    AdvancedKANLayer,
+    SimplifiedKANLayer,
     UltraFastKANLayer,
     FastKANLayer,
-    AdvancedKANLayer,
     OptimizedGNNKANEncoder,
-    OptimizedGNNKANEncoder as GNNKANEncoder  # 統一使用優化版本
+    KANLayer,
+    GNNKANEncoder
 )
 
 # 梯度穩定器

@@ -9,7 +9,8 @@ from .config import SimplifiedGNNKANConfig
 # 特徵提取模組
 from .feature_extractors import (
     MultiModalFeatureExtractor,
-    enhanced_feature_fusion
+    simplified_feature_fusion,
+    enhanced_feature_fusion  # 別名，指向simplified_feature_fusion
 )
 
 # 模型核心組件
@@ -31,7 +32,9 @@ from .training import (
 # 圖構建
 from .graph_constructors import (
     SimplifiedGraphConstructor,
-    IntelligentServiceGraphConstructor
+    IntelligentServiceGraphConstructor,
+    LearnableGraphConstructor,
+    DynamicModelAdjuster
 )
 
 # 高級處理器
@@ -80,6 +83,7 @@ __all__ = [
     'AdvancedGNNKANTrainer',
     'SimplifiedGraphConstructor',
     'IntelligentServiceGraphConstructor', 
+    'LearnableGraphConstructor',
     'DynamicModelAdjuster',
     'create_advanced_processor',
     'enhanced_feature_fusion',

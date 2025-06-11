@@ -16,9 +16,11 @@ class SimplifiedGNNKANConfig:
         self.hidden_dims = [128, 64]  # 簡化為2層隱藏層
         self.output_dim = 32          # 簡化輸出維度
         
-        # 🔑 KAN設置 - 保持核心表達能力
-        self.kan_grid_size = 5
+        # 🔑 KAN設置 - 增強核心表達能力
+        self.kan_grid_size = 8        # 從5增加到8，提升非線性表達
         self.kan_spline_order = 3
+        self.adaptive_spline_order = True  # 新增：自適應樣條階數
+        self.learnable_edges = True   # 新增：可學習的邊權重
         self.num_gnn_layers = 2       # 簡化為2層
         self.dropout = 0.1
         
@@ -29,24 +31,25 @@ class SimplifiedGNNKANConfig:
         self.learning_rate = 1e-4
         self.weight_decay = 1e-5
         
-        # 🛡️ 梯度穩定 - 保持核心穩定性
+        # 🛡️ 梯度穩定 - 簡化穩定性檢查
         self.gradient_clip_norm = 1.0
         self.use_gradient_stabilizer = True
+        self.stability_check_frequency = 20  # 減少檢查頻率
         self.base_l1_lambda = 0.001
         self.base_entropy_lambda = 0.001
-        self.l2_lambda = 0.0001
-        self.smoothness_lambda = 0.001
         self.base_learning_rate = 1e-4
         self.warmup_epochs = 5
-        self.stability_check_frequency = 10
         
-        # 🔧 特徵提取 - 簡化但保持有效性
+        # 🔧 特徵提取 - 簡化特徵融合機制
         self.window_size = 10         # 簡化窗口大小
         self.step_size = 1
         self.use_dla = True
-        self.max_log_features = 50    # 減少特徵數量
+        self.max_log_features = 30    # 減少特徵數量，避免噪音
         self.target_feature_dim = 64  # 簡化目標維度
-        self.fusion_method = 'concatenate'  # 簡化融合方法
+        self.fusion_method = 'simple_concat'  # 簡化融合方法
+        self.use_attention_fusion = False     # 移除複雜注意力機制
+        self.use_stl_decomposition = False    # 簡化STL處理
+        self.use_kll_processing = False       # 簡化KLL處理
         
         # PCA設置
         self.use_pca = True

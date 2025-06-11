@@ -36,7 +36,8 @@ class GNNKANModel(nn.Module):
             hidden_dims=config.hidden_dims,
             output_dim=config.output_dim,
             num_layers=config.num_gnn_layers,
-            kan_type='simplified',  # 使用簡化的KAN層類型
+            kan_grid_size=config.kan_grid_size,
+            kan_spline_order=config.kan_spline_order,
             dropout=config.dropout
         )
         
