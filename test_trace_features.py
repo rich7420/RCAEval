@@ -22,7 +22,8 @@ def test_trace_features():
     print("="*60)
     
     try:
-        from RCAEval.gnn_kan_module.kan_components.feature_extraction import extract_trace_features, build_service_dependency_graph
+        # 修正import路徑 - 使用正確的模組化結構
+        from RCAEval.gnn_kan_module.kan_components import extract_trace_features, build_service_dependency_graph
         
         # 1. 創建模擬 trace 數據
         print("\n1. 創建模擬 trace 數據...")
@@ -76,7 +77,8 @@ def test_trace_features():
         
         # 5. 測試服務拓樸特徵
         print("\n5. 測試服務拓樸特徵提取...")
-        from RCAEval.kan import extract_service_topology_features
+        # 修正import路徑 - 使用正確的模組化結構
+        from RCAEval.gnn_kan_module.kan_components import extract_service_topology_features
         
         if service_graph is not None:
             service_topo_features, service_topo_names = extract_service_topology_features(
@@ -106,7 +108,8 @@ def test_gnn_kan_with_trace():
     print("="*60)
     
     try:
-        from RCAEval.e2e.gnn_kan import gnn_kan_rca
+        # 修正import路徑 - 使用正確的主入口點
+        from RCAEval.e2e.gnnkan import gnn_kan_rca
         
         # 創建多模態數據，包含 trace
         print("\n1. 創建多模態測試數據 (包含 trace)...")
@@ -138,8 +141,7 @@ def test_gnn_kan_with_trace():
             multimodal_data, 
             inject_time=inject_time,
             dataset='test_trace',
-            epochs=10,  # 減少訓練輪數以加快測試
-            stl_seasonal=3
+            epochs=10  # 減少訓練輪數以加快測試
         )
         
         if result and 'ranks' in result and result['ranks']:
@@ -179,8 +181,9 @@ def test_tracerca_comparison():
     print("="*60)
     
     try:
+        # 修正import路徑 - 使用正確的模組化結構
         from RCAEval.e2e.tracerca import tracerca
-        from RCAEval.kan import extract_trace_features
+        from RCAEval.gnn_kan_module.kan_components import extract_trace_features
         
         # 創建測試數據
         trace_data = create_mock_trace_data()

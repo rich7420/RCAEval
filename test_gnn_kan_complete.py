@@ -62,7 +62,7 @@ def test_gnn_kan_features():
     # 測試 KAN 模組
     print("\n1. 測試 KAN 模組...")
     try:
-        # 修正import路徑 - 使用模組化結構
+        # 修正import路徑 - 使用正確的模組化結構
         from RCAEval.gnn_kan_module.kan_components import UltraFastKANLayer, OptimizedGNNKANEncoder
         import torch
         
@@ -88,8 +88,8 @@ def test_gnn_kan_features():
     # 測試特徵提取功能
     print("\n2. 測試特徵提取功能...")
     try:
-        # 修正import路徑 - 使用模組化結構
-        from RCAEval.gnn_kan_module.kan_components.feature_extraction import (
+        # 修正import路徑 - 使用正確的模組化結構
+        from RCAEval.gnn_kan_module.kan_components import (
             sliding_window_alignment, extract_log_features, stl_decomposition,
             kll_feature_processing, compute_topology_features, extract_error_features
         )
@@ -141,7 +141,7 @@ def test_gnn_kan_features():
     # 測試完整的 GNN-KAN RCA
     print("\n3. 測試完整的 GNN-KAN RCA...")
     try:
-        # 修正import路徑 - 使用模組化結構
+        # 修正import路徑 - 使用正確的主入口點
         from RCAEval.e2e.gnnkan import gnn_kan_rca
         
         # 創建更複雜的測試數據
@@ -162,7 +162,6 @@ def test_gnn_kan_features():
             inject_time=inject_time, 
             dataset='test',
             epochs=3,  # 進一步減少訓練輪數
-            stl_seasonal=3,  # 使用更小的季節性參數
             window_size=5,  # 更小窗口
             batch_size=8   # 更小批次
         )

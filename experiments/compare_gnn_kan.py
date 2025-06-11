@@ -36,7 +36,8 @@ class RCAComparator:
     def _run_gnn_kan(self, data, inject_time, dataset):
         """執行 GNN-KAN 方法"""
         try:
-            from RCAEval.e2e.gnn_kan import gnn_kan_rca
+            # 修正import路徑 - 使用正確的主入口點
+            from RCAEval.e2e.gnnkan import gnn_kan_rca
             start_time = time.time()
             result = gnn_kan_rca(data, inject_time=inject_time, dataset=dataset)
             end_time = time.time()
