@@ -188,7 +188,7 @@ def test_high_capacity_stability():
         import traceback
         traceback.print_exc()
         return False
-
+    
 def evaluate_high_capacity_performance(exec_time, node_count, root_cause_count, has_graph):
     """評估高容量模型的性能"""
     score = 0.0
