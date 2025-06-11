@@ -238,293 +238,72 @@ class MultiModalFeatureExtractor:
             return features
     
     def _extract_multimodal_features(self, data, inject_time):
-        """處理多模態數據 - 簡化版本，移除STL分解的複雜性"""
-        all_features = []
-        node_names = []
-        
+        """處理多模態數據 - 大幅簡化版本，專注核心功能"""
         print("Processing multimodal data...")
         
-        # 🔧 1. 使用簡化的滑動窗口處理
-        if inject_time is not None:
-            print("Applying simplified window alignment...")
-            try:
-                windows, timestamps = sliding_window_alignment(
-                    data, 
-                    window_size=self.config.window_size, 
-                    step_size=self.config.step_size,
-                    timestamp_col='time'
+        # 🎯 直接處理數據，不使用複雜的滑動窗口
+        if isinstance(data, dict):
+            # 優先處理 metrics 數據（核心）
+            if 'metrics' in data or 'metric' in data:
+                key = 'metrics' if 'metrics' in data else 'metric'
+                metric_data = data[key]
+                
+                print("🔧 Using simplified metric processing (replacing STL decomposition)...")
+                features, names = simplified_metric_processing(
+                    metric_data, target_dim=self.config.target_feature_dim
                 )
-                print(f"Created {len(windows)} windows for analysis")
-            except Exception as e:
-                print(f"⚠️ Window alignment failed: {e}, using raw data")
-                windows = [data]
-                timestamps = [None]
-        else:
-            windows = [data]
-            timestamps = [None]
-        
-        # 對每個窗口進行特徵提取
-        for window_idx, window_data in enumerate(windows):
-            window_features = []
-            window_node_names = []
+                print(f"✓ Simplified processing: {features.shape[1]} features extracted")
+                return features, names
             
-            # 🔧 2. 使用增強的trace處理（替代複雜的trace邏輯）
-            trace_data_found = False
-            if 'trace' in window_data or 'traces' in window_data:
-                trace_key = 'trace' if 'trace' in window_data else 'traces'
-                trace_data = window_data[trace_key]
-                trace_data_found = True
-            elif isinstance(window_data, pd.DataFrame):
-                trace_columns = ['serviceName', 'operationName', 'startTime', 'duration', 'traceID', 'spanID']
-                if any(col in window_data.columns for col in trace_columns):
-                    trace_data = window_data
-                    trace_data_found = True
-                    print(f"Detected trace data in DataFrame format for window {window_idx}")
+            # 處理其他類型數據
+            elif 'trace' in data or 'traces' in data:
+                key = 'trace' if 'trace' in data else 'traces'
+                trace_data = data[key]
+                features, names = self._extract_trace_features_simple(trace_data)
+                return features, names
             
-            if trace_data_found:
-                print(f"Extracting trace features from window {window_idx}...")
-                try:
-                    # 🔧 使用簡化的trace處理
-                    trace_features, operation_names, service_graph = enhanced_trace_processing(
-                        trace_data, inject_time
-                    )
-                    
-                    if trace_features.size > 0:
-                        pca_trace_features = self._apply_pca_with_variance_check(
-                            trace_features, f'trace_window_{window_idx}', target_components=64
-                        )
-                        window_features.append(pca_trace_features)
-                        window_node_names.extend([f'trace_{name}' for name in operation_names[:pca_trace_features.shape[1]]])
-                    
-                    # 提取服務拓撲特徵
-                    if service_graph is not None:
-                        service_topo_features, service_names = extract_service_topology_features(service_graph)
-                        if service_topo_features.size > 0:
-                            pca_service_features = self._apply_pca_with_variance_check(
-                                service_topo_features, f'service_topo_window_{window_idx}', target_components=32
-                            )
-                            window_features.append(pca_service_features)
-                            window_node_names.extend([f'service_topo_{name}' for name in service_names[:pca_trace_features.shape[1]]])
-                            
-                except Exception as e:
-                    print(f"⚠️ Trace feature extraction failed: {e}, continuing without trace features")
-            
-            # 🔧 3. 使用簡化的metric處理（替代STL分解）
-            metric_data_processed = False
-            if 'metric' in window_data or 'metrics' in window_data:
-                metric_key = 'metric' if 'metric' in window_data else 'metrics'
-                metric_data = window_data[metric_key]
-                metric_data_processed = True
-            elif isinstance(window_data, pd.DataFrame) and not trace_data_found:
-                metric_data = window_data
-                metric_data_processed = True
-            
-            if metric_data_processed:
-                try:
-                    # 預處理 metric 數據
-                    if inject_time is not None and 'time' in metric_data.columns:
-                        normal_df = metric_data[metric_data['time'] < inject_time]
-                        anomal_df = metric_data[metric_data['time'] >= inject_time]
-                        
-                        if not normal_df.empty and not anomal_df.empty:
-                            normal_processed = preprocess(normal_df, dataset='default')
-                            anomal_processed = preprocess(anomal_df, dataset='default')
-                            
-                            intersect = [x for x in normal_processed.columns if x in anomal_processed.columns]
-                            normal_processed = normal_processed[intersect]
-                            anomal_processed = anomal_processed[intersect]
-                            
-                            metric_data = pd.concat([normal_processed, anomal_processed], axis=0, ignore_index=True)
-                        else:
-                            metric_data = preprocess(metric_data, dataset='default')
-                    else:
-                        metric_data = preprocess(metric_data, dataset='default')
-                    
-                    # 🎯 使用簡化的指標處理（替代複雜的STL分解）
-                    simplified_features, simplified_names = simplified_metric_processing(
-                        metric_data.select_dtypes(include=[np.number]),
-                        target_dim=self.config.pca_components
-                    )
-                    
-                    if simplified_features.size > 0:
-                        window_features.append(simplified_features)
-                        window_node_names.extend([f'w{window_idx}_{name}' for name in simplified_names])
-                        print(f"✓ Extracted {len(simplified_names)} simplified metric features")
-                        
-                except Exception as e:
-                    print(f"⚠️ Metric feature extraction failed: {e}")
-            
-            # 🔧 4. 處理 log 數據（保持原有邏輯，已經足夠簡单）
-            if 'log' in window_data or 'logs' in window_data:
-                log_key = 'log' if 'log' in window_data else 'logs'
-                log_data = window_data[log_key]
-                
-                try:
-                    log_features, log_names = extract_log_features(
-                        log_data,
-                        use_dla=self.config.use_dla,
-                        max_features=self.config.max_log_features
-                    )
-                    
-                    if log_features.size > 0:
-                        if self.config.use_pca and log_features.shape[1] > self.config.pca_components:
-                            log_features = self._apply_pca_with_variance_check(
-                                log_features, f"log_window_{window_idx}"
-                            )
-                        
-                        window_features.append(log_features)
-                        window_node_names.extend([f'w{window_idx}_{name}' for name in log_names])
-                        print(f"✓ Extracted {len(log_names)} log features")
-                        
-                except Exception as e:
-                    print(f"⚠️ Log feature extraction failed: {e}")
-            
-            # 收集當前窗口的特徵
-            if window_features:
-                all_features.extend(window_features)
-                node_names.extend(window_node_names)
+            elif 'log' in data or 'logs' in data:
+                key = 'log' if 'log' in data else 'logs'
+                log_data = data[key]
+                features, names = extract_log_features(log_data, max_features=self.config.max_log_features)
+                return features, names
         
-        # 🔧 5. 簡化的回退策略（移除過度複雜的合成特徵生成）
-        if not all_features:
-            print("⚠️ No features extracted, generating minimal fallback features...")
-            n_samples = 10  # 減少合成特徵數量
-            n_features = 8   # 減少特徵維度
-            fallback_features = np.random.randn(n_samples, n_features) * 0.1  # 減少變異性
-            fallback_names = [f'fallback_feature_{i}' for i in range(n_features)]
-            
-            all_features.append(fallback_features)
-            node_names.extend(fallback_names)
-            print(f"✓ Generated {len(fallback_names)} fallback features")
-        
-        return self._finalize_features(all_features, node_names)
-
-    def _finalize_features(self, all_features, node_names):
-        """
-        最终化特征处理
-        
-        Args:
-            all_features: 所有特徵列表
-            node_names: 节点名称列表
-            
-        Returns:
-            fused_features: 融合后的特征
-            node_names: 最终的节点名称列表
-        """
-        if not all_features:
-            return np.array([]), []
-        
-        # 对齐所有特征的长度
-        min_length = min(f.shape[0] for f in all_features if f.size > 0)
-        if min_length == 0:
-            min_length = 1
-            
-        aligned_features = []
-        for features in all_features:
-            if features.size == 0:
-                continue
-            if features.shape[0] > min_length:
-                features = features[:min_length]
-            elif features.shape[0] < min_length:
-                # 重复最后一行
-                padding = np.repeat(features[-1:], min_length - features.shape[0], axis=0)
-                features = np.vstack([features, padding])
-            aligned_features.append(features)
-        
-        if not aligned_features:
-            return np.array([]), []
-        
-        # 计算拓扑特征
-        print("Computing topology features...")
-        if len(aligned_features) > 1:
-            try:
-                from sklearn.metrics.pairwise import cosine_similarity
-                
-                combined_features = np.hstack(aligned_features)
-                if combined_features.shape[1] > 1:
-                    similarity_matrix = cosine_similarity(combined_features.T)
-                    adj_matrix = (similarity_matrix > 0.5).astype(float)
-                    
-                    topology_features, topology_names = compute_topology_features(
-                        adj_matrix, node_names[:adj_matrix.shape[0]]
-                    )
-                    
-                    if topology_features.size > 0:
-                        topo_features_expanded = np.tile(topology_features, (min_length, 1))
-                        
-                        if self.config.use_pca and topo_features_expanded.shape[1] > self.config.pca_components:
-                            topo_features_expanded = self._apply_pca_with_variance_check(
-                                topo_features_expanded, "topology_features"
-                            )
-                        
-                        aligned_features.append(topo_features_expanded)
-                        node_names.extend([f'topology_{name}' for name in topology_names])
-            except Exception as e:
-                print(f"⚠️ Topology feature computation failed: {e}")
-        
-        # 特征融合
-        print("Performing feature fusion...")
-        
-        # 分离不同类型的特征进行融合
-        log_feats = None
-        metric_feats = None
-        topo_feats = None
-        error_feats = None
-        trace_feats = None
-        service_topo_feats = None
-        
-        for i, features in enumerate(aligned_features):
-            node_name = node_names[i] if i < len(node_names) else ""
-            
-            if 'trace_' in node_name:
-                if trace_feats is None:
-                    trace_feats = features
-                else:
-                    trace_feats = np.hstack([trace_feats, features])
-            elif 'service_topo_' in node_name:
-                if service_topo_feats is None:
-                    service_topo_feats = features
-                else:
-                    service_topo_feats = np.hstack([service_topo_feats, features])
-            elif 'log' in node_name:
-                if log_feats is None:
-                    log_feats = features
-                else:
-                    log_feats = np.hstack([log_feats, features])
-            elif 'topology' in node_name:
-                if topo_feats is None:
-                    topo_feats = features
-                else:
-                    topo_feats = np.hstack([topo_feats, features])
-            elif 'error' in node_name:
-                if error_feats is None:
-                    error_feats = features
-                else:
-                    error_feats = np.hstack([error_feats, features])
-            else:
-                if metric_feats is None:
-                    metric_feats = features
-                else:
-                    metric_feats = np.hstack([metric_feats, features])
-        
-        # 使用改進的特徵融合 - 修正參數順序
-        fused_features = enhanced_feature_fusion(
-            log_feats, metric_feats, topo_feats, error_feats, trace_feats, service_topo_feats,
-            fusion_method=self.config.fusion_method,
-            target_dim=self.config.target_feature_dim
-        )
-        
-        if fused_features.size == 0:
-            # 回退方案：直接拼接
-            fused_features = np.hstack(aligned_features)
-        
-        # 最终PCA降维确保特征维度符合要求
-        if self.config.use_pca and fused_features.shape[1] > self.config.target_feature_dim:
-            print(f"Applying final PCA: {fused_features.shape[1]} -> {self.config.target_feature_dim}")
-            fused_features = self._apply_pca_with_variance_check(
-                fused_features, "final_fusion", target_components=self.config.target_feature_dim
+        # 如果是 DataFrame，當作 metrics 處理
+        elif isinstance(data, pd.DataFrame):
+            features, names = simplified_metric_processing(
+                data, target_dim=self.config.target_feature_dim
             )
+            return features, names
         
-        return fused_features, node_names
+        # 最簡回退方案
+        print("⚠️ Using minimal fallback features...")
+        n_features = min(self.config.target_feature_dim, 24)  # 減少到24個特徵
+        fallback_features = np.random.randn(1, n_features) * 0.1
+        fallback_names = [f'fallback_{i}' for i in range(n_features)]
+        return fallback_features, fallback_names
+    
+    def _extract_trace_features_simple(self, trace_data):
+        """簡化的trace特徵提取"""
+        try:
+            if isinstance(trace_data, pd.DataFrame) and not trace_data.empty:
+                # 基本統計特徵
+                features = []
+                names = []
+                
+                numeric_cols = trace_data.select_dtypes(include=[np.number]).columns
+                for col in numeric_cols[:8]:  # 最多8個數值列
+                    col_data = trace_data[col].dropna()
+                    if len(col_data) > 0:
+                        features.extend([col_data.mean(), col_data.std(), col_data.max(), col_data.min()])
+                        names.extend([f'{col}_mean', f'{col}_std', f'{col}_max', f'{col}_min'])
+                
+                if features:
+                    return np.array([features]), names
+            
+            # 回退方案
+            return np.array([[0, 0, 0, 0]]), ['trace_count', 'avg_duration', 'max_duration', 'service_count']
+        except:
+            return np.array([[0]]), ['trace_default']
     
     def _extract_single_modal_features(self, data, inject_time):
         """處理單一模態數據"""

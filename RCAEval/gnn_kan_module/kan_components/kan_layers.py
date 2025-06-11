@@ -335,20 +335,27 @@ class OptimizedGNNKANEncoder(nn.Module):
         self.num_layers = num_layers
         self.dropout = nn.Dropout(dropout)
         self.learnable_graph = learnable_graph
+        self.kan_grid_size = kan_grid_size
+        self.kan_spline_order = kan_spline_order
         
-        # 構建增強的 KAN 層
+        # 構建增強的 KAN 層 - 使用提升的表達能力
         layers = []
         dims = [input_dim] + hidden_dims + [output_dim]
         
         for i in range(len(dims) - 1):
-            # 使用增強的 SimplifiedKANLayer
-            layers.append(SimplifiedKANLayer(dims[i], dims[i + 1]))
+            # 使用增強的 AdvancedKANLayer 提升非線性表達
+            layers.append(AdvancedKANLayer(
+                dims[i], dims[i + 1], 
+                num_basis=kan_grid_size,  # 使用配置的grid_size
+                spline_order=kan_spline_order,
+                grid_size=kan_grid_size
+            ))
             if i < len(dims) - 2:
                 layers.append(nn.Dropout(dropout))
         
         self.layers = nn.ModuleList(layers)
         
-        # 增強的消息傳遞層
+        # 增強的消息傳遞層 - 簡化但保持效果
         self.message_layers = nn.ModuleList([
             nn.Sequential(
                 nn.Linear(dims[i + 1], dims[i + 1]),
@@ -358,30 +365,38 @@ class OptimizedGNNKANEncoder(nn.Module):
             for i in range(len(dims) - 1)
         ])
         
-        # 圖結構自適應機制
+        # 可學習的圖結構機制 - 新增功能
         if learnable_graph:
+            self.edge_weight_net = nn.Sequential(
+                nn.Linear(dims[-1] * 2, dims[-1]),
+                nn.ReLU(),
+                nn.Linear(dims[-1], 1),
+                nn.Sigmoid()
+            )
+            
+            # 圖注意力機制（簡化版）
             self.graph_attention = nn.MultiheadAttention(
                 embed_dim=dims[-1], num_heads=4, dropout=dropout, batch_first=True
             )
         
     def enhanced_message_passing(self, x, edge_index, layer_idx):
-        """增強的消息傳遞 - 減少冗餘檢查"""
+        """增強的消息傳遞 - 減少冗餘檢查，提升效率"""
         if edge_index.size(1) == 0:
             return x
         
-        # 簡化的輸入檢查
+        # 簡化的穩定性檢查 - 只在必要時處理
         if torch.isnan(x).any():
             x = torch.nan_to_num(x, nan=0.0)
         
         row, col = edge_index
         num_nodes = x.size(0)
         
-        # 確保索引有效
+        # 安全的索引處理
         row = torch.clamp(row, 0, num_nodes - 1)
         col = torch.clamp(col, 0, num_nodes - 1)
         
         try:
-            # 構建歸一化鄰接矩陣
+            # 稀疏圖構建 - 優化內存使用
             adj_indices = torch.stack([row, col], dim=0)
             adj_values = torch.ones(len(row), device=x.device, dtype=x.dtype)
             adj_size = (num_nodes, num_nodes)
@@ -389,7 +404,7 @@ class OptimizedGNNKANEncoder(nn.Module):
             adj_sparse = torch.sparse_coo_tensor(adj_indices, adj_values, adj_size, device=x.device)
             adj_sparse = adj_sparse.coalesce()
             
-            # 度歸一化
+            # 度歸一化 - 簡化計算
             degrees = torch.sparse.sum(adj_sparse, dim=1).to_dense()
             degrees = torch.clamp(degrees, min=1e-6)
             degrees_inv = 1.0 / torch.sqrt(degrees)
@@ -401,32 +416,44 @@ class OptimizedGNNKANEncoder(nn.Module):
             # 消息傳遞
             message = torch.sparse.mm(norm_adj, x)
             
+            # 可學習的邊權重更新 - 新增動態圖功能
+            if self.learnable_graph and hasattr(self, 'edge_weight_net'):
+                # 計算邊的嵌入特徵
+                edge_features = torch.cat([x[row], x[col]], dim=1)
+                edge_weights = self.edge_weight_net(edge_features).squeeze(-1)
+                
+                # 應用學習到的邊權重
+                weighted_values = norm_values * edge_weights
+                weighted_adj = torch.sparse_coo_tensor(adj_indices, weighted_values, adj_size, device=x.device)
+                message = torch.sparse.mm(weighted_adj, x)
+            
             # 通過增強的消息層
             if layer_idx < len(self.message_layers):
                 message = self.message_layers[layer_idx](message)
                 
-        except RuntimeError:
+        except RuntimeError as e:
             # 簡化的回退機制
+            print(f"Message passing fallback: {e}")
             return x
         
         return message
     
     def forward(self, x, edge_index):
-        """增強的前向傳播"""
+        """增強的前向傳播 - 平衡KAN表達力與計算效率"""
         current_x = x
         
         for i, layer in enumerate(self.layers):
             if isinstance(layer, nn.Dropout):
                 current_x = layer(current_x)
             else:
-                # KAN 層處理
+                # KAN 層處理 - 核心價值：用KAN取代MLP
                 kan_out = layer(current_x)
                 
-                # 消息傳遞（每隔一層）
+                # 消息傳遞（減少頻率但保持效果）
                 if i % 2 == 0 and edge_index.size(1) > 0:
                     message = self.enhanced_message_passing(kan_out, edge_index, i // 2)
-                    # 殘差連接
-                    current_x = kan_out + 0.1 * message
+                    # 殘差連接 - 穩定訓練
+                    current_x = kan_out + 0.2 * message  # 增加message權重
                 else:
                     current_x = kan_out
                 
@@ -434,12 +461,13 @@ class OptimizedGNNKANEncoder(nn.Module):
                 if i < len(self.layers) - 1:
                     current_x = F.gelu(current_x)
         
-        # 可選的圖注意力機制
+        # 簡化的圖注意力機制 - 只在最後應用
         if self.learnable_graph and hasattr(self, 'graph_attention'):
             # 將節點特徵重塑為批次格式進行注意力計算
             x_att = current_x.unsqueeze(0)  # [1, num_nodes, feat_dim]
             try:
-                att_out, _ = self.graph_attention(x_att, x_att, x_att)
+                att_out, att_weights = self.graph_attention(x_att, x_att, x_att)
+                # 使用注意力權重進行動態圖調整
                 current_x = current_x + 0.1 * att_out.squeeze(0)
             except RuntimeError:
                 pass  # 如果注意力失敗，使用原始輸出

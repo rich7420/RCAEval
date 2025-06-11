@@ -289,13 +289,20 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False, **kwargs):
     except Exception as e:
         print(f"❌ 模組化 GNN-KAN RCA 出現嚴重錯誤: {e}")
         import traceback
+        print("🔍 詳細錯誤信息:")
         traceback.print_exc()
         
-        return {
-            "adj": np.array([]),
-            "node_names": [],
-            "ranks": []
-        }
+        # 提供詳細的錯誤診斷
+        if "unexpected keyword argument" in str(e):
+            print("\n💡 參數不匹配修復建議:")
+            print("- 檢查 OptimizedGNNKANEncoder 的參數定義")
+            print("- 確保配置中的參數名稱與模型期望的匹配")
+        elif "CUDA" in str(e) or "cuda" in str(e):
+            print("\n💡 CUDA相關錯誤修復建議:")
+            print("- 確保所有張量在相同設備上")
+            print("- 嘗試使用CPU模式運行")
+        
+        return {"adj": np.array([]), "node_names": [], "ranks": []}
 
 
 class GNNKANEndToEnd:

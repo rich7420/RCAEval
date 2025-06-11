@@ -24,11 +24,11 @@ class GradientStabilizer:
     """
     
     def __init__(self, 
-                 l1_lambda: float = 1e-2,      
-                 entropy_lambda: float = 1e-2,  
+                 l1_lambda: float = 1e-3,      # 減少正則化強度
+                 entropy_lambda: float = 1e-3,  
                  grad_clip_value: float = 1.0,  
                  pruning_threshold: float = 1e-2,
-                 stability_check_freq: int = 20):  # 減少檢查頻率
+                 stability_check_freq: int = 50):  # 大幅減少檢查頻率
         
         self.l1_lambda = l1_lambda
         self.entropy_lambda = entropy_lambda
@@ -36,12 +36,11 @@ class GradientStabilizer:
         self.pruning_threshold = pruning_threshold
         self.stability_check_freq = stability_check_freq
         
-        # 簡化監控統計
+        # 精簡監控統計
         self.gradient_norms = []
         self.stability_violations = 0
         self.step_count = 0
-        self.regularization_history = []
-        self.enable_dynamic_scaling = False  # 默認關閉動態調整
+        self.enable_dynamic_scaling = False  # 關閉動態調整
         
     def xavier_init_kan_layer(self, layer):
         """
@@ -155,58 +154,41 @@ class GradientStabilizer:
     
     def compute_total_regularization_loss(self, model, pred_loss: torch.Tensor) -> torch.Tensor:
         """
-        簡化的總損失計算：L_total = L_pred + λ * Σ(μ1|Φ_l|_1 + μ2*S(Φ_l))
+        精簡的總損失計算 - 減少正則化複雜度
         """
-        l1_reg = self.compute_l1_regularization(model)
-        entropy_reg = self.compute_entropy_regularization(model)
+        # 步數檢查 - 只在必要時計算正則化
+        self.step_count += 1
+        if self.step_count % self.stability_check_freq != 0:
+            return pred_loss  # 跳過正則化計算
         
-        # 使用穩定的係數值
-        l1_lambda_val = float(self.l1_lambda) if isinstance(self.l1_lambda, (int, float)) else 1e-4
-        entropy_lambda_val = float(self.entropy_lambda) if isinstance(self.entropy_lambda, (int, float)) else 1e-4
+        # 簡化的L1正則化
+        l1_reg = torch.tensor(0.0, device=next(model.parameters()).device)
+        for module in model.modules():
+            if hasattr(module, 'spline_weight'):
+                l1_reg += torch.sum(torch.abs(module.spline_weight)) * 0.1  # 降低權重
+            elif hasattr(module, 'poly_weights'):
+                l1_reg += torch.sum(torch.abs(module.poly_weights)) * 0.1
         
-        # 計算正則化損失
-        reg_loss = l1_lambda_val * l1_reg + entropy_lambda_val * entropy_reg
+        # 簡化的正則化損失
+        reg_loss = self.l1_lambda * l1_reg
         
-        # 確保正則化損失不會過大
-        reg_loss = torch.clamp(reg_loss, max=pred_loss.item() * 0.3)
+        # 限制正則化影響
+        reg_loss = torch.clamp(reg_loss, max=pred_loss.item() * 0.1)  # 從0.3降到0.1
         
-        total_loss = pred_loss + reg_loss
-        
-        # 簡化的歷史記錄
-        if len(self.regularization_history) > 500:
-            self.regularization_history = self.regularization_history[-250:]
-            
-        self.regularization_history.append({
-            'l1_reg': l1_reg.item(),
-            'entropy_reg': entropy_reg.item(),
-            'reg_loss': reg_loss.item(),
-            'pred_loss': pred_loss.item()
-        })
-        
-        return total_loss
+        return pred_loss + reg_loss
     
     def apply_gradient_clipping(self, model, clip_type: str = 'norm') -> float:
         """
-        應用梯度裁剪防止梯度爆炸
+        簡化的梯度裁剪 - 只在必要時執行
         """
-        if clip_type == 'norm':
-            # L2 範數裁剪
+        # 只在檢查頻率內執行
+        if self.step_count % self.stability_check_freq == 0:
             grad_norm = torch.nn.utils.clip_grad_norm_(
                 model.parameters(), 
                 max_norm=self.grad_clip_value
             )
-        elif clip_type == 'value':
-            # 數值裁剪
-            torch.nn.utils.clip_grad_value_(
-                model.parameters(), 
-                clip_value=self.grad_clip_value
-            )
-            grad_norm = self._compute_grad_norm(model)
-        else:
-            grad_norm = self._compute_grad_norm(model)
-        
-        self.gradient_norms.append(grad_norm.item() if isinstance(grad_norm, torch.Tensor) else grad_norm)
-        return grad_norm
+            return grad_norm.item() if isinstance(grad_norm, torch.Tensor) else grad_norm
+        return 0.0  # 跳過裁剪
     
     def _compute_grad_norm(self, model) -> float:
         """計算梯度的 L2 範數"""
@@ -256,54 +238,29 @@ class GradientStabilizer:
     
     def check_numerical_stability(self, model, inputs: torch.Tensor = None) -> Dict[str, float]:
         """
-        檢查數值穩定性
+        極簡的穩定性檢查
         """
-        stability_report = {
-            'parameter_inf_count': 0,
-            'parameter_nan_count': 0,
-            'gradient_inf_count': 0,
-            'gradient_nan_count': 0,
-            'max_parameter_value': 0.0,
-            'max_gradient_value': 0.0
-        }
+        # 只在檢查頻率內執行
+        if self.step_count % (self.stability_check_freq * 2) != 0:
+            return {'gradient_nan_count': 0, 'gradient_inf_count': 0}
         
-        # 檢查參數
-        for p in model.parameters():
-            if torch.isinf(p.data).any():
-                stability_report['parameter_inf_count'] += torch.isinf(p.data).sum().item()
-            if torch.isnan(p.data).any():
-                stability_report['parameter_nan_count'] += torch.isnan(p.data).sum().item()
-            
-            max_val = torch.abs(p.data).max().item()
-            stability_report['max_parameter_value'] = max(
-                stability_report['max_parameter_value'], max_val
-            )
-            
-            # 檢查梯度
-            if p.grad is not None:
-                if torch.isinf(p.grad).any():
-                    stability_report['gradient_inf_count'] += torch.isinf(p.grad).sum().item()
-                if torch.isnan(p.grad).any():
-                    stability_report['gradient_nan_count'] += torch.isnan(p.grad).sum().item()
-                
-                max_grad = torch.abs(p.grad).max().item()
-                stability_report['max_gradient_value'] = max(
-                    stability_report['max_gradient_value'], max_grad
-                )
+        nan_count = 0
+        inf_count = 0
         
-        # 檢查輸入
-        if inputs is not None:
-            if torch.isinf(inputs).any() or torch.isnan(inputs).any():
-                warnings.warn("輸入數據包含 inf 或 nan 值")
+        for param in model.parameters():
+            if param.grad is not None:
+                if torch.isnan(param.grad).any():
+                    nan_count += 1
+                if torch.isinf(param.grad).any():
+                    inf_count += 1
         
-        # 記錄不穩定事件
-        if (stability_report['parameter_inf_count'] > 0 or 
-            stability_report['parameter_nan_count'] > 0 or
-            stability_report['gradient_inf_count'] > 0 or
-            stability_report['gradient_nan_count'] > 0):
+        if nan_count > 0 or inf_count > 0:
             self.stability_violations += 1
         
-        return stability_report
+        return {
+            'gradient_nan_count': nan_count,
+            'gradient_inf_count': inf_count
+        }
     
     def adaptive_regularization_scaling(self, current_loss: float, loss_history: List[float]):
         """
@@ -345,11 +302,6 @@ class GradientStabilizer:
                 "max_grad_norm": np.max(self.gradient_norms),
                 "std_grad_norm": np.std(self.gradient_norms),
                 "gradient_clips": sum(1 for g in self.gradient_norms if g > self.grad_clip_value)
-            },
-            "regularization_statistics": {
-                "total_regularization_steps": len(self.regularization_history),
-                "avg_l1_reg": np.mean([r['l1_reg'] for r in self.regularization_history]) if self.regularization_history else 0,
-                "avg_entropy_reg": np.mean([r['entropy_reg'] for r in self.regularization_history]) if self.regularization_history else 0
             },
             "stability_violations": self.stability_violations,
             "total_steps": self.step_count

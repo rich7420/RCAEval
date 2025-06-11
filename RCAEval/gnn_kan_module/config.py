@@ -34,7 +34,7 @@ class SimplifiedGNNKANConfig:
         # 🛡️ 梯度穩定 - 簡化穩定性檢查
         self.gradient_clip_norm = 1.0
         self.use_gradient_stabilizer = True
-        self.stability_check_frequency = 20  # 減少檢查頻率
+        self.stability_check_frequency = 50  # 從20增加到50，減少檢查頻率
         self.base_l1_lambda = 0.001
         self.base_entropy_lambda = 0.001
         self.base_learning_rate = 1e-4
@@ -44,12 +44,13 @@ class SimplifiedGNNKANConfig:
         self.window_size = 10         # 簡化窗口大小
         self.step_size = 1
         self.use_dla = True
-        self.max_log_features = 30    # 減少特徵數量，避免噪音
+        self.max_log_features = 20    # 從30減少到20，進一步減少噪音
         self.target_feature_dim = 64  # 簡化目標維度
         self.fusion_method = 'simple_concat'  # 簡化融合方法
         self.use_attention_fusion = False     # 移除複雜注意力機制
         self.use_stl_decomposition = False    # 簡化STL處理
         self.use_kll_processing = False       # 簡化KLL處理
+        self.use_multimodal_fusion = False    # 移除過度複雜的多模態融合
         
         # PCA設置
         self.use_pca = True
@@ -67,7 +68,7 @@ class SimplifiedGNNKANConfig:
         # 輸出
         self.top_k_results = 10       # 減少輸出數量
         
-        # 高級功能開關
+        # 高級功能開關 - 專注核心功能
         self.use_intelligent_graph = True
         self.use_advanced_training = False
         self.use_psm_processing = False
