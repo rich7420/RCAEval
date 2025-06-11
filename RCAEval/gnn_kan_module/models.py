@@ -36,8 +36,7 @@ class GNNKANModel(nn.Module):
             hidden_dims=config.hidden_dims,
             output_dim=config.output_dim,
             num_layers=config.num_gnn_layers,
-            kan_grid_size=config.kan_grid_size,
-            kan_spline_order=config.kan_spline_order,
+            kan_type='simplified',  # 使用簡化的KAN層類型
             dropout=config.dropout
         )
         
@@ -557,7 +556,7 @@ class AdvancedTrainingManager:
         # 學習率調度器
         optimizer = optim.AdamW(model.parameters(), lr=self.config.base_learning_rate)
         scheduler = lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.5, patience=10, verbose=True
+            optimizer, mode='min', factor=0.5, patience=10
         )
         
         # 訓練循環

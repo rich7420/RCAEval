@@ -277,7 +277,7 @@ class ModelManager:
         
         # 學習率調度器
         self.scheduler = lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, mode='min', factor=0.8, patience=10, verbose=True
+            self.optimizer, mode='min', factor=0.8, patience=10
         )
         
         return self.optimizer, self.scheduler
@@ -405,7 +405,7 @@ def train_gnn_kan_model(model, node_features, edge_index, config):
     )
     
     scheduler = lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', factor=0.8, patience=10, verbose=True
+        optimizer, mode='min', factor=0.8, patience=10
     )
     
     # 損失函數
@@ -443,11 +443,8 @@ def train_gnn_kan_model(model, node_features, edge_index, config):
             # 反向傳播
             loss.backward()
             
-            # 梯度穩定化
-            grad_stabilizer.stabilize_gradients(model)
-            
-            # 梯度裁剪
-            torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
+            # 梯度穩定化（使用梯度裁剪替代）
+            torch.nn.utils.clip_grad_norm_(model.parameters(), config.gradient_clip_norm)
             
             optimizer.step()
             
@@ -600,7 +597,7 @@ class AdvancedGNNKANTrainer:
                 
                 if not (torch.isnan(loss) or torch.isinf(loss)):
                     loss.backward()
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), self.config.grad_clip)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), self.config.gradient_clip_norm)
                     optimizer.step()
                 
                 if epoch % 10 == 0:

@@ -1122,6 +1122,10 @@ def kll_feature_processing(data, sketch_size=1024):
     return kll_features, feature_names
 
 
+# 注意：compute_service_criticality_weights 函數已移動到 utils.py 中統一管理
+# 避免重複定義和循環導入問題
+
+
 # 測試函數
 def test_feature_extraction():
     """測試特徵提取功能"""
@@ -1404,5 +1408,6 @@ __all__ = [
     'extract_service_topology_features', 
     'kll_feature_processing',
     'enhanced_feature_fusion',  # 新增
-    'test_feature_extraction'
+    'test_feature_extraction',
+    'compute_service_criticality_weights'  # 新增
 ]

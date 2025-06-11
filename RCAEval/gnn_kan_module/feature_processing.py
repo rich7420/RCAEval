@@ -499,97 +499,11 @@ def _compute_sample_entropy(series, m=2, r=None):
     except:
         return 0.0
 
-
-# 主要的GNN-KAN RCA函數
-def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False, **kwargs):
-    """
-    主要的 GNN-KAN RCA 方法 - 模組化版本
-    
-    Args:
-        data: 輸入數據 (multimodal 或 單一模態)
-        inject_time: 注入時間點
-        dataset: 數據集名稱
-        with_bg: 是否包含背景數據
-        **kwargs: 其他參數
-    
-    Returns:
-        dict: 包含 adj, node_names, ranks 的結果
-    """
-    try:
-        # 導入模組化的組件
-        from . import (
-            SimplifiedGNNKANConfig,
-            MultiModalFeatureExtractor,
-            SimplifiedGraphConstructor,
-            GNNKANModel,
-            train_gnn_kan_model
-        )
-        
-        print("Starting modularized GNN-KAN RCA analysis...")
-        start_time = time.time()
-        
-        # 使用模組化的配置和處理器
-        config = SimplifiedGNNKANConfig()
-        for key, value in kwargs.items():
-            if hasattr(config, key):
-                setattr(config, key, value)
-        
-        # 特徵提取
-        feature_extractor = MultiModalFeatureExtractor(config)
-        features, node_names = feature_extractor.extract_features(data, inject_time)
-        
-        if features.size == 0 or len(node_names) == 0:
-            return {"adj": np.array([]), "node_names": [], "ranks": []}
-        
-        # 圖構建和模型訓練
-        graph_constructor = SimplifiedGraphConstructor(config)
-        edge_index, edge_weights = graph_constructor.build_graph(features, node_names)
-        
-        # 準備節點特徵並訓練模型
-        if features.ndim == 2 and features.shape[1] >= config.target_feature_dim:
-            node_features = features[:len(node_names), :config.target_feature_dim]
-        else:
-            node_features = np.random.randn(len(node_names), config.target_feature_dim)
-        
-        model = GNNKANModel(config, len(node_names))
-        device = 'cuda' if config.use_cuda and torch.cuda.is_available() else 'cpu'
-        
-        node_features_tensor = torch.tensor(node_features, dtype=torch.float).to(device)
-        edge_index = edge_index.to(device)
-        model = model.to(device)
-        
-        model, final_adj = train_gnn_kan_model(model, node_features_tensor, edge_index, config)
-        
-        # 計算排名
-        adj_numpy = final_adj.detach().cpu().numpy()
-        from sknetwork.ranking import PageRank
-        
-        pagerank = PageRank()
-        scores = pagerank.fit_transform(adj_numpy)
-        ranked_indices = np.argsort(scores)[::-1]
-        top_k_indices = ranked_indices[:config.top_k_results]
-        
-        ranks = [str(node_names[i]) if i < len(node_names) else f"node_{i}" for i in top_k_indices]
-        
-        end_time = time.time()
-        print(f"Modularized GNN-KAN RCA completed in {end_time - start_time:.2f} seconds")
-        
-        return {
-            "adj": adj_numpy,
-            "node_names": node_names,
-            "ranks": ranks
-        }
-        
-    except Exception as e:
-        print(f"Modularized GNN-KAN RCA failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return {"adj": np.array([]), "node_names": [], "ranks": []}
-
+# 注意：gnn_kan_rca 主實現已移至 e2e/gnnkan.py
+# 此檔案專注於特徵處理功能，不包含主要的 RCA 函數
 
 __all__ = [
     'simplified_metric_processing',
     'enhanced_trace_processing', 
-    'psm_metric_processing',
-    'gnn_kan_rca'
+    'psm_metric_processing'
 ]

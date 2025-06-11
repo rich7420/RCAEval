@@ -52,7 +52,10 @@ from .kan_components import (
     OptimizedGNNKANEncoder,
     UltraFastKANLayer,
     GradientStabilizer,
-    StabilizedKANLayer
+    StabilizedKANLayer,
+    AdvancedKANLayer,
+    SimplifiedKANLayer,
+    compute_service_criticality_weights
 )
 
 # 工具函數

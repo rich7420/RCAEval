@@ -38,45 +38,40 @@ from .feature_extraction import (
     extract_service_topology_features
 )
 
-# 實用函數
-def compute_service_criticality_weights(service_graph=None, criticality_metrics=None):
-    """計算服務關鍵度權重"""
-    if isinstance(service_graph, list):
-        # 如果傳入的是服務名稱列表
-        return [1.0] * len(service_graph)
-    
-    if service_graph is None or (hasattr(service_graph, 'number_of_nodes') and service_graph.number_of_nodes() == 0):
-        return {}
-    
+# 從 utils 導入統一的權重計算函數
+def compute_service_criticality_weights(node_names):
+    """
+    基於服務名稱計算重要性權重 - 統一實現
+    """
+    # 導入時避免循環依賴
     try:
-        import networkx as nx
+        from ..utils import compute_service_criticality_weights as _compute_weights
+        return _compute_weights(node_names)
+    except ImportError:
+        # 回退實現
+        critical_services = {
+            'frontend': 3.0, 'front-end': 3.0,
+            'checkout': 2.8, 'payment': 2.8,
+            'cart': 2.5, 'catalog': 2.2,
+            'currency': 2.0, 'redis': 2.3,
+            'database': 2.5, 'db': 2.5,
+            'email': 1.8, 'ad': 1.6,
+            'recommendation': 1.7
+        }
         
-        # 基於拓撲結構計算關鍵度
-        pagerank = nx.pagerank(service_graph)
-        betweenness = nx.betweenness_centrality(service_graph)
-        degree_centrality = nx.degree_centrality(service_graph)
+        weights = []
+        for name in node_names:
+            name_str = str(name).lower()
+            weight = 1.0
+            
+            for service, service_weight in critical_services.items():
+                if service in name_str:
+                    weight = max(weight, service_weight)
+            
+            weights.append(min(weight, 3.0))
         
-        # 組合權重
-        weights = {}
-        for node in service_graph.nodes():
-            weight = (
-                0.4 * pagerank.get(node, 0) +
-                0.3 * betweenness.get(node, 0) +
-                0.3 * degree_centrality.get(node, 0)
-            )
-            weights[node] = weight
-        
-        # 如果有業務關鍵度指標，結合使用
-        if criticality_metrics:
-            for node, business_weight in criticality_metrics.items():
-                if node in weights:
-                    weights[node] = 0.7 * weights[node] + 0.3 * business_weight
-        
-        return weights
-        
-    except Exception as e:
-        print(f"Failed to compute service criticality weights: {e}")
-        return {}
+        import torch
+        return torch.tensor(weights, dtype=torch.float)
 
 # 導出所有重要功能 - 與原始 kan 模組保持一致
 __all__ = [

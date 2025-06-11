@@ -451,22 +451,5 @@ class GNNKANEncoder(OptimizedGNNKANEncoder):
         )
 
 
-# 提供服務重要性權重計算函數
-def compute_service_criticality_weights(service_names):
-    """計算服務重要性權重"""
-    weights = []
-    for name in service_names:
-        weight = 1.0
-        name_str = str(name).lower()
-        
-        # 基於關鍵詞的評分
-        if any(kw in name_str for kw in ['frontend', 'gateway', 'auth', 'payment']):
-            weight = 2.0
-        elif any(kw in name_str for kw in ['checkout', 'cart', 'catalog']):
-            weight = 1.5
-        elif any(kw in name_str for kw in ['recommendation', 'ads']):
-            weight = 1.2
-        
-        weights.append(weight)
-    
-    return weights
+# 注意：compute_service_criticality_weights 函數已移動到 utils.py 中統一管理
+# 如需使用，請從 ..utils 導入

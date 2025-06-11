@@ -1,5 +1,5 @@
 """
-E2E GNN-KAN RCA 入口文件 - 使用完全模組化的實現
+E2E GNN-KAN RCA 入口文件 - 使用完全整合的 KAN 組件
 """
 
 import time
@@ -10,26 +10,76 @@ import torch
 
 warnings.filterwarnings("ignore")
 
-# 🎯 從模組化結構導入所有需要的函數
-from RCAEval.gnn_kan_module import (
+# 🎯 從模組化組件導入所需的類和函數
+import sys
+import os
+
+# 添加 RCAEval 目錄到 Python 路徑
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+from gnn_kan_module import (
     SimplifiedGNNKANConfig,
     MultiModalFeatureExtractor,
-    GNNKANModel, 
-    train_gnn_kan_model,
     SimplifiedGraphConstructor,
-    enhanced_feature_fusion,
-    compute_service_criticality_weights
+    GNNKANModel,
+    train_gnn_kan_model
 )
 
-from RCAEval.gnn_kan_module.feature_processing import (
-    simplified_metric_processing,
-    enhanced_trace_processing,
-    psm_metric_processing,
-    gnn_kan_rca as modularized_gnn_kan_rca
-)
+# 簡化的PageRank實現
+class PageRank:
+    def __init__(self, alpha=0.85, max_iter=100, tol=1e-6):
+        self.alpha = alpha
+        self.max_iter = max_iter
+        self.tol = tol
+    
+    def fit_transform(self, adj):
+        """簡化的 PageRank 實現"""
+        try:
+            n = adj.shape[0]
+            if n == 0:
+                return np.array([])
+            
+            # 歸一化鄰接矩陣
+            row_sums = np.sum(adj, axis=1)
+            row_sums[row_sums == 0] = 1  # 避免除零
+            adj_norm = adj / row_sums[:, np.newaxis]
+            
+            # 初始化PageRank值
+            pr = np.ones(n) / n
+            
+            # 迭代計算
+            for _ in range(self.max_iter):
+                pr_new = (1 - self.alpha) / n + self.alpha * np.dot(adj_norm.T, pr)
+                if np.linalg.norm(pr_new - pr, 1) < self.tol:
+                    break
+                pr = pr_new
+            
+            return pr
+        except Exception as e:
+            print(f"PageRank計算失敗: {e}，使用度中心性")
+            degrees = np.sum(adj, axis=1)
+            return degrees / (np.sum(degrees) + 1e-8)
 
-from RCAEval.io.time_series import preprocess, drop_constant
-from sknetwork.ranking import PageRank
+# 備用：從其他模組導入輔助函數
+try:
+    from io.time_series import preprocess, drop_constant
+except ImportError:
+    print("警告：io.time_series 模組不可用，使用簡化預處理")
+    
+    def preprocess(data, dataset=None, **kwargs):
+        """簡化的數據預處理"""
+        if isinstance(data, pd.DataFrame):
+            return data.fillna(method='ffill').fillna(0)
+        return data
+    
+    def drop_constant(data):
+        """簡化的常數列移除"""
+        if isinstance(data, pd.DataFrame):
+            return data.loc[:, data.std() > 1e-8]
+        return data
 
 
 def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False, **kwargs):
@@ -248,7 +298,92 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False, **kwargs):
         }
 
 
+class GNNKANEndToEnd:
+    """
+    GNN-KAN 端到端根因分析類
+    
+    這個類封裝了完整的 GNN-KAN RCA 流程，提供統一的接口
+    """
+    
+    def __init__(self, config=None):
+        """
+        初始化 GNN-KAN End-to-End 系統
+        
+        Args:
+            config: 配置對象，如果為None則使用默認配置
+        """
+        self.config = config if config is not None else SimplifiedGNNKANConfig()
+        print("✅ GNN-KAN End-to-End 系統初始化完成")
+    
+    def run_rca(self, data, inject_time=None, dataset=None, with_bg=False, **kwargs):
+        """
+        執行根因分析
+        
+        Args:
+            data: 輸入數據
+            inject_time: 故障注入時間
+            dataset: 數據集名稱
+            with_bg: 是否包含背景數據
+            **kwargs: 其他參數
+        
+        Returns:
+            dict: RCA 結果，包含 adj, node_names, ranks
+        """
+        return gnn_kan_rca(
+            data=data,
+            inject_time=inject_time,
+            dataset=dataset,
+            with_bg=with_bg,
+            **kwargs
+        )
+    
+    def configure(self, **kwargs):
+        """
+        更新配置參數
+        
+        Args:
+            **kwargs: 要更新的配置參數
+        """
+        for key, value in kwargs.items():
+            if hasattr(self.config, key):
+                setattr(self.config, key, value)
+                print(f"✅ 更新配置: {key} = {value}")
+            else:
+                print(f"⚠️ 未知配置參數: {key}")
+
+
 # 確保可以被正確導入
-__all__ = ['gnn_kan_rca']
+__all__ = ['gnn_kan_rca', 'GNNKANEndToEnd', 'PageRank']
 
 print("✅ 模組化 GNN-KAN RCA 入口文件載入成功")
+
+if __name__ == "__main__":
+    print("🚀 測試 GNN-KAN 模組化實現")
+    
+    # 創建測試數據
+    test_data = {
+        'metrics': pd.DataFrame({
+            'cpu_usage': np.random.rand(100),
+            'memory_usage': np.random.rand(100),
+            'network_io': np.random.rand(100)
+        }),
+        'traces': pd.DataFrame({
+            'serviceName': ['service_a', 'service_b'] * 50,
+            'operationName': ['op1', 'op2'] * 50,
+            'duration': np.random.lognormal(2, 1, 100),
+            'startTime': pd.date_range('2024-01-01', periods=100, freq='1min')
+        })
+    }
+    
+    # 創建 E2E 實例並運行測試
+    try:
+        e2e = GNNKANEndToEnd()
+        result = e2e.run_rca(test_data, inject_time=test_data['traces']['startTime'].iloc[50])
+        
+        print(f"✅ 測試完成！發現 {len(result['ranks'])} 個潛在根因")
+        print(f"🎯 前3個根因: {result['ranks'][:3]}")
+        
+    except Exception as e:
+        print(f"❌ 測試失敗: {e}")
+        import traceback
+        traceback.print_exc()

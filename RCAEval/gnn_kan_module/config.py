@@ -24,6 +24,7 @@ class SimplifiedGNNKANConfig:
         
         # 🎯 訓練參數 - 實用導向
         self.epochs = 30              # 減少訓練時間
+        self.num_epochs = 30          # 別名，確保兼容性
         self.batch_size = 16
         self.learning_rate = 1e-4
         self.weight_decay = 1e-5
@@ -33,6 +34,8 @@ class SimplifiedGNNKANConfig:
         self.use_gradient_stabilizer = True
         self.base_l1_lambda = 0.001
         self.base_entropy_lambda = 0.001
+        self.l2_lambda = 0.0001
+        self.smoothness_lambda = 0.001
         self.base_learning_rate = 1e-4
         self.warmup_epochs = 5
         self.stability_check_frequency = 10
@@ -69,6 +72,7 @@ class SimplifiedGNNKANConfig:
         # 早停設置
         self.early_stopping_patience = 15
         self.early_stopping_min_delta = 1e-6
+        self.patience = 15  # 訓練早停耐心值
         
         # STL分解設置（向後兼容）
         self.stl_seasonal = 7

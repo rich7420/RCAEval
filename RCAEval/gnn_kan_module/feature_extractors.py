@@ -13,13 +13,26 @@ from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics.pairwise import cosine_similarity
 
-# Import our KAN modules from the new kan_components
-from .kan_components import (
-    compute_service_criticality_weights
-)
+# 從 utils 導入統一的權重計算函數
+from .utils import compute_service_criticality_weights
 
 # Import other required functions from the appropriate modules
-from RCAEval.io.time_series import preprocess, drop_constant
+try:
+    from ..io.time_series import preprocess, drop_constant
+except ImportError:
+    print("警告：io.time_series 模組不可用，使用簡化預處理")
+    
+    def preprocess(data, dataset=None, **kwargs):
+        """簡化的數據預處理"""
+        if isinstance(data, pd.DataFrame):
+            return data.fillna(method='ffill').fillna(0)
+        return data
+    
+    def drop_constant(data):
+        """簡化的常數列移除"""
+        if isinstance(data, pd.DataFrame):
+            return data.loc[:, data.std() > 1e-8]
+        return data
 
 # Define missing functions that were previously imported from kan module
 def sliding_window_alignment(data, window_size, step_size, timestamp_col='time'):
