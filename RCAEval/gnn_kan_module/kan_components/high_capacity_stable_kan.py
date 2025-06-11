@@ -526,3 +526,51 @@ def create_high_capacity_stable_model(input_dim, hidden_dims, output_dim, num_no
     }
     
     return model, kan_config, training_config
+
+
+def create_high_capacity_kan_encoder(input_dim, hidden_dims, output_dim, num_nodes):
+    """
+    創建高容量的 KAN 編碼器 - 兼容函數
+    
+    Args:
+        input_dim: 輸入維度
+        hidden_dims: 隱藏層維度列表 
+        output_dim: 輸出維度
+        num_nodes: 節點數量
+        
+    Returns:
+        HighCapacityGNNKANEncoder: 高容量編碼器實例
+    """
+    # 使用默認的高容量配置
+    kan_config = {
+        'grid_size': 5,
+        'spline_order': 3,
+        'use_residual': True,
+        'use_spectral_norm': True,
+        'l1_lambda': 1e-5,
+        'entropy_lambda': 1e-5
+    }
+    
+    # 如果沒有提供隱藏層維度，使用默認值
+    if not hidden_dims:
+        hidden_dims = [128, 96]
+    
+    return HighCapacityGNNKANEncoder(
+        input_dim=input_dim,
+        hidden_dims=hidden_dims,
+        output_dim=output_dim,
+        num_layers=3,
+        kan_config=kan_config,
+        dropout=0.15
+    )
+
+
+# 確保所有函數都可以被導入
+__all__ = [
+    'HighCapacityStableKANLayer',
+    'HighCapacityGNNKANEncoder', 
+    'SpectralNorm',
+    'WarmupScheduler',
+    'create_high_capacity_stable_model',
+    'create_high_capacity_kan_encoder'  # 添加到導出列表
+]

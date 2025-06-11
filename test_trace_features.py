@@ -5,11 +5,15 @@
 
 import sys
 import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 import numpy as np
 import pandas as pd
-
-# 添加項目路徑
-sys.path.append('/Users/user/RCAEval')
+import networkx as nx
+import torch
+import matplotlib.pyplot as plt
+import warnings
+warnings.filterwarnings('ignore')
 
 def test_trace_features():
     """測試 trace 特徵提取功能"""
@@ -18,7 +22,7 @@ def test_trace_features():
     print("="*60)
     
     try:
-        from RCAEval.kan import extract_trace_features, build_service_dependency_graph
+        from RCAEval.gnn_kan_module.kan_components.feature_extraction import extract_trace_features, build_service_dependency_graph
         
         # 1. 創建模擬 trace 數據
         print("\n1. 創建模擬 trace 數據...")

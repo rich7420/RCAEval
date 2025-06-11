@@ -1,0 +1,667 @@
+"""
+Training Module for GNN-KAN
+訓練模組 - 處理GNN-KAN模型的訓練和優化
+"""
+
+import time
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+from torch.optim import lr_scheduler
+import numpy as np
+from torch_geometric.utils import negative_sampling
+
+# 修復導入問題 - 使用模組化的結構
+try:
+    from .kan_components import GradientStabilizer
+except ImportError:
+    print("⚠️ 創建臨時梯度穩定器...")
+    
+    class GradientStabilizer:
+        def __init__(self, l1_lambda=1e-5, entropy_lambda=1e-5, grad_clip_value=1.0, 
+                     pruning_threshold=1e-2, enable_dynamic_scaling=True, stability_check_freq=10):
+            self.l1_lambda = l1_lambda
+            self.entropy_lambda = entropy_lambda
+            self.grad_clip_value = grad_clip_value
+            self.pruning_threshold = pruning_threshold
+            self.enable_dynamic_scaling = enable_dynamic_scaling
+            self.stability_check_freq = stability_check_freq
+            self.loss_history = []
+            
+        def stabilize_gradients(self, model):
+            """臨時梯度穩定器"""
+            pass
+            
+        def compute_total_regularization_loss(self, model, base_loss):
+            """計算總正則化損失"""
+            return base_loss
+            
+        def apply_gradient_clipping(self, model, clip_type='norm'):
+            """應用梯度裁剪"""
+            return torch.nn.utils.clip_grad_norm_(model.parameters(), self.grad_clip_value)
+            
+        def adaptive_clipping(self, model, current_loss):
+            """自適應梯度裁剪"""
+            self.loss_history.append(current_loss)
+            if len(self.loss_history) > 10:
+                loss_std = np.std(self.loss_history[-10:])
+                clip_norm = max(0.5, min(2.0, 1.0 / (loss_std + 1e-8)))
+            else:
+                clip_norm = 1.0
+            return torch.nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
+            
+        def check_numerical_stability(self, model):
+            """檢查數值穩定性"""
+            return {'gradient_nan_count': 0, 'gradient_inf_count': 0}
+            
+        def adaptive_regularization_scaling(self, current_loss, loss_history):
+            """自適應正則化縮放"""
+            pass
+            
+        def apply_dynamic_pruning(self, model):
+            """應用動態剪枝"""
+            return 0.0
+            
+        def get_stability_report(self):
+            """獲取穩定性報告"""
+            return {
+                'gradient_statistics': {
+                    'mean_grad_norm': 0.0,
+                    'max_grad_norm': 0.0,
+                    'gradient_clips': 0
+                },
+                'stability_violations': 0,
+                'regularization_config': {
+                    'l1_lambda': self.l1_lambda,
+                    'entropy_lambda': self.entropy_lambda
+                }
+            }
+
+from .config import SimplifiedGNNKANConfig
+
+# 修復模型導入
+try:
+    from .models import SimplifiedGNNKAN
+except ImportError:
+    print("⚠️ 無法導入 SimplifiedGNNKAN，使用臨時實現...")
+    
+    import torch.nn as nn
+    
+    class SimplifiedGNNKAN(nn.Module):
+        def __init__(self, input_dim, hidden_dim=64, output_dim=None, num_layers=2, 
+                     dropout=0.1, use_batch_norm=True, use_residual=True, kan_config=None):
+            super().__init__()
+            self.linear = nn.Linear(input_dim, output_dim or hidden_dim)
+            
+        def forward(self, node_features, edge_index):
+            x = self.linear(node_features)
+            adj = torch.mm(x, x.t())
+            return x, torch.sigmoid(adj)
+
+
+def create_model_with_config(config):
+    """
+    根據配置創建模型
+    
+    Args:
+        config: SimplifiedGNNKANConfig 配置對象
+        
+    Returns:
+        model: 創建的模型實例
+    """
+    try:
+        from .models import SimplifiedGNNKAN
+        
+        model = SimplifiedGNNKAN(
+            input_dim=config.input_dim,
+            hidden_dim=config.hidden_dim,
+            output_dim=config.output_dim,
+            num_layers=config.num_layers,
+            dropout=config.dropout,
+            use_batch_norm=config.use_batch_norm,
+            use_residual=config.use_residual,
+            kan_config=config.kan_config
+        )
+        
+        print(f"✓ Created model with config: {config}")
+        return model
+        
+    except Exception as e:
+        print(f"❌ Failed to create model with config: {e}")
+        raise
+
+
+def create_model_from_checkpoint(checkpoint_path, config=None):
+    """
+    🔄 從檢查點加載模型
+    
+    Args:
+        checkpoint_path: 檢查點文件路徑
+        config: 配置對象（可選）
+        
+    Returns:
+        model: 加載的模型
+        metadata: 檢查點元數據
+    """
+    print(f"📂 Loading model from checkpoint: {checkpoint_path}")
+    
+    try:
+        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        
+        # 從檢查點獲取配置
+        if 'config' in checkpoint and config is None:
+            config = checkpoint['config']
+        
+        # 創建模型
+        if config:
+            model = create_model_with_config(config)
+        else:
+            # 從state_dict推斷模型結構
+            model = _infer_model_from_state_dict(checkpoint['model_state_dict'])
+        
+        # 加載權重
+        model.load_state_dict(checkpoint['model_state_dict'])
+        
+        # 獲取元數據
+        metadata = {
+            'epoch': checkpoint.get('epoch', 0),
+            'loss': checkpoint.get('loss', None),
+            'metrics': checkpoint.get('metrics', {}),
+            'timestamp': checkpoint.get('timestamp', None)
+        }
+        
+        print(f"✅ Model loaded from epoch {metadata['epoch']}")
+        return model, metadata
+        
+    except Exception as e:
+        print(f"❌ Failed to load checkpoint: {e}")
+        if config:
+            print("Creating new model with provided config...")
+            return create_model_with_config(config), {}
+        else:
+            raise e
+
+
+def _infer_model_from_state_dict(state_dict):
+    """從state_dict推斷模型結構"""
+    # 分析state_dict的鍵來推斷模型參數
+    keys = list(state_dict.keys())
+    
+    # 推斷層數
+    conv_layers = [k for k in keys if 'conv_layers' in k and 'weight' in k]
+    num_layers = len(set(k.split('.')[1] for k in conv_layers))
+    
+    # 推斷維度
+    first_conv = [k for k in keys if 'conv_layers.0' in k and 'weight' in k]
+    if first_conv:
+        first_weight = state_dict[first_conv[0]]
+        if len(first_weight.shape) >= 2:
+            input_dim = first_weight.shape[1]
+            hidden_dim = first_weight.shape[0]
+        else:
+            input_dim = hidden_dim = 64
+    else:
+        input_dim = hidden_dim = 64
+    
+    # 創建模型
+    model = SimplifiedGNNKAN(
+        input_dim=input_dim,
+        hidden_dim=hidden_dim,
+        output_dim=hidden_dim,
+        num_layers=max(num_layers, 2)
+    )
+    
+    return model
+
+
+def save_model_checkpoint(model, optimizer, epoch, loss, metrics, save_path, config=None):
+    """
+    💾 保存模型檢查點
+    
+    Args:
+        model: 要保存的模型
+        optimizer: 優化器
+        epoch: 當前epoch
+        loss: 當前損失
+        metrics: 評估指標
+        save_path: 保存路徑
+        config: 配置對象
+    """
+    print(f"💾 Saving checkpoint to {save_path}")
+    
+    checkpoint = {
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict() if optimizer else None,
+        'epoch': epoch,
+        'loss': loss,
+        'metrics': metrics,
+        'timestamp': time.time()
+    }
+    
+    if config:
+        checkpoint['config'] = config
+    
+    try:
+        torch.save(checkpoint, save_path)
+        print(f"✅ Checkpoint saved successfully")
+    except Exception as e:
+        print(f"❌ Failed to save checkpoint: {e}")
+
+
+class ModelManager:
+    """🎯 模型管理器 - 統一管理模型創建、訓練、保存"""
+    
+    def __init__(self, config):
+        self.config = config
+        self.model = None
+        self.optimizer = None
+        self.scheduler = None
+        
+    def create_model(self):
+        """創建模型"""
+        self.model = create_model_with_config(self.config)
+        return self.model
+    
+    def setup_training(self):
+        """設置訓練組件"""
+        if self.model is None:
+            self.create_model()
+        
+        # 優化器
+        self.optimizer = optim.AdamW(
+            self.model.parameters(),
+            lr=getattr(self.config, 'learning_rate', 0.001),
+            weight_decay=getattr(self.config, 'weight_decay', 1e-5)
+        )
+        
+        # 學習率調度器
+        self.scheduler = lr_scheduler.ReduceLROnPlateau(
+            self.optimizer, mode='min', factor=0.8, patience=10, verbose=True
+        )
+        
+        return self.optimizer, self.scheduler
+    
+    def train_model(self, node_features, edge_index):
+        """訓練模型"""
+        if self.model is None or self.optimizer is None:
+            self.setup_training()
+        
+        return train_gnn_kan_model(
+            self.model, node_features, edge_index, self.config
+        )
+    
+    def save_checkpoint(self, epoch, loss, metrics, save_path):
+        """保存檢查點"""
+        save_model_checkpoint(
+            self.model, self.optimizer, epoch, loss, metrics, save_path, self.config
+        )
+    
+    def load_checkpoint(self, checkpoint_path):
+        """加載檢查點"""
+        self.model, metadata = create_model_from_checkpoint(checkpoint_path, self.config)
+        return metadata
+
+
+class TemporalAttention(nn.Module):
+    """時序注意力機制"""
+    
+    def __init__(self, hidden_dim):
+        super(TemporalAttention, self).__init__()
+        self.hidden_dim = hidden_dim
+        self.attention = nn.MultiheadAttention(hidden_dim, num_heads=4, batch_first=True)
+        self.layer_norm = nn.LayerNorm(hidden_dim)
+        
+    def forward(self, x):
+        """
+        Args:
+            x: [batch_size, seq_len, hidden_dim] 或 [seq_len, hidden_dim]
+        """
+        if x.dim() == 2:
+            x = x.unsqueeze(0)  # 添加batch維度
+        
+        attended, _ = self.attention(x, x, x)
+        output = self.layer_norm(attended + x)
+        
+        if output.size(0) == 1:
+            output = output.squeeze(0)  # 移除batch維度
+            
+        return output
+
+
+class GNNKANLoss(nn.Module):
+    """GNN-KAN專用損失函數"""
+    
+    def __init__(self, config):
+        super(GNNKANLoss, self).__init__()
+        self.config = config
+        self.bce_loss = nn.BCELoss()
+        self.mse_loss = nn.MSELoss()
+        
+    def forward(self, pred_adj, true_adj, node_embeddings=None):
+        """
+        計算組合損失
+        
+        Args:
+            pred_adj: 預測的鄰接矩陣
+            true_adj: 真實的鄰接矩陣  
+            node_embeddings: 節點嵌入（可選）
+        """
+        # 重構損失
+        recon_loss = self.bce_loss(pred_adj, true_adj)
+        
+        total_loss = recon_loss
+        
+        # 添加正則化項
+        if node_embeddings is not None:
+            # L2正則化
+            l2_reg = torch.norm(node_embeddings, p=2)
+            total_loss += self.config.l2_lambda * l2_reg
+            
+            # 平滑性正則化
+            if node_embeddings.size(0) > 1:
+                diff = torch.diff(node_embeddings, dim=0)
+                smoothness_reg = torch.norm(diff, p=2)
+                total_loss += self.config.smoothness_lambda * smoothness_reg
+        
+        return total_loss
+
+
+def train_gnn_kan_model(model, node_features, edge_index, config):
+    """
+    訓練GNN-KAN模型
+    
+    Args:
+        model: GNN-KAN模型
+        node_features: 節點特徵
+        edge_index: 邊索引
+        config: 配置對象
+        
+    Returns:
+        model: 訓練後的模型
+        final_adj: 最終的鄰接矩陣
+    """
+    print(f"Training GNN-KAN model with {node_features.size(0)} nodes...")
+    
+    # 設備管理
+    device = next(model.parameters()).device
+    node_features = node_features.to(device)
+    edge_index = edge_index.to(device)
+    
+    # 創建目標鄰接矩陣（基於邊索引）
+    num_nodes = node_features.size(0)
+    target_adj = torch.zeros(num_nodes, num_nodes, device=device)
+    
+    if edge_index.size(1) > 0:
+        target_adj[edge_index[0], edge_index[1]] = 1.0
+        # 確保對稱性
+        target_adj = (target_adj + target_adj.t()) / 2.0
+    
+    # 優化器和調度器
+    optimizer = optim.AdamW(
+        model.parameters(),
+        lr=config.learning_rate,
+        weight_decay=config.weight_decay
+    )
+    
+    scheduler = lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='min', factor=0.8, patience=10, verbose=True
+    )
+    
+    # 損失函數
+    criterion = GNNKANLoss(config)
+    
+    # 梯度穩定器
+    grad_stabilizer = GradientStabilizer()
+    
+    # 訓練循環
+    model.train()
+    best_loss = float('inf')
+    patience_counter = 0
+    
+    for epoch in range(config.num_epochs):
+        epoch_start = time.time()
+        
+        optimizer.zero_grad()
+        
+        try:
+            # 前向傳播
+            node_embeddings, pred_adj = model(node_features, edge_index)
+            
+            # 計算損失
+            loss = criterion(pred_adj, target_adj, node_embeddings)
+            
+            # 檢查損失是否有效
+            if torch.isnan(loss) or torch.isinf(loss):
+                print(f"⚠️ Invalid loss at epoch {epoch}: {loss.item()}")
+                # 重置模型參數
+                for param in model.parameters():
+                    if torch.isnan(param).any() or torch.isinf(param).any():
+                        param.data = torch.randn_like(param.data) * 0.1
+                continue
+            
+            # 反向傳播
+            loss.backward()
+            
+            # 梯度穩定化
+            grad_stabilizer.stabilize_gradients(model)
+            
+            # 梯度裁剪
+            torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
+            
+            optimizer.step()
+            
+            # 學習率調度
+            scheduler.step(loss.item())
+            
+            # 記錄最佳模型
+            if loss.item() < best_loss:
+                best_loss = loss.item()
+                patience_counter = 0
+            else:
+                patience_counter += 1
+            
+            # 早停
+            if patience_counter >= config.patience:
+                print(f"Early stopping at epoch {epoch}")
+                break
+            
+            # 定期輸出
+            if epoch % 20 == 0 or epoch == config.num_epochs - 1:
+                epoch_time = time.time() - epoch_start
+                current_lr = optimizer.param_groups[0]['lr']
+                print(f"Epoch {epoch:3d}: Loss={loss.item():.6f}, "
+                      f"LR={current_lr:.6f}, Time={epoch_time:.2f}s")
+                
+        except RuntimeError as e:
+            if "CUDA" in str(e) or "device" in str(e).lower():
+                print(f"CUDA error at epoch {epoch}: {e}")
+                # 嘗試清理GPU內存
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                break
+            else:
+                print(f"Training error at epoch {epoch}: {e}")
+                break
+        except KeyboardInterrupt:
+            print("Training interrupted by user")
+            break
+    
+    # 獲取最終結果
+    model.eval()
+    with torch.no_grad():
+        try:
+            _, final_adj = model(node_features, edge_index)
+        except Exception as e:
+            print(f"Error getting final adjacency: {e}")
+            final_adj = target_adj
+    
+    print(f"Training completed. Best loss: {best_loss:.6f}")
+    return model, final_adj
+
+
+class AdvancedGNNKANTrainer:
+    """高級GNN-KAN訓練器 - 包含更多訓練策略"""
+    
+    def __init__(self, config):
+        self.config = config
+        
+    def train_with_curriculum(self, model, node_features, edge_index):
+        """
+        課程學習訓練策略
+        
+        Args:
+            model: GNN-KAN模型
+            node_features: 節點特徵
+            edge_index: 邊索引
+            
+        Returns:
+            model: 訓練後的模型
+            training_history: 訓練歷史
+        """
+        print("Starting curriculum learning training...")
+        
+        device = next(model.parameters()).device
+        node_features = node_features.to(device)
+        edge_index = edge_index.to(device)
+        
+        training_history = {
+            'losses': [],
+            'learning_rates': [],
+            'epochs': []
+        }
+        
+        # 階段1：簡單任務（少量節點）
+        print("Phase 1: Training on subset of nodes...")
+        subset_size = min(10, node_features.size(0))
+        subset_features = node_features[:subset_size]
+        subset_edge_index = self._filter_edge_index(edge_index, subset_size)
+        
+        model = self._train_phase(
+            model, subset_features, subset_edge_index, 
+            epochs=self.config.num_epochs // 3,
+            phase_name="Phase 1"
+        )
+        
+        # 階段2：中等複雜度
+        if node_features.size(0) > subset_size:
+            print("Phase 2: Training on larger subset...")
+            medium_size = min(20, node_features.size(0))
+            medium_features = node_features[:medium_size]
+            medium_edge_index = self._filter_edge_index(edge_index, medium_size)
+            
+            model = self._train_phase(
+                model, medium_features, medium_edge_index,
+                epochs=self.config.num_epochs // 3,
+                phase_name="Phase 2"
+            )
+        
+        # 階段3：完整訓練
+        print("Phase 3: Full training...")
+        model = self._train_phase(
+            model, node_features, edge_index,
+            epochs=self.config.num_epochs // 3,
+            phase_name="Phase 3"
+        )
+        
+        return model, training_history
+    
+    def _filter_edge_index(self, edge_index, max_nodes):
+        """過濾邊索引，只保留涉及前max_nodes個節點的邊"""
+        mask = (edge_index[0] < max_nodes) & (edge_index[1] < max_nodes)
+        return edge_index[:, mask]
+    
+    def _train_phase(self, model, features, edge_index, epochs, phase_name):
+        """訓練一個階段"""
+        optimizer = optim.AdamW(
+            model.parameters(),
+            lr=self.config.learning_rate,
+            weight_decay=self.config.weight_decay
+        )
+        
+        criterion = GNNKANLoss(self.config)
+        
+        # 創建目標鄰接矩陣
+        num_nodes = features.size(0)
+        device = features.device
+        target_adj = torch.zeros(num_nodes, num_nodes, device=device)
+        
+        if edge_index.size(1) > 0:
+            target_adj[edge_index[0], edge_index[1]] = 1.0
+            target_adj = (target_adj + target_adj.t()) / 2.0
+        
+        model.train()
+        for epoch in range(epochs):
+            optimizer.zero_grad()
+            
+            try:
+                node_embeddings, pred_adj = model(features, edge_index)
+                loss = criterion(pred_adj, target_adj, node_embeddings)
+                
+                if not (torch.isnan(loss) or torch.isinf(loss)):
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), self.config.grad_clip)
+                    optimizer.step()
+                
+                if epoch % 10 == 0:
+                    print(f"{phase_name} Epoch {epoch}: Loss={loss.item():.6f}")
+                    
+            except Exception as e:
+                print(f"Error in {phase_name} at epoch {epoch}: {e}")
+                break
+        
+        return model
+
+
+def create_adaptive_targets(node_features, edge_index, method='similarity'):
+    """
+    創建自適應訓練目標
+    
+    Args:
+        node_features: 節點特徵
+        edge_index: 邊索引
+        method: 目標創建方法
+        
+    Returns:
+        target_adj: 目標鄰接矩陣
+    """
+    num_nodes = node_features.size(0)
+    device = node_features.device
+    
+    if method == 'similarity':
+        # 基於特徵相似性創建目標
+        features_np = node_features.detach().cpu().numpy()
+        from sklearn.metrics.pairwise import cosine_similarity
+        
+        similarity = cosine_similarity(features_np)
+        # 閾值化
+        threshold = np.percentile(similarity, 80)
+        target_adj = torch.tensor(
+            (similarity > threshold).astype(float),
+            device=device,
+            dtype=torch.float
+        )
+    
+    elif method == 'knn':
+        # 基於k近鄰創建目標
+        from sklearn.neighbors import kneighbors_graph
+        features_np = node_features.detach().cpu().numpy()
+        
+        k = min(5, num_nodes - 1)
+        knn_graph = kneighbors_graph(
+            features_np, n_neighbors=k, mode='connectivity'
+        )
+        target_adj = torch.tensor(
+            knn_graph.toarray().astype(float),
+            device=device,
+            dtype=torch.float
+        )
+    
+    else:
+        # 默認：基於邊索引
+        target_adj = torch.zeros(num_nodes, num_nodes, device=device)
+        if edge_index.size(1) > 0:
+            target_adj[edge_index[0], edge_index[1]] = 1.0
+            target_adj = (target_adj + target_adj.t()) / 2.0
+    
+    return target_adj

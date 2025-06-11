@@ -188,19 +188,18 @@ def extract_dla_features(log_texts, embedding_dim=128):
 
 def stl_decomposition(metrics_data, seasonal=7, return_components=True):
     """
-    🎯 增強的STL分解 - 專門針對微服務監控數據優化
-    支持自動週期檢測、服務語義識別和多重回退策略
+    🎯 簡化的STL分解 - 移除過度複雜性，專注核心功能
     
     Args:
         metrics_data: DataFrame 包含時間序列數據 或 numpy array
-        seasonal: 基礎季節性週期 (默認7，適合系統監控)
+        seasonal: 季節性週期 (默認7)
         return_components: 是否返回所有組件
     
     Returns:
         decomposed_features: 分解後的特徵矩陣
         component_names: 組件名稱列表
     """
-    print("🔍 Enhanced STL decomposition with service semantics...")
+    print("🔧 Using simplified STL decomposition...")
     
     # 處理不同類型的輸入
     if isinstance(metrics_data, pd.DataFrame):
@@ -219,65 +218,16 @@ def stl_decomposition(metrics_data, seasonal=7, return_components=True):
     decomposed_features = []
     component_names = []
     
-    # 🎯 微服務語義映射 - 識別服務類型和指標類型
-    service_semantic_map = {
-        'adservice': {'type': 'application', 'priority': 'high'},
-        'cartservice': {'type': 'application', 'priority': 'high'},
-        'checkoutservice': {'type': 'application', 'priority': 'critical'},
-        'currencyservice': {'type': 'utility', 'priority': 'medium'},
-        'emailservice': {'type': 'notification', 'priority': 'low'},
-        'frontend': {'type': 'interface', 'priority': 'critical'},
-        'paymentservice': {'type': 'application', 'priority': 'critical'},
-        'productcatalogservice': {'type': 'data', 'priority': 'high'},
-        'recommendationservice': {'type': 'ml', 'priority': 'medium'},
-        'redis': {'type': 'database', 'priority': 'high'},
-        'shippingservice': {'type': 'application', 'priority': 'medium'}
-    }
-    
-    metric_type_map = {
-        'cpu': {'seasonality': 12, 'sensitivity': 'high', 'weight': 1.5},
-        'mem': {'seasonality': 24, 'sensitivity': 'high', 'weight': 1.3},
-        'memory': {'seasonality': 24, 'sensitivity': 'high', 'weight': 1.3},
-        'load': {'seasonality': 15, 'sensitivity': 'medium', 'weight': 1.2},
-        'latency': {'seasonality': 8, 'sensitivity': 'critical', 'weight': 2.0},
-        'error': {'seasonality': 6, 'sensitivity': 'critical', 'weight': 2.5},
-        'time': {'seasonality': 60, 'sensitivity': 'low', 'weight': 0.5}
-    }
-
     for col in data.columns:
         series = data[col].dropna()
-        col_lower = str(col).lower()
+        col_name = str(col)
         
         print(f"Processing {col} (length: {len(series)})...")
         
-        # 🔧 智能語義分析 - 識别服務和指標類型
-        service_info = None
-        metric_info = None
-        
-        # 識別服務
-        for service_name, info in service_semantic_map.items():
-            if service_name in col_lower:
-                service_info = info
-                break
-        
-        # 識別指標類型
-        for metric_name, info in metric_type_map.items():
-            if metric_name in col_lower:
-                metric_info = info
-                break
-        
-        # 根據語義信息調整參數
-        if metric_info:
-            optimal_seasonal = metric_info['seasonality']
-            feature_weight = metric_info['weight']
-        else:
-            optimal_seasonal = seasonal
-            feature_weight = 1.0
-        
         # 🔧 數據質量檢查
-        if len(series) < 6:  # 絕對最小長度
-            print(f"⚠️ {col}: 數據太少 ({len(series)} < 6)，使用基本統計")
-            basic_features = _compute_basic_service_statistics(series, col, service_info, metric_info)
+        if len(series) < 6:
+            print(f"⚠️ {col}: 數據太少，使用基本統計")
+            basic_features = _compute_basic_statistics(series, col_name)
             decomposed_features.extend(basic_features['features'])
             component_names.extend(basic_features['names'])
             continue
@@ -285,78 +235,38 @@ def stl_decomposition(metrics_data, seasonal=7, return_components=True):
         # 檢查數據變異性
         if series.std() < 1e-10:
             print(f"⚠️ {col}: 常數序列，使用常數特徵")
-            const_features = _compute_constant_features(series, col, service_info, metric_info)
+            const_features = _compute_constant_features(series, col_name)
             decomposed_features.extend(const_features['features'])
             component_names.extend(const_features['names'])
             continue
         
-        # 🎯 多策略週期檢測
-        detected_periods = _detect_multiple_periods(series, col_lower, metric_info)
-        
-        if detected_periods:
-            optimal_seasonal = detected_periods[0]  # 使用最佳週期
-            print(f"✓ {col}: 檢測到週期 {optimal_seasonal}")
-        else:
-            # 根據數據長度和語義智能選擇週期
-            if len(series) >= 60:
-                optimal_seasonal = metric_info['seasonality'] if metric_info else 12
-            elif len(series) >= 24:
-                optimal_seasonal = 8
-            elif len(series) >= 12:
-                optimal_seasonal = 6
-            else:
-                optimal_seasonal = max(3, len(series) // 4)
-            print(f"⚠️ {col}: 未檢測到週期，使用自適應週期 {optimal_seasonal}")
-        
-        # 確保週期合理
-        max_seasonal = len(series) // 3
-        optimal_seasonal = min(optimal_seasonal, max_seasonal)
+        # 🎯 簡化的STL分解嘗試
+        optimal_seasonal = min(seasonal, len(series) // 3, 12)
         optimal_seasonal = max(optimal_seasonal, 3)
         
-        # 🎯 增強的STL分解
         try:
-            stl_success = False
-            
-            # 策略1：標準STL分解
             if len(series) >= 2 * optimal_seasonal + 1:
-                try:
-                    series_clean = _remove_outliers_adaptive(series, method='iqr')
-                    
-                    # 構建STL參數
-                    stl_params = {
-                        'seasonal': optimal_seasonal,
-                        'robust': True
-                    }
-                    
-                    # 嘗試創建STL對象
-                    stl = STL(series_clean, **stl_params)
-                    
-                    with warnings.catch_warnings():
-                        warnings.simplefilter("ignore")
-                        result = stl.fit()
-                    
-                    # 驗證結果質量
-                    if _validate_stl_result(result, series_clean):
-                        stl_features = _extract_stl_components(result, col, service_info, metric_info, feature_weight)
-                        decomposed_features.extend(stl_features['features'])
-                        component_names.extend(stl_features['names'])
-                        stl_success = True
-                        print(f"✓ {col}: STL分解成功 (週期={optimal_seasonal})")
-                    
-                except Exception as e:
-                    print(f"⚠️ {col}: STL分解失敗 - {str(e)[:50]}")
+                # 簡單的STL分解
+                stl = STL(series, seasonal=optimal_seasonal, robust=True)
+                result = stl.fit()
+                
+                # 驗證結果質量
+                if _validate_stl_result_simple(result, series):
+                    stl_features = _extract_stl_components_simple(result, col_name)
+                    decomposed_features.extend(stl_features['features'])
+                    component_names.extend(stl_features['names'])
+                    print(f"✓ {col}: STL分解成功")
+                    continue
             
-            # 策略2：如果STL失敗，使用增強統計分解
-            if not stl_success:
-                enhanced_features = _enhanced_statistical_decomposition(series, col, service_info, metric_info, optimal_seasonal)
-                decomposed_features.extend(enhanced_features['features'])
-                component_names.extend(enhanced_features['names'])
-                print(f"✓ {col}: 使用增強統計分解")
+            # 如果STL失敗，使用統計分解
+            stat_features = _statistical_decomposition_simple(series, col_name)
+            decomposed_features.extend(stat_features['features'])
+            component_names.extend(stat_features['names'])
+            print(f"✓ {col}: 使用統計分解")
                 
         except Exception as e:
-            print(f"⚠️ {col}: 所有分解方法失敗 - {e}")
-            # 最終回退
-            fallback_features = _compute_basic_service_statistics(series, col, service_info, metric_info)
+            print(f"⚠️ {col}: 分解失敗 - {e}，使用基本統計")
+            fallback_features = _compute_basic_statistics(series, col_name)
             decomposed_features.extend(fallback_features['features'])
             component_names.extend(fallback_features['names'])
     
@@ -367,7 +277,6 @@ def stl_decomposition(metrics_data, seasonal=7, return_components=True):
             cleaned_features = []
             for feat_list in decomposed_features:
                 if isinstance(feat_list, (list, np.ndarray)):
-                    # 轉換為numpy數組並處理NaN
                     feat_array = np.array(feat_list, dtype=float)
                     feat_array = np.nan_to_num(feat_array, nan=0.0, posinf=1e6, neginf=-1e6)
                     cleaned_features.append(feat_array)
@@ -382,219 +291,66 @@ def stl_decomposition(metrics_data, seasonal=7, return_components=True):
             
         except Exception as e:
             print(f"⚠️ 特徵對齊失敗: {e}")
-            # 創建緊急特徵矩陣
-            final_features = np.zeros((1, len(component_names)))
-            for i, feat_list in enumerate(decomposed_features):
-                if i < final_features.shape[1]:
-                    try:
-                        if isinstance(feat_list, (list, np.ndarray)) and len(feat_list) > 0:
-                            final_features[0, i] = float(feat_list[0])
-                        else:
-                            final_features[0, i] = float(feat_list)
-                    except:
-                        final_features[0, i] = 0.0
+            final_features = np.array([[0]])
+            component_names = ['default_feature']
     else:
         final_features = np.array([[0]])
         component_names = ['default_feature']
     
-    print(f"✓ STL分解完成: {final_features.shape[1]} 特徵，包含服務語義")
+    print(f"✓ 簡化STL分解完成: {final_features.shape[1]} 特徵")
     return final_features, component_names
 
 
-def _detect_multiple_periods(series, col_name, metric_info):
-    """多策略週期檢測"""
-    periods = []
+def _compute_basic_statistics(series, col_name):
+    """計算基本統計特徵"""
+    try:
+        if len(series) == 0:
+            return {'features': [0] * 6, 'names': [f'{col_name}_feat_{i}' for i in range(6)]}
+        
+        features = [
+            np.mean(series),
+            np.std(series) + 1e-8,
+            np.min(series),
+            np.max(series),
+            np.median(series),
+            len(series)
+        ]
+        
+        names = [
+            f'{col_name}_mean', f'{col_name}_std', f'{col_name}_min', 
+            f'{col_name}_max', f'{col_name}_median', f'{col_name}_length'
+        ]
+        
+        return {'features': features, 'names': names}
+        
+    except Exception:
+        return {'features': [0] * 6, 'names': [f'{col_name}_feat_{i}' for i in range(6)]}
+
+
+def _compute_constant_features(series, col_name):
+    """處理常數序列"""
+    const_val = series.iloc[0] if len(series) > 0 else 0
     
+    features = [const_val, 0, const_val, const_val, const_val, len(series)]
+    names = [
+        f'{col_name}_const_mean', f'{col_name}_const_std', f'{col_name}_const_min', 
+        f'{col_name}_const_max', f'{col_name}_const_median', f'{col_name}_const_length'
+    ]
+    
+    return {'features': features, 'names': names}
+
+
+def _validate_stl_result_simple(result, original_series):
+    """簡化的STL分解結果驗證"""
     try:
-        # 策略1: 自相關檢測
-        acf_period = _detect_period_autocorr(series)
-        if acf_period:
-            periods.append(acf_period)
-        
-        # 策略2: FFT頻域分析
-        fft_period = _detect_period_fft(series)
-        if fft_period:
-            periods.append(fft_period)
-        
-        # 策略3: 基於指標類型的先驗知識
-        if metric_info:
-            prior_period = metric_info['seasonality']
-            if 3 <= prior_period <= len(series) // 3:
-                periods.append(prior_period)
-        
-        # 策略4: 差分穩定性檢測
-        stability_period = _detect_period_stability(series)
-        if stability_period:
-            periods.append(stability_period)
-        
-        # 去重並排序
-        periods = list(set(periods))
-        periods.sort()
-        
-        return periods[:3]  # 返回最多3個候選週期
-        
-    except Exception as e:
-        print(f"週期檢測失敗: {e}")
-        return []
-
-
-def _detect_period_autocorr(series, max_lag=None):
-    """自相關週期檢測"""
-    try:
-        if max_lag is None:
-            max_lag = min(len(series) // 3, 50)
-        
-        if max_lag < 3:
-            return None
-        
-        # 計算自相關函數
-        autocorrs = []
-        for lag in range(1, max_lag + 1):
-            if len(series) > lag:
-                corr = np.corrcoef(series[:-lag], series[lag:])[0, 1]
-                if not np.isnan(corr):
-                    autocorrs.append((lag, abs(corr)))
-        
-        if not autocorrs:
-            return None
-        
-        # 找到第一個顯著峰值
-        autocorrs.sort(key=lambda x: x[1], reverse=True)
-        
-        # 選擇相關性大於0.3的最小週期
-        for lag, corr in autocorrs:
-            if corr > 0.3 and lag >= 3:
-                return lag
-        
-        return None
-        
-    except Exception:
-        return None
-
-
-def _detect_period_fft(series):
-    """FFT頻域週期檢測"""
-    try:
-        if len(series) < 16:
-            return None
-        
-        # 去趨勢
-        from scipy import signal as scipy_signal
-        detrended = scipy_signal.detrend(series.values if hasattr(series, 'values') else series)
-        
-        # FFT分析
-        fft_vals = np.fft.fft(detrended)
-        freqs = np.fft.fftfreq(len(detrended))
-        
-        # 計算功率譜
-        power = np.abs(fft_vals[1:len(fft_vals)//2])
-        freqs_pos = freqs[1:len(freqs)//2]
-        
-        if len(power) == 0:
-            return None
-        
-        # 找主要頻率
-        dominant_idx = np.argmax(power)
-        dominant_freq = freqs_pos[dominant_idx]
-        
-        if abs(dominant_freq) < 1e-10:
-            return None
-        
-        period = int(1 / abs(dominant_freq))
-        
-        # 驗證週期合理性
-        if 3 <= period <= len(series) // 3:
-            return period
-        
-        return None
-        
-    except Exception:
-        return None
-
-
-def _detect_period_stability(series):
-    """基於差分穩定性的週期檢測"""
-    try:
-        max_period = min(len(series) // 3, 30)
-        
-        stability_scores = []
-        for period in range(3, max_period + 1):
-            if len(series) >= 2 * period:
-                # 計算週期性差分的穩定性
-                diff = series[period:].values - series[:-period].values
-                stability = 1 / (1 + np.var(diff))  # 方差越小，穩定性越高
-                stability_scores.append((period, stability))
-        
-        if not stability_scores:
-            return None
-        
-        # 選擇穩定性最高的週期
-        stability_scores.sort(key=lambda x: x[1], reverse=True)
-        best_period, best_score = stability_scores[0]
-        
-        # 只有穩定性足夠高時才返回
-        if best_score > 0.1:
-            return best_period
-        
-        return None
-        
-    except Exception:
-        return None
-
-
-def _remove_outliers_adaptive(series, method='iqr', factor=1.5):
-    """自適應異常值處理"""
-    try:
-        if method == 'iqr':
-            Q1 = series.quantile(0.25)
-            Q3 = series.quantile(0.75)
-            IQR = Q3 - Q1
-            
-            if IQR == 0:  # 如果IQR為0，使用標準差方法
-                mean = series.mean()
-                std = series.std()
-                if std == 0:
-                    return series
-                lower_bound = mean - factor * std
-                upper_bound = mean + factor * std
-            else:
-                lower_bound = Q1 - factor * IQR
-                upper_bound = Q3 + factor * IQR
-            
-            # 用邊界值替換（不刪除）
-            cleaned = series.copy()
-            cleaned[cleaned < lower_bound] = lower_bound
-            cleaned[cleaned > upper_bound] = upper_bound
-            
-            return cleaned
-        else:
-            return series
-            
-    except Exception:
-        return series
-
-
-def _validate_stl_result(result, original_series):
-    """驗證STL分解結果質量"""
-    try:
-        # 檢查組件是否有效
         if hasattr(result, 'trend') and hasattr(result, 'seasonal') and hasattr(result, 'resid'):
             trend = result.trend
             seasonal = result.seasonal  
             residual = result.resid
             
             # 檢查是否有太多NaN值
-            if (trend.isna().sum() > len(trend) * 0.3 or 
-                seasonal.isna().sum() > len(seasonal) * 0.3 or
-                residual.isna().sum() > len(residual) * 0.3):
-                return False
-            
-            # 檢查重構誤差
-            reconstructed = trend.fillna(0) + seasonal.fillna(0) + residual.fillna(0)
-            mse = np.mean((original_series - reconstructed) ** 2)
-            
-            # 如果重構誤差太大，認為分解失敗
-            if mse > np.var(original_series) * 2:
+            if (trend.isna().sum() > len(trend) * 0.5 or 
+                seasonal.isna().sum() > len(seasonal) * 0.5):
                 return False
             
             return True
@@ -605,8 +361,8 @@ def _validate_stl_result(result, original_series):
         return False
 
 
-def _extract_stl_components(result, col_name, service_info, metric_info, feature_weight):
-    """從STL結果提取特徵"""
+def _extract_stl_components_simple(result, col_name):
+    """簡化的STL組件特徵提取"""
     try:
         trend = result.trend.fillna(method='ffill').fillna(method='bfill').fillna(0)
         seasonal = result.seasonal.fillna(0)
@@ -614,163 +370,72 @@ def _extract_stl_components(result, col_name, service_info, metric_info, feature
         
         # 基本組件統計
         features = [
-            np.mean(trend) * feature_weight,      # 趨勢均值
-            np.std(trend) * feature_weight,       # 趨勢標準差
-            np.mean(seasonal) * feature_weight,   # 季節性均值
-            np.std(seasonal) * feature_weight,    # 季節性標準差
-            np.mean(residual),                    # 殘差均值
-            np.std(residual),                     # 殘差標準差
-            np.max(trend) - np.min(trend),        # 趨勢範圍
-            np.max(seasonal) - np.min(seasonal),  # 季節性範圍
+            np.mean(trend),
+            np.std(trend),
+            np.mean(seasonal),
+            np.std(seasonal),
+            np.mean(residual),
+            np.std(residual)
         ]
         
         names = [
             f'{col_name}_trend_mean', f'{col_name}_trend_std',
             f'{col_name}_seasonal_mean', f'{col_name}_seasonal_std',
-            f'{col_name}_residual_mean', f'{col_name}_residual_std',
-            f'{col_name}_trend_range', f'{col_name}_seasonal_range'
+            f'{col_name}_residual_mean', f'{col_name}_residual_std'
         ]
-        
-        # 如果是關鍵服務或指標，添加額外特徵
-        if (service_info and service_info.get('priority') in ['critical', 'high']) or \
-           (metric_info and metric_info.get('sensitivity') in ['critical', 'high']):
-            
-            # 高階統計特徵
-            features.extend([
-                _safe_skew(trend),                 # 趨勢偏度
-                _safe_kurtosis(trend),             # 趨勢峰度
-                _safe_autocorr(trend),             # 趨勢自相關
-                np.mean(np.abs(residual)),         # 殘差絕對均值
-                _compute_trend_strength(trend, seasonal),  # 趨勢強度
-            ])
-            
-            names.extend([
-                f'{col_name}_trend_skew', f'{col_name}_trend_kurt',
-                f'{col_name}_trend_autocorr', f'{col_name}_residual_mae',
-                f'{col_name}_trend_strength'
-            ])
         
         return {'features': features, 'names': names}
         
     except Exception as e:
         print(f"特徵提取失敗: {e}")
-        return {'features': [0] * 8, 'names': [f'{col_name}_feat_{i}' for i in range(8)]}
+        return {'features': [0] * 6, 'names': [f'{col_name}_feat_{i}' for i in range(6)]}
 
 
-def _enhanced_statistical_decomposition(series, col_name, service_info, metric_info, period):
-    """增強統計分解（STL失敗時的回退）"""
+def _statistical_decomposition_simple(series, col_name):
+    """簡化的統計分解"""
     try:
         # 移動平均趨勢
-        if len(series) >= 5:
-            window = min(period, len(series) // 3)
-            trend = series.rolling(window=window, center=True).mean()
-            trend = trend.fillna(method='ffill').fillna(method='bfill').fillna(series.mean())
-        else:
-            trend = pd.Series([series.mean()] * len(series), index=series.index)
+        window = min(7, len(series) // 3)
+        if window < 3:
+            window = 3
+            
+        trend = series.rolling(window=window, center=True).mean()
+        trend = trend.fillna(method='ffill').fillna(method='bfill').fillna(series.mean())
         
         # 去趨勢
         detrended = series - trend
         
-        # 簡單季節性估計
-        if len(series) >= period * 2:
-            seasonal_pattern = []
-            for i in range(period):
-                seasonal_indices = list(range(i, len(detrended), period))
-                if seasonal_indices:
-                    seasonal_value = detrended.iloc[seasonal_indices].mean()
-                    seasonal_pattern.append(seasonal_value)
-                else:
-                    seasonal_pattern.append(0)
-            
-            # 擴展季節性模式
-            seasonal = []
-            for i in range(len(series)):
-                seasonal.append(seasonal_pattern[i % period])
-            seasonal = pd.Series(seasonal, index=series.index)
-        else:
-            seasonal = pd.Series([0] * len(series), index=series.index)
+        # 簡單季節性
+        seasonal_mean = detrended.mean()
+        seasonal = pd.Series([seasonal_mean] * len(series), index=series.index)
         
         # 殘差
         residual = series - trend - seasonal
         
         # 計算特徵
-        feature_weight = metric_info.get('weight', 1.0) if metric_info else 1.0
-        
         features = [
-            np.mean(trend) * feature_weight,
-            np.std(trend) * feature_weight,
-            np.mean(seasonal) * feature_weight,
-            np.std(seasonal) * feature_weight,
+            np.mean(trend),
+            np.std(trend),
+            np.mean(seasonal),
+            np.std(seasonal),
             np.mean(residual),
-            np.std(residual),
-            np.max(trend) - np.min(trend),
-            np.max(seasonal) - np.min(seasonal),
-            period,  # 使用的週期
-            _safe_autocorr(series),  # 原序列自相關
+            np.std(residual)
         ]
         
         names = [
-            f'{col_name}_ma_trend_mean', f'{col_name}_ma_trend_std',
-            f'{col_name}_simple_seasonal_mean', f'{col_name}_simple_seasonal_std',
-            f'{col_name}_residual_mean', f'{col_name}_residual_std',
-            f'{col_name}_trend_range', f'{col_name}_seasonal_range',
-            f'{col_name}_period', f'{col_name}_autocorr'
+            f'{col_name}_stat_trend_mean', f'{col_name}_stat_trend_std',
+            f'{col_name}_stat_seasonal_mean', f'{col_name}_stat_seasonal_std',
+            f'{col_name}_stat_residual_mean', f'{col_name}_stat_residual_std'
         ]
         
         return {'features': features, 'names': names}
         
     except Exception as e:
-        print(f"增強統計分解失敗: {e}")
-        return _compute_basic_service_statistics(series, col_name, service_info, metric_info)
+        print(f"統計分解失敗: {e}")
+        return _compute_basic_statistics(series, col_name)
 
 
-def _compute_basic_service_statistics(series, col_name, service_info, metric_info):
-    """計算基本服務統計特徵"""
-    try:
-        if len(series) == 0:
-            return {'features': [0] * 8, 'names': [f'{col_name}_feat_{i}' for i in range(8)]}
-        
-        # 基本統計
-        features = [
-            np.mean(series),
-            np.std(series) + 1e-8,  # 避免除零
-            np.min(series),
-            np.max(series),
-            np.median(series),
-            np.percentile(series, 25),
-            np.percentile(series, 75),
-            len(series)
-        ]
-        
-        names = [
-            f'{col_name}_mean', f'{col_name}_std', f'{col_name}_min', f'{col_name}_max',
-            f'{col_name}_median', f'{col_name}_q25', f'{col_name}_q75', f'{col_name}_length'
-        ]
-        
-        # 服務權重調整
-        if service_info and service_info.get('priority') == 'critical':
-            features = [f * 1.5 for f in features[:4]] + features[4:]  # 關鍵服務權重增加
-        
-        return {'features': features, 'names': names}
-        
-    except Exception:
-        return {'features': [0] * 8, 'names': [f'{col_name}_feat_{i}' for i in range(8)]}
-
-
-def _compute_constant_features(series, col_name, service_info, metric_info):
-    """處理常數序列"""
-    const_val = series.iloc[0] if len(series) > 0 else 0
-    
-    features = [const_val, 0, const_val, const_val, const_val, const_val, const_val, len(series)]
-    names = [
-        f'{col_name}_const_mean', f'{col_name}_const_std', f'{col_name}_const_min', f'{col_name}_const_max',
-        f'{col_name}_const_median', f'{col_name}_const_q25', f'{col_name}_const_q75', f'{col_name}_const_length'
-    ]
-    
-    return {'features': features, 'names': names}
-
-
-# 輔助函數
+# 移除過度複雜的輔助函數，保留核心安全函數
 def _safe_skew(series):
     """安全的偏度計算"""
     try:
@@ -799,46 +464,6 @@ def _safe_autocorr(series, lag=1):
         return 0
     except:
         return 0
-
-
-def _compute_trend_strength(trend, seasonal):
-    """計算趨勢強度"""
-    try:
-        trend_var = np.var(trend)
-        seasonal_var = np.var(seasonal)
-        total_var = trend_var + seasonal_var
-        
-        if total_var > 0:
-            return trend_var / total_var
-        return 0
-    except:
-        return 0
-
-
-# 確保 scipy.signal 可用
-try:
-    from scipy import signal
-except ImportError:
-    class signal:
-        @staticmethod
-        def detrend(x):
-            if hasattr(x, 'values'):
-                x = x.values
-            return x - np.mean(x)
-        
-        @staticmethod
-        def find_peaks(x, height=None, distance=None):
-            """簡化的峰值檢測"""
-            if len(x) < 3:
-                return [], {}
-            
-            peaks = []
-            for i in range(1, len(x) - 1):
-                if x[i] > x[i-1] and x[i] > x[i+1]:
-                    if height is None or x[i] >= height:
-                        peaks.append(i)
-            
-            return np.array(peaks), {}
 
 
 def compute_topology_features(adj_matrix, node_names=None):
@@ -1535,259 +1160,249 @@ def test_feature_extraction():
 if __name__ == "__main__":
     test_feature_extraction()
 
-# 🔧 注意：enhanced_feature_fusion 函數已在本檔案前面定義
-# 移除重複定義以避免衝突
+# 🔧 移除重複定義 - 這些函數已在 gnn_kan.py 中定義，不需要重複
 
-def simplified_metric_processing(metrics_data, target_dim=64):
+def enhanced_feature_fusion(trace_features, metric_features, log_features, 
+                          fusion_method='adaptive', target_dim=64):
     """
-    簡化的指標處理 - 替換過度複雜的STL分解
-    專注於核心統計特徵，提高通用性和效率
+    增強的多模態特徵融合 - 智能自適應融合
     
     Args:
-        metrics_data: 指標數據
-        target_dim: 目標維度
+        trace_features: trace 特徵 [nodes, trace_dim]
+        metric_features: metric 特徵 [nodes, metric_dim] 
+        log_features: log 特徵 [nodes, log_dim]
+        fusion_method: 融合方法 ('adaptive', 'concatenate', 'weighted', 'attention')
+        target_dim: 目標特徵維度
     
     Returns:
-        processed_features: 處理後的特徵
-        feature_names: 特徵名稱
+        fused_features: 融合後的特徵 [nodes, target_dim]
+        fusion_weights: 各模態的融合權重
     """
-    print("🔧 Using simplified metric processing (replacing STL decomposition)...")
+    print(f"🔗 Enhanced feature fusion with method: {fusion_method}")
     
-    if isinstance(metrics_data, pd.DataFrame):
-        data = metrics_data.select_dtypes(include=[np.number])
-    elif isinstance(metrics_data, np.ndarray):
-        data = pd.DataFrame(metrics_data) if metrics_data.ndim == 2 else pd.DataFrame({'metric': metrics_data})
+    # 收集有效的特徵模態
+    valid_features = []
+    modality_names = []
+    
+    if trace_features is not None and trace_features.size > 0:
+        if trace_features.ndim == 1:
+            trace_features = trace_features.reshape(1, -1)
+        valid_features.append(trace_features)
+        modality_names.append('trace')
+    
+    if metric_features is not None and metric_features.size > 0:
+        if metric_features.ndim == 1:
+            metric_features = metric_features.reshape(1, -1)
+        valid_features.append(metric_features)
+        modality_names.append('metric')
+    
+    if log_features is not None and log_features.size > 0:
+        if log_features.ndim == 1:
+            log_features = log_features.reshape(1, -1)
+        valid_features.append(log_features)
+        modality_names.append('log')
+    
+    if not valid_features:
+        print("⚠️ No valid features for fusion, returning zero features")
+        return np.zeros((1, target_dim)), {}
+    
+    # 對齊節點數量
+    max_nodes = max(f.shape[0] for f in valid_features)
+    aligned_features = []
+    
+    for features in valid_features:
+        if features.shape[0] < max_nodes:
+            # 重複最後一行以對齊節點數
+            padding = np.repeat(features[-1:], max_nodes - features.shape[0], axis=0)
+            features = np.vstack([features, padding])
+        aligned_features.append(features)
+    
+    print(f"✓ Aligned {len(aligned_features)} modalities to {max_nodes} nodes")
+    
+    # 根據融合方法處理
+    if fusion_method == 'adaptive':
+        fused_features, fusion_weights = _adaptive_fusion(aligned_features, modality_names, target_dim)
+    elif fusion_method == 'attention':
+        fused_features, fusion_weights = _attention_fusion_enhanced(aligned_features, modality_names, target_dim)
+    elif fusion_method == 'weighted':
+        fused_features, fusion_weights = _weighted_fusion(aligned_features, modality_names, target_dim)
+    else:  # concatenate
+        fused_features, fusion_weights = _concatenate_fusion(aligned_features, modality_names, target_dim)
+    
+    print(f"✓ Enhanced fusion completed: {fused_features.shape} -> target_dim={target_dim}")
+    return fused_features, fusion_weights
+
+
+def _adaptive_fusion(features_list, modality_names, target_dim):
+    """自適應融合 - 根據特徵質量動態調整權重"""
+    
+    # 計算每個模態的特徵質量指標
+    quality_scores = []
+    for features in features_list:
+        # 特徵質量 = 方差 + 非零比例 + 數值穩定性
+        variance = np.var(features, axis=0).mean()
+        non_zero_ratio = np.mean(features != 0)
+        stability = 1.0 / (1.0 + np.std(features))
+        
+        quality = variance * non_zero_ratio * stability
+        quality_scores.append(quality)
+    
+    # 歸一化質量分數作為權重
+    total_quality = sum(quality_scores)
+    if total_quality > 0:
+        adaptive_weights = [q / total_quality for q in quality_scores]
     else:
-        try:
-            data = pd.DataFrame(metrics_data)
-        except:
-            return np.array([[0]]), ['default_feature']
+        adaptive_weights = [1.0 / len(features_list)] * len(features_list)
+    
+    # 加權融合
+    fused_features, _ = _weighted_fusion(features_list, modality_names, target_dim, adaptive_weights)
+    
+    fusion_weights = dict(zip(modality_names, adaptive_weights))
+    return fused_features, fusion_weights
 
-    all_features = []
-    feature_names = []
+
+def _attention_fusion_enhanced(features_list, modality_names, target_dim):
+    """增強的注意力融合"""
     
-    for col in data.columns:
-        series = data[col].dropna()
-        col_name = str(col)
-        
-        if len(series) < 3:
-            # 數據太少，使用基本統計
-            basic_stats = [series.mean() if len(series) > 0 else 0, 0, series.min() if len(series) > 0 else 0, series.max() if len(series) > 0 else 0]
-            all_features.extend(basic_stats)
-            feature_names.extend([f'{col_name}_mean', f'{col_name}_std', f'{col_name}_min', f'{col_name}_max'])
-            continue
-        
-        # 🎯 核心統計特徵（替代STL的複雜分解）
-        core_features = [
-            series.mean(),                    # 中心趨勢
-            series.std(),                     # 離散程度
-            series.min(),                     # 最小值
-            series.max(),                     # 最大值
-            series.median(),                  # 中位數
-            np.percentile(series, 25),        # 第一四分位數
-            np.percentile(series, 75),        # 第三四分位數
-            series.skew() if len(series) > 3 else 0,  # 偏度
-        ]
-        
-        # 🎯 簡化的趨勢特徵（替代複雜的週期檢測）
-        if len(series) >= 5:
-            # 線性趨勢
-            x = np.arange(len(series))
-            trend_coef = np.polyfit(x, series.values, 1)[0]
-            
-            # 變化率
-            diff = np.diff(series.values)
-            change_rate = np.mean(np.abs(diff))
-            
-            # 穩定性
-            stability = 1.0 / (1.0 + np.std(diff))
-            
-            trend_features = [trend_coef, change_rate, stability]
-        else:
-            trend_features = [0.0, 0.0, 1.0]
-        
-        # 🎯 異常檢測特徵（替代複雜的回退機制）
-        Q1, Q3 = np.percentile(series, [25, 75])
-        IQR = Q3 - Q1
-        if IQR > 0:
-            outliers = ((series < (Q1 - 1.5 * IQR)) | (series > (Q3 + 1.5 * IQR))).sum()
-            outlier_ratio = outliers / len(series)
-        else:
-            outlier_ratio = 0.0
-        
-        anomaly_features = [outlier_ratio]
-        
-        # 組合所有特徵
-        col_features = core_features + trend_features + anomaly_features
-        all_features.extend(col_features)
-        
-        # 生成特徵名稱
-        names = [
-            f'{col_name}_mean', f'{col_name}_std', f'{col_name}_min', f'{col_name}_max',
-            f'{col_name}_median', f'{col_name}_q25', f'{col_name}_q75', f'{col_name}_skew',
-            f'{col_name}_trend', f'{col_name}_change_rate', f'{col_name}_stability',
-            f'{col_name}_outlier_ratio'
-        ]
-        feature_names.extend(names)
+    # 標準化所有特徵到相同維度
+    normalized_features = []
+    min_dim = min(f.shape[1] for f in features_list)
     
-    # 轉換為矩陣格式
-    if all_features:
-        feature_matrix = np.array(all_features).reshape(1, -1)
+    for features in features_list:
+        if features.shape[1] > min_dim:
+            # PCA 降維
+            pca = PCA(n_components=min_dim)
+            features = pca.fit_transform(features)
+        elif features.shape[1] < min_dim:
+            # 零填充
+            padding = np.zeros((features.shape[0], min_dim - features.shape[1]))
+            features = np.hstack([features, padding])
         
-        # PCA降維到目標維度
-        if feature_matrix.shape[1] > target_dim:
-            from sklearn.decomposition import PCA
-            pca = PCA(n_components=target_dim, random_state=42)
-            feature_matrix = pca.fit_transform(feature_matrix)
-            feature_names = [f'pca_component_{i}' for i in range(target_dim)]
+        # 標準化
+        scaler = StandardScaler()
+        features = scaler.fit_transform(features)
+        normalized_features.append(features)
+    
+    # 計算注意力權重 (簡化版)
+    attention_weights = []
+    for i, features in enumerate(normalized_features):
+        # 特徵重要性 = 平均絕對值
+        importance = np.mean(np.abs(features))
+        attention_weights.append(importance)
+    
+    # 軟最大歸一化
+    attention_weights = np.array(attention_weights)
+    attention_weights = attention_weights / np.sum(attention_weights)
+    
+    # 加權組合
+    fused_features = np.zeros_like(normalized_features[0])
+    for features, weight in zip(normalized_features, attention_weights):
+        fused_features += weight * features
+    
+    # 降維到目標維度
+    if fused_features.shape[1] > target_dim:
+        pca = PCA(n_components=target_dim)
+        fused_features = pca.fit_transform(fused_features)
+    elif fused_features.shape[1] < target_dim:
+        padding = np.zeros((fused_features.shape[0], target_dim - fused_features.shape[1]))
+        fused_features = np.hstack([fused_features, padding])
+    
+    fusion_weights = dict(zip(modality_names, attention_weights))
+    return fused_features, fusion_weights
+
+
+def _weighted_fusion(features_list, modality_names, target_dim, weights=None):
+    """加權融合"""
+    
+    if weights is None:
+        # 默認權重：trace > metric > log
+        default_weights = {'trace': 0.4, 'metric': 0.4, 'log': 0.2}
+        weights = [default_weights.get(name, 1.0 / len(features_list)) 
+                  for name in modality_names]
+    
+    # 標準化權重
+    total_weight = sum(weights)
+    if total_weight > 0:
+        weights = [w / total_weight for w in weights]
     else:
-        feature_matrix = np.array([[0]])
-        feature_names = ['default_feature']
+        weights = [1.0 / len(features_list)] * len(features_list)
     
-    print(f"✓ Simplified processing: {feature_matrix.shape[1]} features extracted")
-    return feature_matrix, feature_names
+    # 對齊特徵維度
+    min_dim = min(f.shape[1] for f in features_list)
+    aligned_features = []
+    
+    for features in features_list:
+        if features.shape[1] > min_dim:
+            # PCA 降維
+            pca = PCA(n_components=min_dim)
+            features = pca.fit_transform(features)
+        elif features.shape[1] < min_dim:
+            # 零填充
+            padding = np.zeros((features.shape[0], min_dim - features.shape[1]))
+            features = np.hstack([features, padding])
+        
+        # 標準化
+        scaler = StandardScaler()
+        features = scaler.fit_transform(features)
+        aligned_features.append(features)
+    
+    # 加權組合
+    fused_features = np.zeros_like(aligned_features[0])
+    for features, weight in zip(aligned_features, weights):
+        fused_features += weight * features
+    
+    # 調整到目標維度
+    if fused_features.shape[1] > target_dim:
+        pca = PCA(n_components=target_dim)
+        fused_features = pca.fit_transform(fused_features)
+    elif fused_features.shape[1] < target_dim:
+        padding = np.zeros((fused_features.shape[0], target_dim - fused_features.shape[1]))
+        fused_features = np.hstack([fused_features, padding])
+    
+    fusion_weights = dict(zip(modality_names, weights))
+    return fused_features, fusion_weights
 
 
-def enhanced_trace_processing(trace_data, inject_time=None):
-    """
-    增強的trace處理 - 專注於TracerCA風格的核心特徵
+def _concatenate_fusion(features_list, modality_names, target_dim):
+    """連接融合"""
     
-    Args:
-        trace_data: trace數據
-        inject_time: 故障注入時間
+    # 標準化所有特徵
+    standardized_features = []
+    for features in features_list:
+        scaler = StandardScaler()
+        features = scaler.fit_transform(features)
+        standardized_features.append(features)
     
-    Returns:
-        trace_features: trace特徵
-        operation_names: 操作名稱
-        service_graph: 服務圖
-    """
-    print("🔧 Enhanced trace processing for RCA...")
+    # 連接特徵
+    fused_features = np.hstack(standardized_features)
     
-    if trace_data is None or (isinstance(trace_data, pd.DataFrame) and trace_data.empty):
-        return np.array([]), [], None
+    # 降維到目標維度
+    if fused_features.shape[1] > target_dim:
+        pca = PCA(n_components=target_dim)
+        fused_features = pca.fit_transform(fused_features)
+    elif fused_features.shape[1] < target_dim:
+        padding = np.zeros((fused_features.shape[0], target_dim - fused_features.shape[1]))
+        fused_features = np.hstack([fused_features, padding])
     
-    try:
-        # 確保trace_data是DataFrame格式
-        if not isinstance(trace_data, pd.DataFrame):
-            trace_data = pd.DataFrame(trace_data)
-        
-        # 標準化列名
-        column_mapping = {
-            'service_name': 'serviceName', 'service': 'serviceName',
-            'operation_name': 'operationName', 'operation': 'operationName',
-            'method_name': 'operationName', 'method': 'operationName',
-            'start_time': 'startTime', 'timestamp': 'startTime',
-            'trace_id': 'traceID', 'span_id': 'spanID'
-        }
-        
-        for old_col, new_col in column_mapping.items():
-            if old_col in trace_data.columns and new_col not in trace_data.columns:
-                trace_data[new_col] = trace_data[old_col]
-        
-        # 確保必要列存在
-        if 'serviceName' not in trace_data.columns:
-            trace_data['serviceName'] = 'default_service'
-        if 'operationName' not in trace_data.columns:
-            trace_data['operationName'] = 'default_operation'
-        if 'duration' not in trace_data.columns:
-            trace_data['duration'] = np.random.lognormal(2, 1, len(trace_data))
-        
-        # 創建操作標識
-        trace_data['operation'] = trace_data['serviceName'].astype(str) + "_" + trace_data['operationName'].astype(str)
-        
-        # 構建服務依賴圖
-        service_graph = _build_simple_service_graph(trace_data)
-        
-        # 提取操作級特徵
-        operations = trace_data['operation'].unique()
-        operation_features = []
-        
-        for op in operations:
-            op_data = trace_data[trace_data['operation'] == op]
-            
-            # 基本統計特徵
-            duration_stats = op_data['duration'].describe() if 'duration' in op_data.columns else pd.Series([0]*8, index=['count', 'mean', 'std', 'min', '25%', '50%', '75%', 'max'])
-            
-            # TracerCA風格的特徵
-            if inject_time is not None and 'startTime' in op_data.columns:
-                # 分割正常和異常期間
-                normal_data = op_data[op_data['startTime'] < inject_time] if 'startTime' in op_data.columns else op_data[:len(op_data)//2]
-                anomal_data = op_data[op_data['startTime'] >= inject_time] if 'startTime' in op_data.columns else op_data[len(op_data)//2:]
-                
-                # 計算TracerCA特徵
-                if not normal_data.empty and not anomal_data.empty:
-                    normal_latency = normal_data['duration'].mean() if 'duration' in normal_data.columns else 0
-                    anomal_latency = anomal_data['duration'].mean() if 'duration' in anomal_data.columns else 0
-                    latency_change = (anomal_latency - normal_latency) / max(normal_latency, 1e-8)
-                    
-                    # 異常檢測
-                    threshold = normal_latency + 3 * normal_data['duration'].std() if 'duration' in normal_data.columns else anomal_latency
-                    abnormal_count = (anomal_data['duration'] > threshold).sum() if 'duration' in anomal_data.columns else 0
-                    confidence = abnormal_count / len(anomal_data) if len(anomal_data) > 0 else 0
-                else:
-                    latency_change = 0
-                    confidence = 0
-            else:
-                latency_change = 0
-                confidence = 0
-            
-            # 組合特徵
-            features = [
-                duration_stats['mean'],    # 平均延遲
-                duration_stats['std'],     # 延遲標準差
-                duration_stats['max'],     # 最大延遲
-                duration_stats['count'],   # 調用次數
-                latency_change,           # 延遲變化率
-                confidence,               # 異常置信度
-                len(op_data) / len(trace_data),  # 調用頻率
-                duration_stats['75%'] - duration_stats['25%']  # IQR
-            ]
-            
-            operation_features.append(features)
-        
-        # 轉換為numpy數組
-        if operation_features:
-            trace_features = np.array(operation_features)
-            # 處理NaN值
-            trace_features = np.nan_to_num(trace_features, nan=0.0, posinf=1.0, neginf=-1.0)
-        else:
-            trace_features = np.array([])
-        
-        return trace_features, list(operations), service_graph
-        
-    except Exception as e:
-        print(f"⚠️ Enhanced trace processing failed: {e}")
-        return np.array([]), [], None
+    # 等權重
+    equal_weights = [1.0 / len(modality_names)] * len(modality_names)
+    fusion_weights = dict(zip(modality_names, equal_weights))
+    
+    return fused_features, fusion_weights
 
 
-def _build_simple_service_graph(trace_data):
-    """構建簡化的服務依賴圖"""
-    try:
-        import networkx as nx
-        
-        G = nx.DiGraph()
-        
-        # 添加服務節點
-        if 'serviceName' in trace_data.columns:
-            services = trace_data['serviceName'].unique()
-            G.add_nodes_from(services)
-            
-            # 基於調用順序添加邊
-            if 'traceID' in trace_data.columns and 'startTime' in trace_data.columns:
-                for trace_id, trace_group in trace_data.groupby('traceID'):
-                    trace_group = trace_group.sort_values('startTime')
-                    services_in_trace = trace_group['serviceName'].tolist()
-                    
-                    for i in range(len(services_in_trace) - 1):
-                        src, dst = services_in_trace[i], services_in_trace[i + 1]
-                        if src != dst:
-                            if G.has_edge(src, dst):
-                                G[src][dst]['weight'] += 1
-                            else:
-                                G.add_edge(src, dst, weight=1)
-        
-        return G
-        
-    except Exception as e:
-        print(f"Service graph construction failed: {e}")
-        return None
+# 確保所有函數都可以被導入
+__all__ = [
+    'sliding_window_alignment',
+    'extract_log_features', 
+    'stl_decomposition',
+    'compute_topology_features',
+    'extract_error_features',
+    'feature_fusion',
+    'extract_trace_features',
+    'build_service_dependency_graph',
+    'extract_service_topology_features', 
+    'kll_feature_processing',
+    'enhanced_feature_fusion',  # 新增
+    'test_feature_extraction'
+]
