@@ -14,8 +14,8 @@ import traceback
 
 # Import our optimized KAN modules from the new kan_components
 from .kan_components import (
-    OptimizedGNNKANEncoder, UltraFastKANLayer, 
-    GradientStabilizer, StabilizedKANLayer
+    OptimizedGNNKANEncoder, AdvancedKANLayer,
+    GradientStabilizer, SimplifiedKANLayer
 )
 
 

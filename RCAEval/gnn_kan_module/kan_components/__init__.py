@@ -19,8 +19,7 @@ from .gradient_stabilizer import (
 
 # 高容量穩定KAN
 from .high_capacity_stable_kan import (
-    HighCapacityKANEncoder,
-    StabilizedKANLayer
+    HighCapacityKANEncoder
 )
 
 # 工具函數
@@ -66,7 +65,6 @@ __all__ = [
     # 穩定性組件
     'GradientStabilizer',
     'HighCapacityKANEncoder',
-    'StabilizedKANLayer',
     
     # 工具函數
     'compute_service_criticality_weights'
