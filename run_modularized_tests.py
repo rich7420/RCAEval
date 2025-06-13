@@ -13,20 +13,15 @@ import time
 import traceback
 
 def run_test_command(description, command, timeout=300):
-    """執行測試指令並處理結果"""
-    print(f"\n{'='*60}")
-    print(f"🧪 {description}")
-    print(f"指令: {command}")
-    print(f"{'='*60}")
-    
+    """執行測試命令並處理輸出"""
     try:
+        print(f"\n🔍 {description}")
         result = subprocess.run(
-            command, 
-            shell=True, 
-            capture_output=True, 
-            text=True, 
-            timeout=timeout,
-            cwd=os.getcwd()
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout
         )
         
         if result.returncode == 0:
@@ -40,7 +35,7 @@ def run_test_command(description, command, timeout=300):
                     for line in key_lines[-10:]:
                         print(f"  {line}")
                 else:
-                print("輸出:")
+                    print("輸出:")
                     print(result.stdout[-500:])
         else:
             print(f"❌ {description} - 失敗 (返回碼: {result.returncode})")
@@ -647,8 +642,8 @@ print('🎯 準備就緒：可在另一台裝置上測試!')
 
 if __name__ == "__main__":
     try:
-    success = main()
-    sys.exit(0 if success else 1)
+        success = main()
+        sys.exit(0 if success else 1)
     except KeyboardInterrupt:
         print("\n⏹️ 測試被用戶中斷")
         sys.exit(1)
