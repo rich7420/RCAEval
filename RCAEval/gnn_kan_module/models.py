@@ -19,6 +19,9 @@ from .kan_components import (
     HighCapacityGNNKANEncoder
 )
 
+# Import configuration classes for type checking
+from .config import HighCapacityGNNKANConfig
+
 
 class GNNKANModel(nn.Module):
     """GNN-KAN 模型 - 結合 GNN 和 KAN 的優勢"""
@@ -32,7 +35,7 @@ class GNNKANModel(nn.Module):
         self.feature_projection = nn.Linear(config.target_feature_dim, config.input_dim)
         
         # 根據配置選擇適當的編碼器
-        if config_type == 'high_capacity':
+        if isinstance(config, HighCapacityGNNKANConfig):
             self.gnn_encoder = HighCapacityGNNKANEncoder(
                 input_dim=config.input_dim,
                 hidden_dims=config.hidden_dims,

@@ -11,6 +11,8 @@ import sys
 import os
 import time
 import traceback
+import pandas as pd
+import numpy as np
 
 def run_test_command(description, command, timeout=300):
     """執行測試命令並處理輸出"""
@@ -128,17 +130,18 @@ import pandas as pd
 
 print('🔬 正在測試 KAN 取代 MLP 的核心功能...')
 # 創建多模態測試數據
+num_samples = 20
 data = {
     'metrics': pd.DataFrame({
-        'cpu_usage': np.random.rand(20) * 100,
-        'memory_usage': np.random.rand(20) * 100,
-        'network_io': np.random.rand(20) * 1000
+        'cpu_usage': np.random.rand(num_samples) * 100,
+        'memory_usage': np.random.rand(num_samples) * 100,
+        'network_io': np.random.rand(num_samples) * 1000
     }),
     'traces': pd.DataFrame({
-        'serviceName': ['service_a', 'service_b', 'service_c'] * 7,
-        'operationName': ['op1', 'op2'] * 11,  
-        'duration': np.random.lognormal(2, 1, 21),
-        'startTime': pd.date_range('2024-01-01', periods=21, freq='1min')
+        'serviceName': (['service_a', 'service_b', 'service_c'] * (num_samples // 3 + 1))[:num_samples],
+        'operationName': (['op1', 'op2'] * (num_samples // 2 + 1))[:num_samples],
+        'duration': np.random.lognormal(2, 1, num_samples),
+        'startTime': pd.date_range('2024-01-01', periods=num_samples, freq='1min')
     })
 }
 
