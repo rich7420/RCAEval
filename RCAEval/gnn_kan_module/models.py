@@ -15,7 +15,8 @@ import traceback
 # Import our optimized KAN modules from the new kan_components
 from .kan_components import (
     OptimizedGNNKANEncoder, AdvancedKANLayer,
-    GradientStabilizer, SimplifiedKANLayer
+    GradientStabilizer, SimplifiedKANLayer,
+    HighCapacityGNNKANEncoder
 )
 
 
@@ -30,16 +31,31 @@ class GNNKANModel(nn.Module):
         # 特徵投影層
         self.feature_projection = nn.Linear(config.target_feature_dim, config.input_dim)
         
-        # GNN-KAN編碼器
-        self.gnn_encoder = OptimizedGNNKANEncoder(
-            input_dim=config.input_dim,
-            hidden_dims=config.hidden_dims,
-            output_dim=config.output_dim,
-            num_layers=config.num_gnn_layers,
-            kan_grid_size=config.kan_grid_size,
-            kan_spline_order=config.kan_spline_order,
-            dropout=config.dropout
-        )
+        # 根據配置選擇適當的編碼器
+        if config_type == 'high_capacity':
+            self.gnn_encoder = HighCapacityGNNKANEncoder(
+                input_dim=config.input_dim,
+                hidden_dims=config.hidden_dims,
+                output_dim=config.output_dim,
+                num_layers=config.num_gnn_layers,
+                kan_config={
+                    'grid_size': config.kan_grid_size,
+                    'spline_order': config.kan_spline_order,
+                    'use_residual': True,
+                    'use_spectral_norm': True
+                },
+                dropout=config.dropout
+            )
+        else:
+            self.gnn_encoder = OptimizedGNNKANEncoder(
+                input_dim=config.input_dim,
+                hidden_dims=config.hidden_dims,
+                output_dim=config.output_dim,
+                num_layers=config.num_gnn_layers,
+                kan_grid_size=config.kan_grid_size,
+                kan_spline_order=config.kan_spline_order,
+                dropout=config.dropout
+            )
         
         # 時序注意力機制
         self.temporal_attention = TemporalAttention(config.output_dim)

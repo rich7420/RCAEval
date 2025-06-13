@@ -40,7 +40,7 @@ def run_test_command(description, command, timeout=300):
                     for line in key_lines[-10:]:
                         print(f"  {line}")
                 else:
-                    print("輸出:")
+                print("輸出:")
                     print(result.stdout[-500:])
         else:
             print(f"❌ {description} - 失敗 (返回碼: {result.returncode})")
@@ -608,7 +608,7 @@ print('🎯 準備就緒：可在另一台裝置上測試!')
             print(f"\n進度: {completed_tests}/{total_tests} 測試")
             
             success = run_test_command(
-                test['description'],
+                test['description'], 
                 test['command'], 
                 test.get('timeout', 300)
             )
@@ -647,8 +647,8 @@ print('🎯 準備就緒：可在另一台裝置上測試!')
 
 if __name__ == "__main__":
     try:
-        success = main()
-        sys.exit(0 if success else 1)
+    success = main()
+    sys.exit(0 if success else 1)
     except KeyboardInterrupt:
         print("\n⏹️ 測試被用戶中斷")
         sys.exit(1)
