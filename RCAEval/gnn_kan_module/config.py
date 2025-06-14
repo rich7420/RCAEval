@@ -43,11 +43,14 @@ class SimplifiedGNNKANConfig:
         
         # 🚀 訓練配置 - 針對KAN優化
         self.learning_rate = 0.001
+        self.base_learning_rate = 0.001  # 兼容性別名
         self.weight_decay = 1e-4
         self.num_epochs = 100
+        self.epochs = 100  # 兼容性別名
         self.batch_size = 32
         self.patience = 15
         self.min_delta = 1e-4
+        self.warmup_epochs = 10  # 預熱階段
         
         # 🔧 穩定性配置 - 簡化但有效
         self.gradient_clip_norm = 1.0      # 保持梯度裁剪
@@ -61,9 +64,12 @@ class SimplifiedGNNKANConfig:
         
         # 🎯 KAN特有的優化配置
         self.kan_l1_lambda = 1e-3          # B-spline正則化
+        self.base_l1_lambda = 1e-3         # 兼容性別名
         self.kan_entropy_lambda = 1e-3     # 熵正則化
+        self.base_entropy_lambda = 1e-3    # 兼容性別名
         self.spline_weight_decay = 1e-5    # 樣條權重衰減
         self.activation_weight_decay = 1e-5 # 激活權重衰減
+        self.stability_check_frequency = 50 # 穩定性檢查頻率
         
         # 📁 路徑配置
         self.data_dir = "data"
@@ -88,6 +94,12 @@ class SimplifiedGNNKANConfig:
         self.smoothness_lambda = 1e-6  # 平滑性正則化
         self.learnable_edges = True  # 可學習邊權重
         self.max_log_features = 100  # 最大日誌特徵數
+        
+        # 🔧 模型特定配置 - 確保兼容性
+        self.hidden_dim = self.hidden_dims[0] if self.hidden_dims else 64
+        self.num_layers = self.num_gnn_layers  # 層數別名
+        self.use_residual = True  # 殘差連接
+        self.kan_config = self.get_kan_config()  # KAN配置對象
     
     def get_feature_processing_config(self):
         """獲取特徵處理配置"""
@@ -233,14 +245,28 @@ class HighCapacityGNNKANConfig(SimplifiedGNNKANConfig):
         
         # 📈 高容量訓練
         self.learning_rate = 0.0005         # 更小的學習率
+        self.base_learning_rate = 0.0005    # 兼容性別名
         self.num_epochs = 150               # 更多訓練輪次
+        self.epochs = 150                   # 兼容性別名
         self.patience = 25                  # 更大的耐心值
+        self.warmup_epochs = 15             # 預熱階段
+        
+        # 🎯 高容量KAN正則化
+        self.base_l1_lambda = 2e-3          # 兼容性別名
+        self.base_entropy_lambda = 2e-3     # 兼容性別名
+        self.stability_check_frequency = 30 # 穩定性檢查頻率
         
         self.use_kpca = True  # 優先使用kPCA
         self.l2_lambda = 5e-5
         self.smoothness_lambda = 2e-6
         self.learnable_edges = True
         self.max_log_features = 150
+        
+        # 🔧 模型特定配置 - 確保兼容性
+        self.hidden_dim = self.hidden_dims[0] if self.hidden_dims else 128
+        self.num_layers = self.num_gnn_layers  # 層數別名
+        self.use_residual = True  # 殘差連接
+        self.kan_config = self.get_kan_config()  # KAN配置對象
     
     def update_for_kan_purity(self):
         """更新配置以最大化KAN純粹性，最小化MLP特性"""
@@ -294,18 +320,32 @@ class FastGNNKANConfig(SimplifiedGNNKANConfig):
         
         # 🚀 快速訓練
         self.learning_rate = 0.002          # 更大的學習率
+        self.base_learning_rate = 0.002     # 兼容性別名
         self.num_epochs = 50                # 更少的訓練輪次
+        self.epochs = 50                    # 兼容性別名
         self.batch_size = 64                # 更大的batch size
         self.patience = 10                  # 更小的耐心值
+        self.warmup_epochs = 5              # 快速預熱
         
         # ⚡ 快速穩定性
         self.stability_check_freq = 100     # 最少的穩定性檢查
+        self.stability_check_frequency = 100 # 兼容性別名
         self.gradient_clip_norm = 1.5       # 更寬鬆的梯度控制
+        
+        # 🎯 快速KAN正則化
+        self.base_l1_lambda = 5e-4          # 兼容性別名
+        self.base_entropy_lambda = 5e-4     # 兼容性別名
         
         self.l2_lambda = 1e-6
         self.smoothness_lambda = 5e-7
         self.learnable_edges = False
         self.max_log_features = 50
+        
+        # 🔧 模型特定配置 - 確保兼容性
+        self.hidden_dim = self.hidden_dims[0] if self.hidden_dims else 64
+        self.num_layers = self.num_gnn_layers  # 層數別名
+        self.use_residual = True  # 殘差連接
+        self.kan_config = self.get_kan_config()  # KAN配置對象
     
     def update_for_kan_purity(self):
         """更新配置以最大化KAN純粹性，最小化MLP特性"""
