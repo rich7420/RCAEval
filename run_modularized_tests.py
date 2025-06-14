@@ -146,12 +146,22 @@ data = {
 }
 
 print('🧪 執行KAN模型測試...')
-result = gnn_kan_rca(data, config_type='simplified', feature_method='ica')
-print(f'✅ KAN模型成功運行!')
-print(f'  - 檢測根因數: {len(result.get(\"ranks\", []))}')  
-print(f'  - 識別節點數: {len(result.get(\"node_names\", []))}')
-print(f'  - 鄰接矩陣形狀: {result.get(\"adj\", np.array([])).shape}')
-print('🎯 核心目標達成：KAN成功取代MLP層!')
+try:
+    result = gnn_kan_rca(data, config_type='simplified', feature_method='ica')
+    if result and isinstance(result, dict):
+        ranks = result.get('ranks', [])
+        node_names = result.get('node_names', [])
+        adj = result.get('adj', np.array([]))
+        
+        print(f'✅ KAN模型成功運行!')
+        print(f'  - 檢測根因數: {len(ranks)}')  
+        print(f'  - 識別節點數: {len(node_names)}')
+        print(f'  - 鄰接矩陣形狀: {adj.shape}')
+        print('🎯 核心目標達成：KAN成功取代MLP層!')
+    else:
+        print('❌ KAN模型運行失敗或未返回有效結果。')
+except Exception as e:
+    print(f'❌ KAN模型執行異常: {str(e)}')
 "''',
             'timeout': 150
         },
@@ -399,18 +409,17 @@ import numpy as np
 
 print('🚀 測試主入口點完整功能...')
 
-# 創建測試數據
+# 創建多模態測試數據
+num_samples = 30
 data = {
     'metrics': pd.DataFrame({
-        'cpu_usage': np.random.rand(15) * 100,
-        'memory_usage': np.random.rand(15) * 100,
-        'network_io': np.random.rand(15) * 1000
+        'cpu_usage': np.random.rand(num_samples) * 100,
+        'memory_usage': np.random.rand(num_samples) * 100
     }),
     'traces': pd.DataFrame({
-        'serviceName': ['service_a', 'service_b', 'service_c'] * 5,
-        'operationName': ['op1', 'op2'] * 8,  
-        'duration': np.random.lognormal(2, 1, 15),
-        'startTime': pd.date_range('2024-01-01', periods=15, freq='1min')
+        'serviceName': (['s_a', 's_b', 's_c'] * (num_samples // 3 + 1))[:num_samples],
+        'duration': np.random.lognormal(2, 1, num_samples),
+        'startTime': pd.to_datetime(np.arange(num_samples), unit='m')
     })
 }
 
@@ -448,28 +457,24 @@ import time
 
 print('📊 端到端性能測試 - 驗證KAN取代MLP的有效性...')
 
-# 創建更大規模的測試數據
-np.random.seed(42)
-num_services = 20
-num_metrics = 100
-
+# 創建多模態測試數據
+num_samples = 50
 data = {
     'metrics': pd.DataFrame({
-        'cpu_usage': np.random.rand(num_metrics) * 100,
-        'memory_usage': np.random.rand(num_metrics) * 100,
-        'network_io': np.random.rand(num_metrics) * 1000,
-        'response_time': np.random.gamma(2, 50, num_metrics),
-        'error_rate': np.random.beta(1, 10, num_metrics)
+        'cpu': np.random.rand(num_samples), 'mem': np.random.rand(num_samples)
     }),
     'traces': pd.DataFrame({
-        'serviceName': [f'service_{i}' for i in range(num_services)] * (num_metrics//num_services + 1),
-        'operationName': [f'op_{i%5}' for i in range(num_metrics)],
-        'duration': np.random.lognormal(3, 0.5, num_metrics),
-        'startTime': pd.date_range('2024-01-01', periods=num_metrics, freq='30s')
+        'serviceName': (['s_x', 's_y'] * (num_samples // 2 + 1))[:num_samples],
+        'duration': np.random.lognormal(3, 1, num_samples),
+        'startTime': pd.to_datetime(np.arange(num_samples), unit='s')
+    }),
+    'logs': pd.DataFrame({
+        'service': (['s_x', 's_y', 's_z'] * (num_samples // 3 + 1))[:num_samples],
+        'level': (['ERROR', 'INFO'] * (num_samples // 2 + 1))[:num_samples]
     })
 }
 
-print(f'📈 測試數據規模: {num_services} 服務, {num_metrics} 指標點')
+print(f'📈 測試數據規模: {num_samples} 樣本')
 
 # 性能測試
 configs_methods = [

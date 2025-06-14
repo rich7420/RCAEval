@@ -81,6 +81,13 @@ class SimplifiedGNNKANConfig:
         self.device = 'auto'                # 'auto', 'cuda', 'cpu'
         self.gpu_memory_fraction = 0.8      # GPU記憶體使用比例
         self.cpu_fallback = True            # GPU失敗時自動切換CPU
+        
+        self.use_simplified_features = True
+        self.max_features = 256
+        self.l2_lambda = 1e-5  # L2 正則化
+        self.smoothness_lambda = 1e-6  # 平滑性正則化
+        self.learnable_edges = True  # 可學習邊權重
+        self.max_log_features = 100  # 最大日誌特徵數
     
     def get_feature_processing_config(self):
         """獲取特徵處理配置"""
@@ -228,6 +235,36 @@ class HighCapacityGNNKANConfig(SimplifiedGNNKANConfig):
         self.learning_rate = 0.0005         # 更小的學習率
         self.num_epochs = 150               # 更多訓練輪次
         self.patience = 25                  # 更大的耐心值
+        
+        self.use_kpca = True  # 優先使用kPCA
+        self.l2_lambda = 5e-5
+        self.smoothness_lambda = 2e-6
+        self.learnable_edges = True
+        self.max_log_features = 150
+    
+    def update_for_kan_purity(self):
+        """更新配置以最大化KAN純粹性，最小化MLP特性"""
+        print("🎯 Updating config for maximum KAN purity...")
+        
+        # 增強KAN特性
+        self.kan_grid_size = max(8, self.kan_grid_size)
+        self.kan_num_basis = max(8, self.kan_num_basis)
+        self.adaptive_spline_order = True
+        self.learnable_activation = True
+        self.minimize_linear_component = True
+        
+        # 移除MLP相關配置
+        self.use_batch_norm = False         # BatchNorm是MLP常用技術
+        self.use_layer_norm = True          # LayerNorm更通用
+        
+        # 使用最佳特徵處理
+        if self.feature_method == 'stl':
+            self.feature_method = 'ica'     # 用ICA替代STL
+        
+        self.use_stl_decomposition = False
+        self.use_kll_processing = False
+        
+        print("✓ Config updated for KAN purity over MLP characteristics")
 
 
 class FastGNNKANConfig(SimplifiedGNNKANConfig):
@@ -264,6 +301,35 @@ class FastGNNKANConfig(SimplifiedGNNKANConfig):
         # ⚡ 快速穩定性
         self.stability_check_freq = 100     # 最少的穩定性檢查
         self.gradient_clip_norm = 1.5       # 更寬鬆的梯度控制
+        
+        self.l2_lambda = 1e-6
+        self.smoothness_lambda = 5e-7
+        self.learnable_edges = False
+        self.max_log_features = 50
+    
+    def update_for_kan_purity(self):
+        """更新配置以最大化KAN純粹性，最小化MLP特性"""
+        print("🎯 Updating config for maximum KAN purity...")
+        
+        # 增強KAN特性
+        self.kan_grid_size = max(8, self.kan_grid_size)
+        self.kan_num_basis = max(8, self.kan_num_basis)
+        self.adaptive_spline_order = True
+        self.learnable_activation = True
+        self.minimize_linear_component = True
+        
+        # 移除MLP相關配置
+        self.use_batch_norm = False         # BatchNorm是MLP常用技術
+        self.use_layer_norm = True          # LayerNorm更通用
+        
+        # 使用最佳特徵處理
+        if self.feature_method == 'stl':
+            self.feature_method = 'ica'     # 用ICA替代STL
+        
+        self.use_stl_decomposition = False
+        self.use_kll_processing = False
+        
+        print("✓ Config updated for KAN purity over MLP characteristics")
 
 
 class ConfigFactory:

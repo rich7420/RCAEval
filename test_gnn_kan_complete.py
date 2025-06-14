@@ -125,7 +125,7 @@ def test_kan_components():
         print(f"  - grid_size: {config.kan_grid_size} (增強到8)")
         print(f"  - spline_order: {config.kan_spline_order}")
         print(f"  - 可學習邊權重: {config.learnable_edges}")
-        print(f"  - 簡化特徵融合: {config.fusion_method}")
+        print(f"  - 特徵處理方法: {config.feature_method}")
         
         # 測試增強的KAN層
         print("\n2. 測試增強的 KAN 層 (取代MLP)...")
@@ -170,15 +170,15 @@ def test_kan_components():
         from RCAEval.gnn_kan_module.kan_components import GradientStabilizer
         
         stabilizer = GradientStabilizer(
-            l1_lambda=config.base_l1_lambda,
-            stability_check_freq=config.stability_check_frequency
+            l1_lambda=config.l2_lambda,
+            stability_check_freq=config.stability_check_freq
         )
         
         # 模擬損失計算
         dummy_loss = torch.tensor(1.0, requires_grad=True)
         total_loss = stabilizer.compute_total_regularization_loss(kan_layer, dummy_loss)
         print(f"✓ 梯度穩定器測試通過: {total_loss.item():.4f}")
-        print(f"✓ 減少了{config.stability_check_frequency}倍的穩定性檢查頻率")
+        print(f"✓ 穩定性檢查頻率設為{config.stability_check_freq}")
         
         return True
         
