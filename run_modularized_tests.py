@@ -427,15 +427,18 @@ print('🧪 測試不同配置和特徵處理方法...')
 
 # 測試1: simplified + ica
 result1 = gnn_kan_rca(data, config_type='simplified', feature_method='ica')
-print(f'✓ Simplified+ICA: {len(result1.get(\"ranks\", []))} 根因節點')
+ranks1 = result1.get('ranks', [])
+print(f'✓ Simplified+ICA: {len(ranks1)} 根因節點')
 
 # 測試2: high_capacity + kpca 
 result2 = gnn_kan_rca(data, config_type='high_capacity', feature_method='kpca')
-print(f'✓ HighCapacity+kPCA: {len(result2.get(\"ranks\", []))} 根因節點')
+ranks2 = result2.get('ranks', [])
+print(f'✓ HighCapacity+kPCA: {len(ranks2)} 根因節點')
 
 # 測試3: fast + simplified
 result3 = gnn_kan_rca(data, config_type='fast', feature_method='simplified')
-print(f'✓ Fast+Simplified: {len(result3.get(\"ranks\", []))} 根因節點')
+ranks3 = result3.get('ranks', [])
+print(f'✓ Fast+Simplified: {len(ranks3)} 根因節點')
 
 print('\\n🎯 主入口點測試結果:')
 print('✅ 支持多種config_type: simplified, high_capacity, fast')
@@ -510,7 +513,10 @@ for config_type, feature_method in configs_methods:
 
 print('\\n🏆 端到端性能測試總結:')
 for key, metrics in results.items():
-    print(f'  {key}: {metrics[\"time\"]:.2f}s, {metrics[\"nodes\"]} 節點, {metrics[\"ranks\"]} 根因')
+    time_val = metrics.get('time', 0)
+    nodes_val = metrics.get('nodes', 0)
+    ranks_val = metrics.get('ranks', 0)
+    print(f'  {key}: {time_val:.2f}s, {nodes_val} 節點, {ranks_val} 根因')
 
 print('\\n✅ 證明: KAN取代MLP層的方法運行正常，準確率穩定')
 print('🎯 模組化架構: e2e/gnnkan.py → gnn_kan_module/ 依賴正確')
