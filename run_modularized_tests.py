@@ -11,8 +11,15 @@ import sys
 import os
 import time
 import traceback
-import pandas as pd
-import numpy as np
+
+# 檢查並安裝必要的依賴
+try:
+    import pandas as pd
+    import numpy as np
+except ImportError as e:
+    print(f"⚠️ 缺少必要依賴: {e}")
+    print("請安裝依賴: pip install pandas numpy")
+    sys.exit(1)
 
 def run_test_command(description, command, timeout=300):
     """執行測試命令並處理輸出"""
@@ -410,17 +417,17 @@ print(f'✓ 創建測試數據: {metrics_data.shape}')
 
 # 測試ICA處理
 print('\\n📊 測試ICA特徵處理:')
-ica_features = ica_metric_processing(metrics_data, target_dim=64)
+ica_features, ica_names, ica_model = ica_metric_processing(metrics_data, target_dim=64)
 print(f'✓ ICA輸出: {ica_features.shape}')
 
 # 測試kPCA處理
 print('\\n🔧 測試kPCA特徵處理:')
-kpca_features = kpca_metric_processing(metrics_data, target_dim=64, kernel='rbf')
+kpca_features, kpca_names = kpca_metric_processing(metrics_data, target_dim=64, kernel='rbf')
 print(f'✓ kPCA輸出: {kpca_features.shape}')
 
 # 測試簡化處理
 print('\\n⚡ 測試簡化特徵處理:')
-simple_features = simplified_metric_processing(metrics_data, target_dim=64)
+simple_features, simple_names = simplified_metric_processing(metrics_data, target_dim=64)
 print(f'✓ 簡化處理輸出: {simple_features.shape}')
 
 # 比較特徵差異

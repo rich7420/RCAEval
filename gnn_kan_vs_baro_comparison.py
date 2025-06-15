@@ -35,20 +35,56 @@ sys.path.insert(0, '.')
 try:
     from RCAEval.e2e.baro import baro
     from RCAEval.e2e.gnnkan import gnn_kan_rca
-    from RCAEval.benchmark.evaluation import Evaluator
-    from RCAEval.classes.graph import Node
-    from RCAEval.utility import (
-        download_online_boutique_dataset,
-        download_sock_shop_1_dataset, 
-        download_sock_shop_2_dataset,
-        download_train_ticket_dataset,
-        download_re2_dataset,
-        download_re3_dataset,
-        load_json,
-        dump_json
-    )
+    # 可選導入 - 如果不存在則使用替代方案
+    try:
+        from RCAEval.benchmark.evaluation import Evaluator
+    except ImportError:
+        print("⚠️ Evaluator不可用，將使用簡化評估")
+        Evaluator = None
+    
+    try:
+        from RCAEval.classes.graph import Node
+    except ImportError:
+        print("⚠️ Node類不可用，將使用替代方案")
+        Node = None
+    
+    try:
+        from RCAEval.utility import (
+            download_online_boutique_dataset,
+            download_sock_shop_1_dataset, 
+            download_sock_shop_2_dataset,
+            download_train_ticket_dataset,
+            download_re2_dataset,
+            download_re3_dataset,
+            load_json,
+            dump_json
+        )
+    except ImportError:
+        print("⚠️ 部分工具函數不可用，將使用替代方案")
+        # 創建替代函數
+        def download_online_boutique_dataset():
+            print("⚠️ 數據集下載功能不可用")
+        def download_sock_shop_1_dataset():
+            print("⚠️ 數據集下載功能不可用")
+        def download_sock_shop_2_dataset():
+            print("⚠️ 數據集下載功能不可用")
+        def download_train_ticket_dataset():
+            print("⚠️ 數據集下載功能不可用")
+        def download_re2_dataset():
+            print("⚠️ 數據集下載功能不可用")
+        def download_re3_dataset():
+            print("⚠️ 數據集下載功能不可用")
+        def load_json(path):
+            import json
+            with open(path, 'r') as f:
+                return json.load(f)
+        def dump_json(data, path):
+            import json
+            with open(path, 'w') as f:
+                json.dump(data, f, indent=2)
+                
 except ImportError as e:
-    print(f"❌ 導入錯誤: {e}")
+    print(f"❌ 關鍵模組導入錯誤: {e}")
     print("請確保在RCAEval項目根目錄下運行此腳本")
     sys.exit(1)
 

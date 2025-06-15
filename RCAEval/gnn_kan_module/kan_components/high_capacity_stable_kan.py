@@ -134,8 +134,21 @@ class HighCapacityStableKANLayer(nn.Module):
         
         # 殘差連接的正交初始化
         if self.use_residual:
-            nn.init.orthogonal_(self.residual_linear.weight, gain=1.0)
-            nn.init.zeros_(self.residual_linear.bias)
+            # 檢查是否使用了SpectralNorm包裝
+            if hasattr(self.residual_linear, 'weight'):
+                nn.init.orthogonal_(self.residual_linear.weight, gain=1.0)
+                nn.init.zeros_(self.residual_linear.bias)
+            elif hasattr(self.residual_linear, 'module'):
+                # SpectralNorm包裝的情況
+                nn.init.orthogonal_(self.residual_linear.module.weight, gain=1.0)
+                nn.init.zeros_(self.residual_linear.module.bias)
+            else:
+                # 安全的初始化方式
+                for param in self.residual_linear.parameters():
+                    if param.dim() >= 2:
+                        nn.init.orthogonal_(param, gain=1.0)
+                    else:
+                        nn.init.zeros_(param)
     
     def _compute_b_spline_basis(self, x):
         """
