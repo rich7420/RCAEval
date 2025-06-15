@@ -80,7 +80,7 @@ __all__ = [
     'FastGNNKANConfig',
     
     # 特徵處理
-    'MultiModalFeatureExtractor',
+    'MultiModalFeatureExtractor', 
     'ica_metric_processing',
     'kpca_metric_processing', 
     'simplified_metric_processing',
@@ -110,8 +110,8 @@ __all__ = [
     
     # 圖構建
     'SimplifiedGraphConstructor',
-    'IntelligentServiceGraphConstructor',
-    'LearnableGraphConstructor', 
+    'IntelligentServiceGraphConstructor', 
+    'LearnableGraphConstructor',
     'DynamicModelAdjuster',
     
     # 高級處理

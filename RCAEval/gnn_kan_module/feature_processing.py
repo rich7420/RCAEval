@@ -261,6 +261,20 @@ def kpca_metric_processing(metrics_data, kernel='rbf', gamma=None, target_dim=64
         
         feature_matrix = np.array(all_features).reshape(1, -1)
         
+        # 確保輸出維度符合target_dim
+        if feature_matrix.shape[1] > target_dim:
+            # 使用PCA進一步降維
+            pca = PCA(n_components=target_dim, random_state=42)
+            feature_matrix = pca.fit_transform(feature_matrix)
+            feature_names = [f'kpca_pca_component_{i}' for i in range(target_dim)]
+        elif feature_matrix.shape[1] < target_dim:
+            # 如果特徵數不足，進行填充
+            padding = np.zeros((1, target_dim - feature_matrix.shape[1]))
+            feature_matrix = np.hstack([feature_matrix, padding])
+            # 添加填充特徵名稱
+            for i in range(len(feature_names), target_dim):
+                feature_names.append(f'kpca_padded_{i}')
+        
         print(f"✓ kPCA processing: {feature_matrix.shape[1]} features from {n_components} components")
         return feature_matrix, feature_names
         

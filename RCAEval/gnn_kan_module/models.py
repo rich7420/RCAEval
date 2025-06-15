@@ -50,15 +50,15 @@ class GNNKANModel(nn.Module):
                 dropout=config.dropout
             )
         else:
-            self.gnn_encoder = OptimizedGNNKANEncoder(
-                input_dim=config.input_dim,
-                hidden_dims=config.hidden_dims,
-                output_dim=config.output_dim,
-                num_layers=config.num_gnn_layers,
-                kan_grid_size=config.kan_grid_size,
-                kan_spline_order=config.kan_spline_order,
-                dropout=config.dropout
-            )
+        self.gnn_encoder = OptimizedGNNKANEncoder(
+            input_dim=config.input_dim,
+            hidden_dims=config.hidden_dims,
+            output_dim=config.output_dim,
+            num_layers=config.num_gnn_layers,
+            kan_grid_size=config.kan_grid_size,
+            kan_spline_order=config.kan_spline_order,
+            dropout=config.dropout
+        )
         
         # 時序注意力機制
         self.temporal_attention = TemporalAttention(config.output_dim)
@@ -527,10 +527,10 @@ class SimplifiedGNNKAN(nn.Module):
             except ImportError:
                 # 最後回退 - 但這表示KAN特性缺失
                 print("⚠️ 警告：KAN層不可用，回退到標準線性層（失去KAN優勢）")
-                return nn.Sequential(
+            return nn.Sequential(
                     nn.Linear(input_dim, output_dim, bias=False),  # 最小化MLP特性
                     nn.LayerNorm(output_dim)  # 使用LayerNorm而非BatchNorm
-                )
+            )
     
     def forward(self, node_features, edge_index):
         """

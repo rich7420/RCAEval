@@ -76,17 +76,17 @@ class PageRank:
             return degrees / (np.sum(degrees) + 1e-8)
 
 # 備用數據預處理函數
-def preprocess(data, dataset=None, **kwargs):
+    def preprocess(data, dataset=None, **kwargs):
     """簡化的數據預處理 - 保持模組獨立性"""
-    if isinstance(data, pd.DataFrame):
-        return data.fillna(method='ffill').fillna(0)
-    return data
-
-def drop_constant(data):
-    """簡化的常數列移除"""
-    if isinstance(data, pd.DataFrame):
-        return data.loc[:, data.std() > 1e-8]
-    return data
+        if isinstance(data, pd.DataFrame):
+            return data.fillna(method='ffill').fillna(0)
+        return data
+    
+    def drop_constant(data):
+        """簡化的常數列移除"""
+        if isinstance(data, pd.DataFrame):
+            return data.loc[:, data.std() > 1e-8]
+        return data
 
 
 def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False, 
@@ -118,7 +118,7 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
         elif config_type == 'fast':
             config = FastGNNKANConfig()
         else:
-            config = SimplifiedGNNKANConfig()
+        config = SimplifiedGNNKANConfig()
         
         # 設置特徵處理方法
         config.feature_method = feature_method
@@ -208,7 +208,7 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
         
         # 確保張量在正確設備上
         try:
-            if device == 'cuda':
+        if device == 'cuda':
                 model = model.cuda()
                 edge_index = edge_index.cuda() if hasattr(edge_index, 'cuda') else torch.tensor(edge_index, device='cuda', dtype=torch.long)
                 node_features_tensor = torch.tensor(node_features, dtype=torch.float, device='cuda')
@@ -267,7 +267,7 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
         
         # 🎯 8. 計算PageRank排名
         print("📈 計算PageRank排名...")
-        pagerank = PageRank()
+            pagerank = PageRank()
         ranks = pagerank.fit_transform(final_adj_np)
         
         # 處理結果

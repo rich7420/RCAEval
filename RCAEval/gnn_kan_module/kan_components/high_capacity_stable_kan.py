@@ -54,8 +54,13 @@ class SpectralNorm(nn.Module):
             u, v = self._update_u_v()
             w = getattr(self.module, self.name)
             sigma = torch.dot(u, torch.mv(w.view(w.shape[0], -1), v))
-            # 將權重除以最大奇異值
-            setattr(self.module, self.name, w / sigma.clamp(min=1.0))
+            # 將權重除以最大奇異值，保持Parameter類型
+            normalized_weight = w / sigma.clamp(min=1.0)
+            # 正確設置Parameter - 使用torch.nn.Parameter包裝
+            if isinstance(w, torch.nn.Parameter):
+                setattr(self.module, self.name, torch.nn.Parameter(normalized_weight.data, requires_grad=w.requires_grad))
+            else:
+                setattr(self.module, self.name, normalized_weight)
         
         return self.module(*args, **kwargs)
 
@@ -136,8 +141,8 @@ class HighCapacityStableKANLayer(nn.Module):
         if self.use_residual:
             # 檢查是否使用了SpectralNorm包裝
             if hasattr(self.residual_linear, 'weight'):
-                nn.init.orthogonal_(self.residual_linear.weight, gain=1.0)
-                nn.init.zeros_(self.residual_linear.bias)
+            nn.init.orthogonal_(self.residual_linear.weight, gain=1.0)
+            nn.init.zeros_(self.residual_linear.bias)
             elif hasattr(self.residual_linear, 'module'):
                 # SpectralNorm包裝的情況
                 nn.init.orthogonal_(self.residual_linear.module.weight, gain=1.0)

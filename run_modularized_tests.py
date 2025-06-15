@@ -430,9 +430,23 @@ print('\\n⚡ 測試簡化特徵處理:')
 simple_features, simple_names = simplified_metric_processing(metrics_data, target_dim=64)
 print(f'✓ 簡化處理輸出: {simple_features.shape}')
 
-# 比較特徵差異
-ica_kpca_diff = np.linalg.norm(ica_features - kpca_features)
-print(f'✓ ICA vs kPCA 差異: {ica_kpca_diff:.6f}')
+# 比較特徵差異 - 統一特徵維度
+print(f'🔍 特徵維度比較：ICA {ica_features.shape}, kPCA {kpca_features.shape}')
+
+# 統一維度以進行比較
+min_dim = min(ica_features.shape[1], kpca_features.shape[1])
+ica_truncated = ica_features[:, :min_dim] 
+kpca_truncated = kpca_features[:, :min_dim]
+
+ica_kpca_diff = np.linalg.norm(ica_truncated - kpca_truncated)
+print(f'✓ ICA vs kPCA 差異 (前{min_dim}維): {ica_kpca_diff:.6f}')
+
+# 驗證特徵質量
+ica_std = np.std(ica_features)
+kpca_std = np.std(kpca_features)
+simple_std = np.std(simple_features)
+
+print(f'✓ 特徵變異性：ICA={ica_std:.4f}, kPCA={kpca_std:.4f}, Simple={simple_std:.4f}')
 
 print('🏆 特徵處理測試完成：ICA/kPCA成功取代STL分解!')
 "''',

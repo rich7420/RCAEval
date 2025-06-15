@@ -174,7 +174,7 @@ class SimplifiedKANLayer(nn.Module):
         
         # 穩定性組件
         self.ln = nn.LayerNorm(output_dim)
-        
+    
         self.reset_parameters()
     
     def reset_parameters(self):
@@ -296,7 +296,7 @@ class OptimizedGNNKANEncoder(nn.Module):
                 SimplifiedKANLayer(dims[-1] * 2, dims[-1]),
                 SimplifiedKANLayer(dims[-1], 1)
             )
-    
+        
     def kan_message_passing(self, x, edge_index, layer_idx):
         """使用KAN進行消息傳遞 - 不使用MLP"""
         if edge_index.size(1) == 0:
@@ -337,7 +337,7 @@ class OptimizedGNNKANEncoder(nn.Module):
             # 🎯 使用KAN處理消息 (而不是MLP)
             if layer_idx < len(self.message_processors):
                 message = self.message_processors[layer_idx](message)
-            
+                
         except RuntimeError:
             return x
         
