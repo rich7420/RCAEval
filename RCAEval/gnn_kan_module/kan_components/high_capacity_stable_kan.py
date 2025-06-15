@@ -141,8 +141,8 @@ class HighCapacityStableKANLayer(nn.Module):
         if self.use_residual:
             # 檢查是否使用了SpectralNorm包裝
             if hasattr(self.residual_linear, 'weight'):
-            nn.init.orthogonal_(self.residual_linear.weight, gain=1.0)
-            nn.init.zeros_(self.residual_linear.bias)
+                nn.init.orthogonal_(self.residual_linear.weight, gain=1.0)
+                nn.init.zeros_(self.residual_linear.bias)
             elif hasattr(self.residual_linear, 'module'):
                 # SpectralNorm包裝的情況
                 nn.init.orthogonal_(self.residual_linear.module.weight, gain=1.0)

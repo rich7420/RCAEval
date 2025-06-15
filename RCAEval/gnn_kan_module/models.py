@@ -50,15 +50,15 @@ class GNNKANModel(nn.Module):
                 dropout=config.dropout
             )
         else:
-        self.gnn_encoder = OptimizedGNNKANEncoder(
-            input_dim=config.input_dim,
-            hidden_dims=config.hidden_dims,
-            output_dim=config.output_dim,
-            num_layers=config.num_gnn_layers,
-            kan_grid_size=config.kan_grid_size,
-            kan_spline_order=config.kan_spline_order,
-            dropout=config.dropout
-        )
+            self.gnn_encoder = OptimizedGNNKANEncoder(
+                input_dim=config.input_dim,
+                hidden_dims=config.hidden_dims,
+                output_dim=config.output_dim,
+                num_layers=config.num_gnn_layers,
+                kan_grid_size=config.kan_grid_size,
+                kan_spline_order=config.kan_spline_order,
+                dropout=config.dropout
+            )
         
         # 時序注意力機制
         self.temporal_attention = TemporalAttention(config.output_dim)
