@@ -75,19 +75,6 @@ class PageRank:
             degrees = np.sum(adj, axis=1)
             return degrees / (np.sum(degrees) + 1e-8)
 
-# 備用數據預處理函數
-def preprocess(data, dataset=None, **kwargs):
-    """簡化的數據預處理 - 保持模組獨立性"""
-    if isinstance(data, pd.DataFrame):
-        return data.fillna(method='ffill').fillna(0)
-    return data
-
-def drop_constant(data):
-    """簡化的常數列移除"""
-    if isinstance(data, pd.DataFrame):
-        return data.loc[:, data.std() > 1e-8]
-    return data
-
 
 def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False, 
                 config_type='simplified', feature_method='ica', **kwargs):
@@ -275,129 +262,84 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
             ranks = np.ones(len(node_names)) / len(node_names)
         
         # 🎯 9. 準備最終結果
-        result = {
-            'adj': final_adj_np,
-            'node_names': node_names,
-            'ranks': ranks,
-            'config': {
-                'feature_method': feature_method,
-                'config_type': config_type,
-                'kan_grid_size': config.kan_grid_size,
-                'kan_num_basis': config.kan_num_basis,
-                'learnable_activation': config.learnable_activation,
-                'minimize_linear_component': config.minimize_linear_component
-            }
+        sorted_indices = np.argsort(ranks)[::-1]
+        ranked_nodes = [node_names[i] for i in sorted_indices]
+        
+        execution_time = time.time() - start_time
+        print(f"⏱️ KAN模型執行時間: {execution_time:.2f}秒")
+        print(f"🏆 Top 5 根因候選: {ranked_nodes[:5]}")
+        
+        return {
+            "adj": final_adj_np,
+            "node_names": node_names,
+            "ranks": ranked_nodes,
+            "scores": ranks[sorted_indices],
+            "execution_time": execution_time,
+            "model_type": "GNN-KAN",
+            "config_type": config_type,
+            "feature_method": feature_method
         }
-        
-        elapsed_time = time.time() - start_time
-        print(f"✅ 純粹KAN模組化RCA完成！用時: {elapsed_time:.2f}秒")
-        print(f"🎯 成功證明：KAN取代MLP的有效性（節點數：{len(node_names)}）")
-        
-        return result
         
     except Exception as e:
         print(f"❌ GNN-KAN RCA 執行失敗: {e}")
-        print("回退到基本結果...")
+        import traceback
+        traceback.print_exc()
         
-        # 基本回退結果
-        dummy_nodes = [f"node_{i}" for i in range(5)]
-        dummy_adj = np.eye(5) + np.random.rand(5, 5) * 0.1
-        dummy_ranks = np.random.rand(5)
-        dummy_ranks = dummy_ranks / np.sum(dummy_ranks)
-        
+        # 返回空結果
         return {
-            'adj': dummy_adj,
-            'node_names': dummy_nodes,
-            'ranks': dummy_ranks
+            "adj": np.array([]),
+            "node_names": [],
+            "ranks": [],
+            "scores": [],
+            "execution_time": time.time() - start_time,
+            "error": str(e)
         }
 
 
 class GNNKANEndToEnd:
     """
-    GNN-KAN 端到端根因分析類
-    
-    這個類封裝了完整的 GNN-KAN RCA 流程，提供統一的接口
+    GNN-KAN 端到端類 - 提供物件導向接口
+    專注於KAN取代MLP的核心價值
     """
     
     def __init__(self, config=None):
-        """
-        初始化 GNN-KAN End-to-End 系統
+        if config is None:
+            config = SimplifiedGNNKANConfig()
+        self.config = config
+        print("✅ 模組化 GNN-KAN RCA 入口文件載入成功")
         
-        Args:
-            config: 配置對象，如果為None則使用默認配置
-        """
-        self.config = config if config is not None else SimplifiedGNNKANConfig()
-        print("✅ GNN-KAN End-to-End 系統初始化完成")
-    
     def run_rca(self, data, inject_time=None, dataset=None, with_bg=False, **kwargs):
         """
-        執行根因分析
+        運行 RCA 分析
         
         Args:
             data: 輸入數據
-            inject_time: 故障注入時間
+            inject_time: 注入時間點
             dataset: 數據集名稱
             with_bg: 是否包含背景數據
             **kwargs: 其他參數
-        
+            
         Returns:
-            dict: RCA 結果，包含 adj, node_names, ranks
+            dict: RCA 結果
         """
-        return gnn_kan_rca(
-            data=data,
-            inject_time=inject_time,
-            dataset=dataset,
-            with_bg=with_bg,
-            **kwargs
-        )
+        # 合併配置參數
+        config_dict = {
+            'config_type': getattr(self.config, 'config_type', 'simplified'),
+            'feature_method': getattr(self.config, 'feature_method', 'ica')
+        }
+        config_dict.update(kwargs)
+        
+        return gnn_kan_rca(data, inject_time, dataset, with_bg, **config_dict)
     
     def configure(self, **kwargs):
-        """
-        更新配置參數
-        
-        Args:
-            **kwargs: 要更新的配置參數
-        """
+        """配置參數"""
         for key, value in kwargs.items():
             if hasattr(self.config, key):
                 setattr(self.config, key, value)
-                print(f"✅ 更新配置: {key} = {value}")
-            else:
-                print(f"⚠️ 未知配置參數: {key}")
 
 
-# 確保可以被正確導入
-__all__ = ['gnn_kan_rca', 'GNNKANEndToEnd', 'PageRank']
-
+# 確保模組正確加載
 print("✅ 模組化 GNN-KAN RCA 入口文件載入成功")
 
-if __name__ == "__main__":
-    print("🚀 測試 GNN-KAN 模組化實現")
-    
-    # 創建測試數據
-    test_data = {
-        'metrics': pd.DataFrame({
-            'cpu_usage': np.random.rand(100),
-            'memory_usage': np.random.rand(100),
-            'network_io': np.random.rand(100)
-        }),
-        'traces': pd.DataFrame({
-            'serviceName': ['service_a', 'service_b'] * 50,
-            'operationName': ['op1', 'op2'] * 50,
-            'duration': np.random.lognormal(2, 1, 100),
-            'startTime': pd.date_range('2024-01-01', periods=100, freq='1min')
-        })
-    }
-    
-    # 創建 E2E 實例並運行測試
-    try:
-        e2e = GNNKANEndToEnd()
-        result = e2e.run_rca(test_data, inject_time=test_data['traces']['startTime'].iloc[50])
-        
-        print(f"✅ 測試完成！發現 {len(result['ranks'])} 個潛在根因")
-        print(f"🎯 前3個根因: {result['ranks'][:3]}")
-        
-    except Exception as e:
-        print(f"❌ 測試失敗: {e}")
-        import traceback
-        traceback.print_exc()
+# 模組導出
+__all__ = ['gnn_kan_rca', 'GNNKANEndToEnd', 'PageRank']
