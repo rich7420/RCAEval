@@ -340,15 +340,24 @@ class GNNKANLoss(nn.Module):
         
     def forward(self, pred_adj, true_adj, node_embeddings=None):
         """
-        計算組合損失
+        計算組合損失 - 修復CUDA斷言錯誤
         
         Args:
             pred_adj: 預測的鄰接矩陣
             true_adj: 真實的鄰接矩陣  
             node_embeddings: 節點嵌入（可選）
         """
-        # 重構損失
-        recon_loss = self.bce_loss(pred_adj, true_adj)
+        # 🔧 修復CUDA斷言錯誤：確保pred_adj在[0,1]範圍內
+        pred_adj_safe = torch.clamp(pred_adj, min=1e-7, max=1.0-1e-7)
+        true_adj_safe = torch.clamp(true_adj, min=0.0, max=1.0)
+        
+        # 數值穩定性檢查
+        if torch.isnan(pred_adj_safe).any() or torch.isinf(pred_adj_safe).any():
+            print("⚠️ 預測鄰接矩陣包含無效值，使用MSE損失")
+            recon_loss = self.mse_loss(pred_adj, true_adj_safe)
+        else:
+            # 重構損失 - 使用安全的值
+            recon_loss = self.bce_loss(pred_adj_safe, true_adj_safe)
         
         total_loss = recon_loss
         
@@ -433,11 +442,16 @@ def train_gnn_kan_model(model, node_features, edge_index, config):
         optimizer.zero_grad()
         
         try:
+            # 🔧 修復內存位置衝突 - 確保張量獨立性
+            node_features_safe = node_features.clone().detach()
+            edge_index_safe = edge_index.clone().detach()
+            target_adj_safe = target_adj.clone().detach()
+            
             # 前向傳播
-            node_embeddings, pred_adj = model(node_features, edge_index)
+            node_embeddings, pred_adj = model(node_features_safe, edge_index_safe)
             
             # 計算損失
-            loss = criterion(pred_adj, target_adj, node_embeddings)
+            loss = criterion(pred_adj, target_adj_safe, node_embeddings)
             
             # 檢查損失是否有效
             if torch.isnan(loss) or torch.isinf(loss):

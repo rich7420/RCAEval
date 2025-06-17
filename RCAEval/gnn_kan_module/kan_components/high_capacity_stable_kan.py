@@ -83,9 +83,11 @@ class HighCapacityStableKANLayer(nn.Module):
         self.spline_order = spline_order
         self.use_residual = use_residual
         
-        # 🔑 保持原始復雜度的 B-spline 係數
+        # 🔑 保持原始復雜度的 B-spline 係數 - 修復維度匹配
+        # 確保係數維度與基函數維度一致
+        self.num_basis_functions = grid_size + spline_order
         self.spline_coeffs = nn.Parameter(
-            torch.zeros(output_dim, input_dim, grid_size + spline_order)
+            torch.zeros(output_dim, input_dim, self.num_basis_functions)
         )
         
         # SiLU 激活權重
@@ -277,23 +279,40 @@ class HighCapacityStableKANLayer(nn.Module):
             batch_size = x.size(0)
             
             # 🔧 安全的B-spline計算 - 檢查維度兼容性
+            expected_basis_dim = self.num_basis_functions
             if (basis.shape[0] == batch_size and 
                 basis.shape[1] == self.input_dim and
-                basis.shape[2] == (self.grid_size + self.spline_order)):
+                basis.shape[2] == expected_basis_dim):
                 # 正常的einsum操作
                 spline_output = torch.einsum('oij,bij->bo', self.spline_coeffs, basis)
             else:
-                print(f"High-capacity B-spline dimension mismatch: basis={basis.shape}, coeffs={self.spline_coeffs.shape}")
-                # 使用安全的矩陣乘法回退
-                basis_flat = basis.view(batch_size, -1)
-                coeffs_flat = self.spline_coeffs.view(self.output_dim, -1)
+                # 維度不匹配時的安全處理
+                print(f"High-capacity B-spline dimension mismatch: basis={basis.shape}, coeffs={self.spline_coeffs.shape}, expected_basis_dim={expected_basis_dim}")
                 
-                # 調整維度匹配
-                min_dim = min(basis_flat.shape[1], coeffs_flat.shape[1])
-                if min_dim > 0:
-                    spline_output = torch.mm(basis_flat[:, :min_dim], coeffs_flat[:, :min_dim].t())
+                # 調整基函數維度以匹配係數
+                if basis.shape[2] != expected_basis_dim:
+                    if basis.shape[2] < expected_basis_dim:
+                        # 基函數維度不足，進行零填充
+                        padding_size = expected_basis_dim - basis.shape[2]
+                        padding = torch.zeros(batch_size, self.input_dim, padding_size, device=basis.device)
+                        basis = torch.cat([basis, padding], dim=2)
+                    else:
+                        # 基函數維度過多，進行截斷
+                        basis = basis[:, :, :expected_basis_dim]
+                
+                # 再次嘗試einsum操作
+                if basis.shape == (batch_size, self.input_dim, expected_basis_dim):
+                    spline_output = torch.einsum('oij,bij->bo', self.spline_coeffs, basis)
                 else:
-                    spline_output = torch.zeros(batch_size, self.output_dim, device=x.device)
+                    # 最終回退：使用安全的矩陣乘法
+                    basis_flat = basis.view(batch_size, -1)
+                    coeffs_flat = self.spline_coeffs.view(self.output_dim, -1)
+                    
+                    min_dim = min(basis_flat.shape[1], coeffs_flat.shape[1])
+                    if min_dim > 0:
+                        spline_output = torch.mm(basis_flat[:, :min_dim], coeffs_flat[:, :min_dim].t())
+                    else:
+                        spline_output = torch.zeros(batch_size, self.output_dim, device=x.device)
                     
         except RuntimeError as e:
             print(f"B-spline computation failed: {e}, using fallback")

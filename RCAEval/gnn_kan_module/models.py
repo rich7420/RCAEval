@@ -196,50 +196,7 @@ def create_fallback_model(config, num_nodes):
     return FallbackModel(config, num_nodes)
 
 
-def validate_model_setup(model, node_features, edge_index):
-    """驗證模型設置"""
-    try:
-        # 檢查設備一致性
-        model_device = next(model.parameters()).device
-        if node_features.device != model_device:
-            print(f"⚠️ Device mismatch: model on {model_device}, features on {node_features.device}")
-            return False
-            
-        if edge_index.device != model_device:
-            print(f"⚠️ Device mismatch: model on {model_device}, edge_index on {edge_index.device}")
-            return False
-        
-        # 測試前向傳播
-        model.eval()
-        with torch.no_grad():
-            embeddings, adj = model(node_features, edge_index)
-            
-            # 檢查輸出形狀
-            if embeddings.size(0) != node_features.size(0):
-                print(f"⚠️ Embedding shape mismatch: {embeddings.shape} vs {node_features.shape}")
-                return False
-                
-            if adj.size() != (node_features.size(0), node_features.size(0)):
-                print(f"⚠️ Adjacency shape mismatch: {adj.shape}")
-                return False
-            
-            # 檢查數值穩定性
-            if torch.isnan(embeddings).any() or torch.isinf(embeddings).any():
-                print("⚠️ NaN/Inf in embeddings")
-                return False
-                
-            if torch.isnan(adj).any() or torch.isinf(adj).any():
-                print("⚠️ NaN/Inf in adjacency matrix")
-                return False
-        
-        print("✓ Model validation passed")
-        return True
-        
-    except Exception as e:
-        print(f"⚠️ Model validation failed: {e}")
-        return False
-
-
+# 🔧 validate_model_setup 函數已移至 utils.py 模組中，避免重複定義
 # train_gnn_kan_model 函數已移至 training.py 模組中，避免重複定義
 
 

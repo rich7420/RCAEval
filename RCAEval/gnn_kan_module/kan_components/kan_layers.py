@@ -176,14 +176,28 @@ class AdvancedKANLayer(nn.Module):
             # 3. 核心：可學習激活函數 (KAN vs MLP的關鍵差異)
             try:
                 activation_features = self.learnable_activation(x)
+                
+                # 🔧 修復激活函數矩陣維度問題
                 if (activation_features.shape[0] == batch_size and 
-                    activation_features.shape[1] == input_dim):
+                    activation_features.shape[1] == input_dim and
+                    self.activation_weights.shape[0] == self.output_dim and
+                    self.activation_weights.shape[1] == input_dim):
+                    # 正常的einsum操作
                     activation_output = torch.einsum('oi,bi->bo', 
                                                    self.activation_weights, 
                                                    activation_features)
                 else:
-                    # 安全的激活函數計算
-                    activation_output = torch.mm(activation_features, self.activation_weights.t())
+                    # 安全的激活函數計算 - 處理維度不匹配
+                    if activation_features.shape[1] == self.activation_weights.shape[1]:
+                        # 維度匹配，使用矩陣乘法
+                        activation_output = torch.mm(activation_features, self.activation_weights.t())
+                    else:
+                        # 維度不匹配，使用安全的廣播
+                        min_dim = min(activation_features.shape[1], self.activation_weights.shape[1])
+                        activation_features_safe = activation_features[:, :min_dim]
+                        weights_safe = self.activation_weights[:, :min_dim]
+                        activation_output = torch.mm(activation_features_safe, weights_safe.t())
+                        
             except RuntimeError as e:
                 print(f"Activation computation failed: {e}, using fallback")
                 activation_output = torch.zeros(batch_size, self.output_dim, device=x.device)
