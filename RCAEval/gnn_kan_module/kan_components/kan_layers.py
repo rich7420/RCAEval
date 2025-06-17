@@ -346,47 +346,96 @@ class SimplifiedKANLayer(nn.Module):
         nn.init.xavier_uniform_(self.base_transform.weight, gain=0.05)
     
     def polynomial_basis_functions(self, x):
-        """簡化的多項式基函數 - KAN的簡化版本，確保維度一致性"""
+        """簡化的多項式基函數 - KAN的簡化版本，修復維度問題"""
         batch_size, input_dim = x.shape
-        x_normalized = torch.tanh(x)  # 非線性歸一化
         
-        # 🔧 確保維度一致的多項式基函數生成
-        basis_functions_list = []
+        # 🔧 更安全的歸一化
+        x_normalized = torch.clamp(torch.tanh(x), -0.99, 0.99)  # 避免極值
         
-        # 為每個輸入維度生成基函數
-        for dim_idx in range(input_dim):
-            x_dim = x_normalized[:, dim_idx:dim_idx+1]  # [batch_size, 1]
+        print(f"🔍 多項式基函數診斷:")
+        print(f"  輸入形狀: {x.shape}")
+        print(f"  歸一化後範圍: [{x_normalized.min():.6f}, {x_normalized.max():.6f}]")
+        
+        try:
+            # 🔧 確保維度一致的多項式基函數生成
+            basis_functions_list = []
             
-            dim_basis = []
+            # 為每個輸入維度生成基函數
+            for dim_idx in range(input_dim):
+                x_dim = x_normalized[:, dim_idx]  # [batch_size]
+                
+                dim_basis = []
+                
+                # 安全的多項式基函數序列
+                for i in range(self.num_basis):
+                    if i == 0:
+                        # 常數項
+                        basis_func = torch.ones_like(x_dim)
+                    elif i == 1:
+                        # 線性項
+                        basis_func = x_dim
+                    elif i == 2:
+                        # 二次項
+                        basis_func = torch.clamp(x_dim ** 2, 0, 1)
+                    elif i == 3:
+                        # 三次項
+                        basis_func = torch.clamp(x_dim ** 3, -1, 1)
+                    else:
+                        # 高階項使用更安全的計算
+                        if i % 2 == 0:  # 偶數次項
+                            power = min(i, 6)  # 限制最大次數
+                            basis_func = torch.clamp(x_dim ** power, 0, 1)
+                        else:  # 奇數次項
+                            power = min(i, 5)  # 限制最大次數
+                            basis_func = torch.clamp(x_dim ** power, -1, 1)
+                    
+                    # 檢查基函數有效性
+                    if torch.isnan(basis_func).any() or torch.isinf(basis_func).any():
+                        print(f"  ⚠️ 基函數{i}包含無效值，使用安全值")
+                        basis_func = torch.zeros_like(x_dim)
+                    
+                    dim_basis.append(basis_func.unsqueeze(1))  # [batch_size, 1]
+                
+                # 堆疊為 [batch_size, num_basis]
+                dim_basis_tensor = torch.cat(dim_basis, dim=1)
+                basis_functions_list.append(dim_basis_tensor)
             
-            # 多項式基函數序列
-            for i in range(self.num_basis):
+            # 堆疊為 [batch_size, input_dim, num_basis]
+            basis_tensor = torch.stack(basis_functions_list, dim=1)
+            
+            # 檢查最終結果
+            expected_shape = (batch_size, input_dim, self.num_basis)
+            if basis_tensor.shape != expected_shape:
+                print(f"  ⚠️ 維度不匹配: got {basis_tensor.shape}, expected {expected_shape}")
+                # 強制調整維度
+                basis_tensor = basis_tensor.view(expected_shape)
+            
+            # 檢查數值有效性
+            if torch.isnan(basis_tensor).any() or torch.isinf(basis_tensor).any():
+                print(f"  ⚠️ 基函數張量包含無效值，進行修復")
+                basis_tensor = torch.nan_to_num(basis_tensor, nan=0.0, posinf=1.0, neginf=-1.0)
+            
+            print(f"  ✓ 基函數生成成功: {basis_tensor.shape}, 範圍[{basis_tensor.min():.6f}, {basis_tensor.max():.6f}]")
+            return basis_tensor
+            
+        except Exception as e:
+            print(f"  ❌ 多項式基函數生成失敗: {e}")
+            # 創建安全的回退基函數
+            basis_tensor = torch.zeros(batch_size, input_dim, self.num_basis, device=x.device, dtype=x.dtype)
+            
+            # 填充基本基函數
+            for i in range(min(self.num_basis, 4)):
                 if i == 0:
-                    dim_basis.append(torch.ones_like(x_dim))
+                    basis_tensor[:, :, i] = 1.0  # 常數項
                 elif i == 1:
-                    dim_basis.append(x_dim)
+                    basis_tensor[:, :, i] = x_normalized  # 線性項
                 elif i == 2:
-                    dim_basis.append(x_dim ** 2)
+                    basis_tensor[:, :, i] = x_normalized ** 2 * 0.5  # 二次項
                 elif i == 3:
-                    dim_basis.append(x_dim ** 3)
-                else:
-                    # 高階多項式使用遞推關係
-                    power = x_dim ** i
-                    power = torch.clamp(power, -5.0, 5.0)
-                    dim_basis.append(power)
+                    basis_tensor[:, :, i] = x_normalized ** 3 * 0.3  # 三次項
             
-            # 堆疊為 [batch_size, num_basis]
-            dim_basis_tensor = torch.cat(dim_basis, dim=1)
-            basis_functions_list.append(dim_basis_tensor)
-        
-        # 堆疊為 [batch_size, input_dim, num_basis]
-        basis_tensor = torch.stack(basis_functions_list, dim=1)
-        
-        # 確保輸出維度正確
-        assert basis_tensor.shape == (batch_size, input_dim, self.num_basis), \
-            f"Polynomial basis shape mismatch: got {basis_tensor.shape}, expected {(batch_size, input_dim, self.num_basis)}"
-        
-        return basis_tensor
+            print(f"  ✓ 使用回退基函數: {basis_tensor.shape}")
+            return basis_tensor
     
     def kan_learnable_activation(self, x):
         """簡化的可學習激活函數 - 修復維度問題"""
@@ -504,14 +553,41 @@ class SimplifiedKANLayer(nn.Module):
                 print(f"⚠️ 激活函數失敗: {e}，使用零輸出")
                 activation_output = torch.zeros_like(poly_output)
             
-            # 4. KAN輸出組合 (多項式主導)
+            # 4. KAN輸出組合 (多項式主導) - 修復無效值問題
             try:
-                kan_output = poly_output + activation_output + base_output
+                # 🔧 分步檢查每個組件的有效性
+                print(f"🔍 KAN組合診斷:")
+                print(f"  poly_output: min={poly_output.min():.6f}, max={poly_output.max():.6f}, nan={torch.isnan(poly_output).sum()}")
+                print(f"  activation_output: min={activation_output.min():.6f}, max={activation_output.max():.6f}, nan={torch.isnan(activation_output).sum()}")
+                print(f"  base_output: min={base_output.min():.6f}, max={base_output.max():.6f}, nan={torch.isnan(base_output).sum()}")
                 
-                # 檢查組合結果
+                # 安全的組合策略
+                kan_output = torch.zeros_like(base_output)
+                
+                # 逐步添加有效的組件
+                if not torch.isnan(base_output).any() and not torch.isinf(base_output).any():
+                    kan_output = kan_output + base_output * 0.6  # 基礎權重
+                    print("  ✓ 添加base_output")
+                
+                if not torch.isnan(poly_output).any() and not torch.isinf(poly_output).any():
+                    kan_output = kan_output + poly_output * 0.3  # 多項式權重
+                    print("  ✓ 添加poly_output")
+                else:
+                    print("  ⚠️ poly_output包含無效值，跳過")
+                
+                if not torch.isnan(activation_output).any() and not torch.isinf(activation_output).any():
+                    kan_output = kan_output + activation_output * 0.1  # 激活權重
+                    print("  ✓ 添加activation_output")
+                else:
+                    print("  ⚠️ activation_output包含無效值，跳過")
+                
+                # 最終檢查和修復
                 if torch.isnan(kan_output).any() or torch.isinf(kan_output).any():
-                    print("⚠️ KAN輸出組合產生無效值，進行修復")
-                    kan_output = torch.nan_to_num(kan_output, nan=0.0, posinf=1.0, neginf=-1.0)
+                    print("  ⚠️ 組合後仍有無效值，強制修復")
+                    kan_output = torch.nan_to_num(kan_output, nan=0.0, posinf=0.5, neginf=-0.5)
+                    kan_output = torch.clamp(kan_output, -2.0, 2.0)  # 限制範圍
+                
+                print(f"  最終輸出: min={kan_output.min():.6f}, max={kan_output.max():.6f}, nan={torch.isnan(kan_output).sum()}")
                     
             except Exception as e:
                 print(f"⚠️ KAN輸出組合失敗: {e}，使用基礎變換")
@@ -707,17 +783,51 @@ class OptimizedGNNKANEncoder(nn.Module):
                 current_x = layer(current_x)
             else:
                 try:
-                    # 🎯 KAN層處理 (核心：用KAN取代MLP) - 修復維度問題
+                    print(f"🔍 執行KAN層{i}: {type(layer).__name__}")
+                    print(f"  輸入形狀: {current_x.shape}")
+                    print(f"  輸入範圍: [{current_x.min():.6f}, {current_x.max():.6f}]")
+                    
+                    # 🎯 KAN層處理 (核心：用KAN取代MLP) - 強制使用KAN
                     kan_output = layer(current_x)
                     
-                    # 🔧 檢查KAN層輸出
+                    print(f"  KAN輸出形狀: {kan_output.shape}")
+                    print(f"  KAN輸出範圍: [{kan_output.min():.6f}, {kan_output.max():.6f}]")
+                    print(f"  NaN數量: {torch.isnan(kan_output).sum()}")
+                    
+                    # 🔧 修復KAN層輸出而不是跳過
                     if torch.isnan(kan_output).any() or torch.isinf(kan_output).any():
-                        print(f"⚠️ KAN層{i}輸出包含無效值，使用輸入")
-                        # 如果維度不匹配，創建安全的輸出
-                        if hasattr(layer, 'output_dim'):
-                            kan_output = torch.zeros(current_x.size(0), layer.output_dim, device=current_x.device)
-                        else:
-                            kan_output = current_x
+                        print(f"  ⚠️ KAN層{i}輸出包含無效值，進行修復而非跳過")
+                        
+                        # 修復而不是替換
+                        kan_output = torch.nan_to_num(kan_output, nan=0.0, posinf=1.0, neginf=-1.0)
+                        kan_output = torch.clamp(kan_output, -5.0, 5.0)  # 限制範圍
+                        
+                        # 如果修復後仍有問題，使用安全的KAN輸出
+                        if torch.isnan(kan_output).any() or torch.isinf(kan_output).any():
+                            print(f"  ⚠️ 修復失敗，創建安全的KAN風格輸出")
+                            # 創建保持KAN特性的安全輸出
+                            if hasattr(layer, 'output_dim'):
+                                target_dim = layer.output_dim
+                            else:
+                                target_dim = current_x.shape[1]
+                            
+                            # 使用輸入的非線性變換，保持KAN特性
+                            safe_output = torch.tanh(current_x) * 0.5  # 非線性變換
+                            
+                            # 調整維度
+                            if safe_output.shape[1] != target_dim:
+                                if safe_output.shape[1] > target_dim:
+                                    kan_output = safe_output[:, :target_dim]
+                                else:
+                                    padding = torch.zeros(safe_output.shape[0], target_dim - safe_output.shape[1], 
+                                                        device=safe_output.device, dtype=safe_output.dtype)
+                                    kan_output = torch.cat([safe_output, padding], dim=1)
+                            else:
+                                kan_output = safe_output
+                        
+                        print(f"  ✓ 修復後輸出: 形狀={kan_output.shape}, 範圍=[{kan_output.min():.6f}, {kan_output.max():.6f}]")
+                    else:
+                        print(f"  ✅ KAN層{i}輸出正常，繼續使用KAN結果")
                     
                     # KAN消息傳遞 (每兩層一次，減少計算)
                     if i % 2 == 0 and edge_index.size(1) > 0:

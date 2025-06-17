@@ -188,20 +188,46 @@ class SimplifiedGraphConstructor:
         else:
             edge_weights = adj_matrix[edge_indices[:, 0], edge_indices[:, 1]]
         
-        # 🔧 確保邊索引在有效範圍內
+        # 🔧 確保邊索引在有效範圍內 - 強化檢查
         num_nodes = adj_matrix.shape[0]
-        valid_mask = (edge_indices[:, 0] < num_nodes) & (edge_indices[:, 1] < num_nodes)
-        edge_indices = edge_indices[valid_mask]
-        edge_weights = edge_weights[valid_mask]
+        
+        # 檢查索引範圍
+        valid_row_mask = (edge_indices[:, 0] >= 0) & (edge_indices[:, 0] < num_nodes)
+        valid_col_mask = (edge_indices[:, 1] >= 0) & (edge_indices[:, 1] < num_nodes)
+        valid_mask = valid_row_mask & valid_col_mask
+        
+        if valid_mask.sum() > 0:
+            edge_indices = edge_indices[valid_mask]
+            edge_weights = edge_weights[valid_mask]
+        else:
+            edge_indices = np.array([])
+            edge_weights = np.array([])
         
         if len(edge_indices) == 0:
-            print(f"⚠️ 所有邊都無效，創建最小圖結構")
+            print(f"⚠️ 所有邊都無效，為{num_nodes}個節點創建安全圖結構")
             if num_nodes > 1:
-                edge_indices = np.array([[0, 1], [1, 0]])
-                edge_weights = np.array([0.1, 0.1])
+                # 創建星形連接（更安全）
+                edges = []
+                weights = []
+                center_node = 0
+                for i in range(1, num_nodes):
+                    edges.extend([[center_node, i], [i, center_node]])
+                    weights.extend([0.1, 0.1])
+                edge_indices = np.array(edges)
+                edge_weights = np.array(weights)
             else:
+                # 單節點自環
                 edge_indices = np.array([[0, 0]])
                 edge_weights = np.array([1.0])
+        
+        # 🔧 最終安全檢查
+        max_index = edge_indices.max() if len(edge_indices) > 0 else 0
+        if max_index >= num_nodes:
+            print(f"⚠️ 修復後仍有超出範圍的索引: max={max_index}, nodes={num_nodes}")
+            # 截斷超出範圍的索引
+            edge_indices = np.clip(edge_indices, 0, num_nodes - 1)
+        
+        print(f"✓ 圖構建完成: {num_nodes}節點, {len(edge_indices)}條邊, 索引範圍[0,{num_nodes-1}]")
         
         return torch.tensor(edge_indices, dtype=torch.long).t().contiguous(), torch.tensor(edge_weights, dtype=torch.float)
 
