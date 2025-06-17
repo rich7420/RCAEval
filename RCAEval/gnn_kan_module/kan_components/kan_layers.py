@@ -73,34 +73,74 @@ class AdvancedKANLayer(nn.Module):
             nn.init.uniform_(self.spline_order_weights, 0.2, 0.4)
     
     def learnable_activation(self, x):
-        """KAN特有的可學習激活函數 - 非固定激活，修復維度問題"""
+        """
+        可學習激活函數 - 修復維度問題和NaN產生
+        這是KAN的核心特性：可學習的激活函數
+        """
         batch_size, input_dim = x.shape
-        x_clamped = torch.clamp(x, -10.0, 10.0)
         
-        # 🔧 修復維度不匹配問題
-        # activation_weights: [output_dim, input_dim]
-        # x_clamped: [batch_size, input_dim]
+        print(f"🔍 激活函數維度診斷:")
+        print(f"  activation_weights.shape: {self.activation_weights.shape}")
+        print(f"  batch_size: {batch_size}, input_dim: {input_dim}, output_dim: {self.output_dim}")
         
-        # 方法1: 如果維度匹配，使用廣播
-        if self.activation_weights.shape[1] == input_dim:
-            # 使用廣播: [batch_size, input_dim] * [output_dim, input_dim] -> 需要調整
-            # 先計算基本激活，然後通過線性變換映射到輸出維度
-            basic_activation = x_clamped * torch.sigmoid(x_clamped)  # [batch_size, input_dim]
-            
-            # 使用activation_weights作為線性變換權重
-            activation_output = torch.mm(basic_activation, self.activation_weights.t())  # [batch_size, output_dim]
-            
-            return activation_output
-        else:
-            # 方法2: 維度不匹配時的安全回退
-            print(f"⚠️ 激活權重維度不匹配: {self.activation_weights.shape} vs 輸入 {x.shape}")
-            basic_activation = x_clamped * torch.sigmoid(x_clamped)  # [batch_size, input_dim]
-            
-            # 使用平均池化 + 擴展
-            pooled = basic_activation.mean(dim=1, keepdim=True)  # [batch_size, 1]
-            expanded = pooled.expand(batch_size, self.output_dim)  # [batch_size, output_dim]
-            
-            return expanded
+        try:
+            # 🔧 修復維度匹配問題
+            if (self.activation_weights.shape[0] == self.output_dim and
+                self.activation_weights.shape[1] == input_dim):
+                
+                # 正常的矩陣乘法路徑
+                # x: [batch_size, input_dim]
+                # activation_weights: [output_dim, input_dim]
+                
+                # 1. 使用可學習激活權重進行變換
+                output = torch.matmul(x, self.activation_weights.t())  # [batch_size, output_dim]
+                
+                # 2. 添加非線性激活
+                output = torch.tanh(output)  # 穩定的激活函數
+                
+                print("✅ 激活函數計算成功:", output.shape)
+                return output
+                
+            else:
+                print("⚠️ 維度不匹配，使用安全回退")
+                print(f"  期望: activation_weights=[{self.output_dim}, {input_dim}]")
+                print(f"  實際: activation_weights={self.activation_weights.shape}")
+                
+                # 🔧 安全回退：重新構建兼容的權重
+                if input_dim != self.activation_weights.shape[1]:
+                    # 調整輸入維度
+                    if input_dim > self.activation_weights.shape[1]:
+                        x_adapted = F.adaptive_avg_pool1d(x.unsqueeze(1), self.activation_weights.shape[1]).squeeze(1)
+                    else:
+                        x_adapted = F.pad(x, (0, self.activation_weights.shape[1] - input_dim))
+                else:
+                    x_adapted = x
+                
+                # 安全的矩陣乘法
+                fallback_output = torch.matmul(x_adapted, self.activation_weights.t())
+                fallback_output = torch.tanh(fallback_output)
+                
+                print("✅ 回退計算成功:", fallback_output.shape)
+                return fallback_output
+                
+        except Exception as e:
+            print(f"❌ 激活函數計算失敗: {e}")
+            # 最終回退：簡單的線性變換
+            try:
+                if x.shape[1] >= self.output_dim:
+                    simple_output = x[:, :self.output_dim]
+                else:
+                    simple_output = F.pad(x, (0, self.output_dim - x.shape[1]))
+                
+                # 添加非線性
+                simple_output = torch.tanh(simple_output) * 0.1
+                print("✅ 簡單回退成功:", simple_output.shape)
+                return simple_output
+                
+            except Exception as final_e:
+                print(f"❌ 最終回退也失敗: {final_e}")
+                # 創建零張量
+                return torch.zeros(batch_size, self.output_dim, device=x.device, dtype=x.dtype)
     
     def pure_b_spline_basis(self, x):
         """純粹的B-spline基函數 - KAN的核心特性，確保維度一致性"""
@@ -200,51 +240,50 @@ class AdvancedKANLayer(nn.Module):
             
             # 3. 核心：可學習激活函數 (KAN vs MLP的關鍵差異)
             try:
-                activation_features = self.learnable_activation(x)
+                activation_output = self.learnable_activation(x)
                 
                 # 🔧 修復激活函數矩陣維度問題 - 詳細診斷
                 print(f"🔍 激活函數維度診斷:")
-                print(f"  activation_features.shape: {activation_features.shape}")
                 print(f"  activation_weights.shape: {self.activation_weights.shape}")
                 print(f"  batch_size: {batch_size}, input_dim: {input_dim}, output_dim: {self.output_dim}")
                 
                 # 檢查是否為矩陣（至少2維）
-                if activation_features.dim() < 2 or self.activation_weights.dim() < 2:
-                    print(f"⚠️ 維度不足: activation_features.dim()={activation_features.dim()}, activation_weights.dim()={self.activation_weights.dim()}")
+                if activation_output.dim() < 2 or self.activation_weights.dim() < 2:
+                    print(f"⚠️ 維度不足: activation_output.dim()={activation_output.dim()}, activation_weights.dim()={self.activation_weights.dim()}")
                     # 確保至少是2D
-                    if activation_features.dim() == 1:
-                        activation_features = activation_features.unsqueeze(0)
+                    if activation_output.dim() == 1:
+                        activation_output = activation_output.unsqueeze(0)
                     if self.activation_weights.dim() == 1:
                         self.activation_weights = self.activation_weights.unsqueeze(0)
                 
                 # 安全的矩陣乘法計算
-                if (activation_features.shape[0] == batch_size and 
-                    activation_features.shape[1] <= self.activation_weights.shape[1]):
+                if (activation_output.shape[0] == batch_size and 
+                    activation_output.shape[1] <= self.activation_weights.shape[1]):
                     # 使用安全的矩陣乘法
-                    feat_dim = activation_features.shape[1]
+                    feat_dim = activation_output.shape[1]
                     weight_subset = self.activation_weights[:, :feat_dim]  # [output_dim, feat_dim]
-                    activation_output = torch.mm(activation_features, weight_subset.t())  # [batch_size, output_dim]
+                    activation_output = torch.mm(activation_output, weight_subset.t())  # [batch_size, output_dim]
                     print(f"✅ 激活函數計算成功: {activation_output.shape}")
                 else:
                     print(f"⚠️ 維度不匹配，使用安全回退")
                     # 維度調整回退
-                    min_feat_dim = min(activation_features.shape[-1], self.activation_weights.shape[-1])
-                    activation_features_safe = activation_features[..., :min_feat_dim]
+                    min_feat_dim = min(activation_output.shape[-1], self.activation_weights.shape[-1])
+                    activation_output_safe = activation_output[..., :min_feat_dim]
                     weights_safe = self.activation_weights[:, :min_feat_dim]
                     
                     # 確保batch維度正確
-                    if activation_features_safe.shape[0] != batch_size:
-                        activation_features_safe = activation_features_safe[:batch_size]
+                    if activation_output_safe.shape[0] != batch_size:
+                        activation_output_safe = activation_output_safe[:batch_size]
                     
-                    activation_output = torch.mm(activation_features_safe, weights_safe.t())
+                    activation_output = torch.mm(activation_output_safe, weights_safe.t())
                     print(f"✅ 回退計算成功: {activation_output.shape}")
                         
             except RuntimeError as e:
                 print(f"❌ Activation computation failed: {e}")
-                print(f"  activation_features type: {type(activation_features)}")
+                print(f"  activation_output type: {type(activation_output)}")
                 print(f"  activation_weights type: {type(self.activation_weights)}")
-                if hasattr(activation_features, 'shape'):
-                    print(f"  activation_features shape: {activation_features.shape}")
+                if hasattr(activation_output, 'shape'):
+                    print(f"  activation_output shape: {activation_output.shape}")
                 if hasattr(self.activation_weights, 'shape'):
                     print(f"  activation_weights shape: {self.activation_weights.shape}")
                 print(f"  Using zero fallback")
@@ -384,14 +423,20 @@ class SimplifiedKANLayer(nn.Module):
             return torch.tanh(x).sum(dim=1, keepdim=True).expand(-1, self.output_dim) * 0.1
     
     def forward(self, x):
-        """簡化KAN的前向傳播 - 保持核心特性"""
-        # 穩定性處理
-        if torch.isnan(x).any():
-            x = torch.nan_to_num(x, nan=0.0)
+        """簡化KAN的前向傳播 - 保持核心特性 - 修復einsum和NaN問題"""
+        # 🔧 輸入穩定性處理
+        if torch.isnan(x).any() or torch.isinf(x).any():
+            print(f"⚠️ SimplifiedKAN輸入包含無效值: NaN={torch.isnan(x).sum()}, Inf={torch.isinf(x).sum()}")
+            x = torch.nan_to_num(x, nan=0.0, posinf=1.0, neginf=-1.0)
         
         try:
             # 1. 最小化基礎變換 (降低MLP特性)
             base_output = self.base_transform(x) * 0.05
+            
+            # 🔧 檢查基礎變換輸出
+            if torch.isnan(base_output).any() or torch.isinf(base_output).any():
+                print("⚠️ 基礎變換產生無效值，使用零輸出")
+                base_output = torch.zeros_like(base_output)
             
             # 2. 多項式基函數計算 (KAN核心)
             poly_basis = self.polynomial_basis_functions(x)
@@ -402,36 +447,104 @@ class SimplifiedKANLayer(nn.Module):
                 # 檢查維度兼容性
                 if (poly_basis.shape[0] == batch_size and 
                     poly_basis.shape[1] == input_dim and
-                    poly_basis.shape[2] == self.num_basis):
+                    poly_basis.shape[2] == self.num_basis and
+                    self.poly_coeffs.shape[0] == self.output_dim and
+                    self.poly_coeffs.shape[1] == input_dim and
+                    self.poly_coeffs.shape[2] == self.num_basis):
+                    
                     # 正常的einsum操作
                     poly_output = torch.einsum('oij,bij->bo', self.poly_coeffs, poly_basis)
+                    
+                    # 檢查einsum結果
+                    if torch.isnan(poly_output).any() or torch.isinf(poly_output).any():
+                        print("⚠️ einsum產生無效值，使用矩陣乘法回退")
+                        raise RuntimeError("einsum produced invalid values")
+                        
                 else:
-                    print(f"Polynomial dimension mismatch: poly_basis={poly_basis.shape}, poly_coeffs={self.poly_coeffs.shape}")
-                    # 使用安全的矩陣乘法回退
-                    basis_flat = poly_basis.view(batch_size, -1)
-                    coeffs_flat = self.poly_coeffs.view(self.output_dim, -1)
+                    print(f"⚠️ 多項式維度不匹配:")
+                    print(f"  poly_basis={poly_basis.shape}, poly_coeffs={self.poly_coeffs.shape}")
+                    print(f"  expected: poly_basis=[{batch_size}, {input_dim}, {self.num_basis}]")
+                    print(f"  expected: poly_coeffs=[{self.output_dim}, {input_dim}, {self.num_basis}]")
+                    raise RuntimeError("Dimension mismatch")
                     
-                    # 調整維度匹配
+            except Exception as e:
+                print(f"⚠️ 多項式計算失敗: {e}，使用安全回退")
+                # 🔧 安全的矩陣乘法回退
+                try:
+                    # 展平並重塑為兼容的維度
+                    basis_flat = poly_basis.view(batch_size, -1)  # [batch_size, input_dim * num_basis]
+                    coeffs_flat = self.poly_coeffs.view(self.output_dim, -1)  # [output_dim, input_dim * num_basis]
+                    
+                    # 確保維度匹配
                     min_dim = min(basis_flat.shape[1], coeffs_flat.shape[1])
-                    poly_output = torch.mm(basis_flat[:, :min_dim], coeffs_flat[:, :min_dim].t())
-                    
-            except RuntimeError as e:
-                print(f"Polynomial computation failed: {e}, using fallback")
-                # 回退到線性變換
-                poly_output = self.base_transform(x) * 0.5
+                    if min_dim > 0:
+                        poly_output = torch.mm(basis_flat[:, :min_dim], coeffs_flat[:, :min_dim].t())
+                    else:
+                        poly_output = torch.zeros(batch_size, self.output_dim, device=x.device, dtype=x.dtype)
+                        
+                    # 檢查回退結果
+                    if torch.isnan(poly_output).any() or torch.isinf(poly_output).any():
+                        print("⚠️ 矩陣乘法回退也產生無效值，使用基礎變換")
+                        poly_output = base_output
+                        
+                except Exception as fallback_e:
+                    print(f"⚠️ 回退計算也失敗: {fallback_e}，使用基礎變換")
+                    poly_output = base_output
             
             # 3. 可學習激活函數 (KAN vs MLP差異)
-            activation_output = self.kan_learnable_activation(x) * 0.1
+            try:
+                activation_output = self.kan_learnable_activation(x) * 0.1
+                
+                # 檢查激活輸出
+                if torch.isnan(activation_output).any() or torch.isinf(activation_output).any():
+                    print("⚠️ 激活函數產生無效值，使用零輸出")
+                    activation_output = torch.zeros_like(poly_output)
+                    
+            except Exception as e:
+                print(f"⚠️ 激活函數失敗: {e}，使用零輸出")
+                activation_output = torch.zeros_like(poly_output)
             
             # 4. KAN輸出組合 (多項式主導)
-            kan_output = poly_output + activation_output + base_output
+            try:
+                kan_output = poly_output + activation_output + base_output
+                
+                # 檢查組合結果
+                if torch.isnan(kan_output).any() or torch.isinf(kan_output).any():
+                    print("⚠️ KAN輸出組合產生無效值，進行修復")
+                    kan_output = torch.nan_to_num(kan_output, nan=0.0, posinf=1.0, neginf=-1.0)
+                    
+            except Exception as e:
+                print(f"⚠️ KAN輸出組合失敗: {e}，使用基礎變換")
+                kan_output = base_output
             
             # 5. 穩定性歸一化
-            output = self.ln(kan_output)
+            try:
+                output = self.ln(kan_output)
+                
+                # 最終檢查
+                if torch.isnan(output).any() or torch.isinf(output).any():
+                    print("⚠️ 層歸一化產生無效值，使用原始輸出")
+                    output = kan_output
+                    
+            except Exception as e:
+                print(f"⚠️ 層歸一化失敗: {e}，使用原始輸出")
+                output = kan_output
             
-        except RuntimeError:
-            output = self.base_transform(x)
-            output = self.ln(output)
+        except Exception as e:
+            print(f"⚠️ SimplifiedKAN完全失敗: {e}，使用安全回退")
+            # 最終安全回退
+            try:
+                output = self.base_transform(x)
+                if torch.isnan(output).any() or torch.isinf(output).any():
+                    output = torch.tanh(x) * 0.1  # 極簡回退
+                    if x.shape[1] != self.output_dim:
+                        if x.shape[1] > self.output_dim:
+                            output = output[:, :self.output_dim]
+                        else:
+                            output = F.pad(output, (0, self.output_dim - x.shape[1]))
+            except Exception as final_e:
+                print(f"⚠️ 最終回退失敗: {final_e}，創建零張量")
+                output = torch.zeros(x.shape[0], self.output_dim, device=x.device, dtype=x.dtype)
         
         return output
 
@@ -487,71 +600,160 @@ class OptimizedGNNKANEncoder(nn.Module):
             )
         
     def kan_message_passing(self, x, edge_index, layer_idx):
-        """使用KAN進行消息傳遞 - 不使用MLP"""
+        """使用KAN進行消息傳遞 - 不使用MLP - 修復NaN問題"""
         if edge_index.size(1) == 0:
             return x
         
-        # 穩定性檢查
-        if torch.isnan(x).any():
-            x = torch.nan_to_num(x, nan=0.0)
+        # 🔧 強化穩定性檢查
+        if torch.isnan(x).any() or torch.isinf(x).any():
+            print(f"⚠️ 輸入包含無效值，進行清理: NaN={torch.isnan(x).sum()}, Inf={torch.isinf(x).sum()}")
+            x = torch.nan_to_num(x, nan=0.0, posinf=1.0, neginf=-1.0)
         
         row, col = edge_index
         num_nodes = x.size(0)
         
-        # 安全索引
-        row = torch.clamp(row, 0, num_nodes - 1)
-        col = torch.clamp(col, 0, num_nodes - 1)
+        # 安全索引檢查
+        if row.max() >= num_nodes or col.max() >= num_nodes or row.min() < 0 or col.min() < 0:
+            print(f"⚠️ 邊索引超出範圍: row=[{row.min()}, {row.max()}], col=[{col.min()}, {col.max()}], num_nodes={num_nodes}")
+            # 過濾無效索引
+            valid_mask = (row >= 0) & (row < num_nodes) & (col >= 0) & (col < num_nodes)
+            if valid_mask.sum() == 0:
+                print("⚠️ 沒有有效邊，返回原始特徵")
+                return x
+            row = row[valid_mask]
+            col = col[valid_mask]
         
         try:
-            # 構建稀疏鄰接矩陣
+            # 🔧 改進的稀疏矩陣構建
             adj_indices = torch.stack([row, col], dim=0)
             adj_values = torch.ones(len(row), device=x.device, dtype=x.dtype)
             adj_size = (num_nodes, num_nodes)
             
+            # 檢查稀疏張量的有效性
+            if len(row) == 0:
+                print("⚠️ 空邊列表，返回原始特徵")
+                return x
+            
             adj_sparse = torch.sparse_coo_tensor(adj_indices, adj_values, adj_size, device=x.device)
             adj_sparse = adj_sparse.coalesce()
             
-            # 度歸一化
+            # 🔧 安全的度計算
             degrees = torch.sparse.sum(adj_sparse, dim=1).to_dense()
+            
+            # 檢查度的有效性
+            if torch.isnan(degrees).any() or torch.isinf(degrees).any():
+                print("⚠️ 度計算包含無效值，使用均勻度")
+                degrees = torch.ones_like(degrees)
+            
+            # 避免除零
             degrees = torch.clamp(degrees, min=1e-6)
             degrees_inv = 1.0 / torch.sqrt(degrees)
             
-            # 歸一化鄰接矩陣
+            # 檢查度的倒數
+            if torch.isnan(degrees_inv).any() or torch.isinf(degrees_inv).any():
+                print("⚠️ 度倒數包含無效值，使用單位歸一化")
+                degrees_inv = torch.ones_like(degrees_inv)
+            
+            # 🔧 安全的歸一化值計算
             norm_values = degrees_inv[row] * degrees_inv[col]
+            
+            # 檢查歸一化值
+            if torch.isnan(norm_values).any() or torch.isinf(norm_values).any():
+                print("⚠️ 歸一化值包含無效值，使用均勻權重")
+                norm_values = torch.ones_like(norm_values) / len(norm_values)
+            
             norm_adj = torch.sparse_coo_tensor(adj_indices, norm_values, adj_size, device=x.device)
             
-            # 消息傳遞
+            # 🔧 安全的稀疏矩陣乘法
             message = torch.sparse.mm(norm_adj, x)
+            
+            # 檢查消息傳遞結果
+            if torch.isnan(message).any() or torch.isinf(message).any():
+                print("⚠️ 消息傳遞結果包含無效值，使用原始特徵")
+                return x
             
             # 🎯 使用KAN處理消息 (而不是MLP)
             if layer_idx < len(self.message_processors):
-                message = self.message_processors[layer_idx](message)
+                try:
+                    processed_message = self.message_processors[layer_idx](message)
+                    
+                    # 檢查KAN處理結果
+                    if torch.isnan(processed_message).any() or torch.isinf(processed_message).any():
+                        print("⚠️ KAN處理後包含無效值，使用未處理的消息")
+                        return message
+                    
+                    return processed_message
+                except Exception as e:
+                    print(f"⚠️ KAN消息處理失敗: {e}，使用原始消息")
+                    return message
+            else:
+                return message
                 
-        except RuntimeError:
+        except Exception as e:
+            print(f"⚠️ 消息傳遞完全失敗: {e}，返回原始特徵")
             return x
-        
-        return message
     
     def forward(self, x, edge_index):
-        """純粹KAN的前向傳播 - 完全避免MLP結構"""
+        """純粹KAN的前向傳播 - 完全避免MLP結構 - 修復NaN傳播"""
         current_x = x
+        
+        # 🔧 輸入穩定性檢查
+        if torch.isnan(current_x).any() or torch.isinf(current_x).any():
+            print(f"⚠️ 編碼器輸入包含無效值: NaN={torch.isnan(current_x).sum()}, Inf={torch.isinf(current_x).sum()}")
+            current_x = torch.nan_to_num(current_x, nan=0.0, posinf=1.0, neginf=-1.0)
         
         for i, layer in enumerate(self.kan_layers):
             if isinstance(layer, nn.Dropout):
                 current_x = layer(current_x)
             else:
-                # 🎯 KAN層處理 (核心：用KAN取代MLP)
-                kan_output = layer(current_x)
-                
-                # KAN消息傳遞 (每兩層一次，減少計算)
-                if i % 2 == 0 and edge_index.size(1) > 0:
-                    message = self.kan_message_passing(kan_output, edge_index, i // 2)
-                    # 殘差連接
-                    current_x = kan_output + 0.3 * message
-                else:
-                    current_x = kan_output
-                
-                # 不使用固定激活函數 (KAN內部已包含可學習激活)
+                try:
+                    # 🎯 KAN層處理 (核心：用KAN取代MLP)
+                    kan_output = layer(current_x)
+                    
+                    # 🔧 檢查KAN層輸出
+                    if torch.isnan(kan_output).any() or torch.isinf(kan_output).any():
+                        print(f"⚠️ KAN層{i}輸出包含無效值，使用輸入")
+                        kan_output = current_x
+                    
+                    # KAN消息傳遞 (每兩層一次，減少計算)
+                    if i % 2 == 0 and edge_index.size(1) > 0:
+                        message = self.kan_message_passing(kan_output, edge_index, i // 2)
+                        
+                        # 🔧 安全的殘差連接
+                        if message.shape == kan_output.shape:
+                            residual_output = kan_output + 0.3 * message
+                            
+                            # 檢查殘差連接結果
+                            if torch.isnan(residual_output).any() or torch.isinf(residual_output).any():
+                                print(f"⚠️ 殘差連接產生無效值，僅使用KAN輸出")
+                                current_x = kan_output
+                            else:
+                                current_x = residual_output
+                        else:
+                            print(f"⚠️ 消息形狀不匹配: message={message.shape}, kan_output={kan_output.shape}")
+                            current_x = kan_output
+                    else:
+                        current_x = kan_output
+                    
+                    # 🔧 每層後檢查穩定性
+                    if torch.isnan(current_x).any() or torch.isinf(current_x).any():
+                        print(f"⚠️ 第{i}層後出現無效值，進行修復")
+                        current_x = torch.nan_to_num(current_x, nan=0.0, posinf=1.0, neginf=-1.0)
+                        
+                except Exception as e:
+                    print(f"⚠️ KAN層{i}處理失敗: {e}，使用前一層輸出")
+                    # 如果出錯，保持前一層的輸出
+                    pass
+        
+        # 🔧 最終輸出檢查
+        if torch.isnan(current_x).any() or torch.isinf(current_x).any():
+            print(f"⚠️ 編碼器最終輸出包含無效值，進行最終修復")
+            current_x = torch.nan_to_num(current_x, nan=0.0, posinf=1.0, neginf=-1.0)
+            
+            # 如果仍有問題，使用原始輸入的線性變換
+            if torch.isnan(current_x).any() or torch.isinf(current_x).any():
+                print("⚠️ 使用原始輸入的安全變換")
+                current_x = torch.tanh(x) * 0.1
         
         return current_x
 

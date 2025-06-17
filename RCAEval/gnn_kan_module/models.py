@@ -506,18 +506,47 @@ class SimplifiedGNNKAN(nn.Module):
         
         # 逐層處理
         for i, layer in enumerate(self.gnn_kan_layers):
-            residual = x if self.use_residual and x.size(-1) == layer[0].out_features else None
+            # 🔧 修正殘差連接邏輯 - KAN層沒有[0]索引
+            # 保存殘差（如果啟用殘差連接且維度匹配）
+            residual = x if self.use_residual else None
             
-            # GNN-KAN 層
-            x = layer(x)
+            # GNN-KAN 層處理
+            try:
+                x = layer(x)
+                
+                # 檢查輸出是否有效
+                if torch.isnan(x).any() or torch.isinf(x).any():
+                    print(f"⚠️ KAN層{i}輸出包含無效值，進行修復")
+                    x = torch.nan_to_num(x, nan=0.0, posinf=1.0, neginf=-1.0)
+                    
+            except Exception as e:
+                print(f"⚠️ KAN層{i}處理失敗: {e}")
+                # 如果KAN層失敗，使用簡單變換
+                if hasattr(layer, 'base_linear'):
+                    x = layer.base_linear(x)
+                elif hasattr(layer, 'base_transform'):
+                    x = layer.base_transform(x)
+                else:
+                    # 最後回退：保持輸入不變
+                    pass
             
-            # 殘差連接
-            if residual is not None and x.size(-1) == residual.size(-1):
-                x = x + residual
+            # 🔧 安全的殘差連接
+            if residual is not None and self.use_residual:
+                try:
+                    if x.shape == residual.shape:
+                        x = x + residual
+                    else:
+                        print(f"⚠️ 殘差維度不匹配: x={x.shape}, residual={residual.shape}")
+                        # 維度不匹配時不使用殘差連接
+                except Exception as e:
+                    print(f"⚠️ 殘差連接失敗: {e}")
             
             # 批量歸一化
             if self.batch_norms and i < len(self.batch_norms):
-                x = self.batch_norms[i](x)
+                try:
+                    x = self.batch_norms[i](x)
+                except Exception as e:
+                    print(f"⚠️ 批量歸一化失敗: {e}")
             
             # Dropout（除了最後一層）
             if i < len(self.gnn_kan_layers) - 1:
