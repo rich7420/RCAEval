@@ -351,10 +351,29 @@ class GNNKANLoss(nn.Module):
         pred_adj_safe = torch.clamp(pred_adj, min=1e-7, max=1.0-1e-7)
         true_adj_safe = torch.clamp(true_adj, min=0.0, max=1.0)
         
-        # 數值穩定性檢查
-        if torch.isnan(pred_adj_safe).any() or torch.isinf(pred_adj_safe).any():
+        # 數值穩定性檢查 - 詳細診斷
+        has_nan = torch.isnan(pred_adj_safe).any()
+        has_inf = torch.isinf(pred_adj_safe).any()
+        
+        if has_nan or has_inf:
             print("⚠️ 預測鄰接矩陣包含無效值，使用MSE損失")
-            recon_loss = self.mse_loss(pred_adj, true_adj_safe)
+            print(f"  pred_adj_safe shape: {pred_adj_safe.shape}")
+            print(f"  pred_adj_safe range: [{pred_adj_safe.min().item():.6f}, {pred_adj_safe.max().item():.6f}]")
+            print(f"  NaN count: {torch.isnan(pred_adj_safe).sum().item()}")
+            print(f"  Inf count: {torch.isinf(pred_adj_safe).sum().item()}")
+            
+            # 找到無效值的位置
+            if has_nan:
+                nan_positions = torch.where(torch.isnan(pred_adj_safe))
+                print(f"  NaN positions (first 5): {[(i.item(), j.item()) for i, j in zip(nan_positions[0][:5], nan_positions[1][:5])]}")
+            
+            if has_inf:
+                inf_positions = torch.where(torch.isinf(pred_adj_safe))
+                print(f"  Inf positions (first 5): {[(i.item(), j.item()) for i, j in zip(inf_positions[0][:5], inf_positions[1][:5])]}")
+            
+            # 使用安全的MSE損失
+            pred_adj_clean = torch.nan_to_num(pred_adj, nan=0.0, posinf=1.0, neginf=0.0)
+            recon_loss = self.mse_loss(pred_adj_clean, true_adj_safe)
         else:
             # 重構損失 - 使用安全的值
             recon_loss = self.bce_loss(pred_adj_safe, true_adj_safe)
@@ -453,13 +472,36 @@ def train_gnn_kan_model(model, node_features, edge_index, config):
             # 計算損失
             loss = criterion(pred_adj, target_adj_safe, node_embeddings)
             
-            # 檢查損失是否有效
-            if torch.isnan(loss) or torch.isinf(loss):
-                print(f"⚠️ Invalid loss at epoch {epoch}: {loss.item()}")
-                # 重置模型參數
-                for param in model.parameters():
+            # 檢查損失是否有效 - 詳細診斷
+            loss_value = loss.item() if hasattr(loss, 'item') else float(loss)
+            if torch.isnan(loss) or torch.isinf(loss) or not np.isfinite(loss_value):
+                print(f"❌ Invalid loss at epoch {epoch}: {loss_value}")
+                print(f"  pred_adj stats: shape={pred_adj.shape}, min={pred_adj.min().item():.6f}, max={pred_adj.max().item():.6f}")
+                print(f"  target_adj stats: shape={target_adj_safe.shape}, min={target_adj_safe.min().item():.6f}, max={target_adj_safe.max().item():.6f}")
+                print(f"  node_embeddings stats: shape={node_embeddings.shape}, min={node_embeddings.min().item():.6f}, max={node_embeddings.max().item():.6f}")
+                
+                # 檢查模型參數狀態
+                nan_params = 0
+                inf_params = 0
+                for name, param in model.named_parameters():
+                    if torch.isnan(param).any():
+                        nan_params += 1
+                        print(f"  NaN in parameter: {name}")
+                    if torch.isinf(param).any():
+                        inf_params += 1
+                        print(f"  Inf in parameter: {name}")
+                
+                print(f"  Total parameters with NaN: {nan_params}, with Inf: {inf_params}")
+                
+                # 重置有問題的參數
+                reset_count = 0
+                for name, param in model.named_parameters():
                     if torch.isnan(param).any() or torch.isinf(param).any():
-                        param.data = torch.randn_like(param.data) * 0.1
+                        param.data = torch.randn_like(param.data) * 0.01
+                        reset_count += 1
+                        print(f"  Reset parameter: {name}")
+                
+                print(f"  Reset {reset_count} parameters")
                 continue
             
             # 反向傳播

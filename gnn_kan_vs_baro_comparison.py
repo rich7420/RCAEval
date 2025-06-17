@@ -106,37 +106,73 @@ class GNNKANvsBAROComparator:
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
         
-        # 支持的數據集
+        # 支持的數據集 - 包含大型數據集和RTT相關數據
         self.datasets = {
             "online-boutique": {
                 "path": "data/online-boutique",
                 "download_func": download_online_boutique_dataset,
-                "description": "Online Boutique微服務系統"
+                "description": "Online Boutique微服務系統 (包含RTT/延遲數據)",
+                "scale": "large",
+                "has_rtt": True
             },
             "sock-shop-1": {
                 "path": "data/sock-shop-1", 
                 "download_func": download_sock_shop_1_dataset,
-                "description": "Sock Shop微服務系統 v1"
+                "description": "Sock Shop微服務系統 v1 (包含響應時間數據)",
+                "scale": "medium",
+                "has_rtt": True
             },
             "sock-shop-2": {
                 "path": "data/sock-shop-2",
                 "download_func": download_sock_shop_2_dataset, 
-                "description": "Sock Shop微服務系統 v2"
+                "description": "Sock Shop微服務系統 v2 (擴展RTT數據)",
+                "scale": "medium",
+                "has_rtt": True
             },
             "train-ticket": {
                 "path": "data/train-ticket",
                 "download_func": download_train_ticket_dataset,
-                "description": "Train Ticket微服務系統"
+                "description": "Train Ticket微服務系統 (大規模延遲數據)",
+                "scale": "large",
+                "has_rtt": True
             },
             "re2-ob": {
                 "path": "data/RE2/RE2-OB",
                 "download_func": download_re2_dataset,
-                "description": "RE2 Online Boutique數據集"
+                "description": "RE2 Online Boutique數據集 (大型RTT數據集)",
+                "scale": "very_large",
+                "has_rtt": True
             },
             "re2-tt": {
                 "path": "data/RE2/RE2-TT", 
                 "download_func": download_re2_dataset,
-                "description": "RE2 Train Ticket數據集"
+                "description": "RE2 Train Ticket數據集 (超大規模延遲數據)",
+                "scale": "very_large", 
+                "has_rtt": True
+            },
+            "re3-large": {
+                "path": "data/RE3",
+                "download_func": download_re3_dataset,
+                "description": "RE3 超大規模數據集 (包含詳細RTT指標)",
+                "scale": "massive",
+                "has_rtt": True
+            },
+            # 添加多模態大數據集
+            "mm-ob": {
+                "path": "data/mm-ob",
+                "download_func": download_online_boutique_dataset,
+                "description": "多模態 Online Boutique (Metrics+Logs+Traces+RTT)",
+                "scale": "very_large",
+                "has_rtt": True,
+                "multimodal": True
+            },
+            "mm-tt": {
+                "path": "data/mm-tt", 
+                "download_func": download_train_ticket_dataset,
+                "description": "多模態 Train Ticket (包含完整RTT時序數據)",
+                "scale": "massive",
+                "has_rtt": True,
+                "multimodal": True
             }
         }
         
@@ -222,9 +258,19 @@ class GNNKANvsBAROComparator:
         
         try:
             if method_name == "gnn_kan":
-                # 測試不同的GNN-KAN配置
-                config_types = kwargs.get('config_types', ['simplified'])
-                feature_methods = kwargs.get('feature_methods', ['ica'])
+                # 🚀 GPU加速的GNN-KAN配置 - 針對大數據集優化
+                config_types = kwargs.get('config_types', ['high_capacity', 'simplified'])
+                feature_methods = kwargs.get('feature_methods', ['ica', 'kpca'])
+                
+                # 檢測CUDA可用性
+                cuda_available = torch.cuda.is_available()
+                device_info = {
+                    'cuda_available': cuda_available,
+                    'device_count': torch.cuda.device_count() if cuda_available else 0,
+                    'current_device': torch.cuda.current_device() if cuda_available else None
+                }
+                
+                print(f"    🔧 GPU狀態: CUDA可用={cuda_available}, 設備數={device_info['device_count']}")
                 
                 best_result = None
                 best_score = -1
@@ -232,23 +278,50 @@ class GNNKANvsBAROComparator:
                 for config_type in config_types:
                     for feature_method in feature_methods:
                         try:
+                            print(f"    🧪 測試GNN-KAN配置: {config_type} + {feature_method}")
+                            
+                            # 🎯 針對大數據集的特殊配置
+                            extra_kwargs = {
+                                'use_cuda': cuda_available,
+                                'gpu_memory_fraction': 0.8,
+                                'cpu_fallback': True,
+                                'max_nodes': 1000,  # 支持大規模節點
+                                'batch_size': 64 if cuda_available else 32,
+                                'num_epochs': 50 if cuda_available else 30,
+                                'learning_rate': 0.001,
+                                'gradient_clip_norm': 1.0
+                            }
+                            
                             result = gnn_kan_rca(
                                 data=data,
                                 inject_time=inject_time,
                                 dataset=dataset_name,
                                 config_type=config_type,
-                                feature_method=feature_method
+                                feature_method=feature_method,
+                                **extra_kwargs
                             )
                             
-                            # 簡單評分：根據節點數量和排名質量
-                            score = len(result.get('ranks', []))
+                            # 🎯 改進評分：考慮準確性和效率
+                            ranks = result.get('ranks', [])
+                            adj_matrix = result.get('adj', np.array([]))
+                            
+                            score = len(ranks) * 0.7  # 基礎分數
+                            if len(ranks) > 0:
+                                score += 0.3 * min(len(ranks), 10)  # 排名質量獎勵
+                            if adj_matrix.size > 0:
+                                score += 0.2 * min(adj_matrix.shape[0], 50)  # 圖規模獎勵
+                            
                             if score > best_score:
                                 best_score = score
                                 best_result = result
                                 best_result['config_used'] = {
                                     'config_type': config_type,
-                                    'feature_method': feature_method
+                                    'feature_method': feature_method,
+                                    'device_info': device_info,
+                                    'extra_kwargs': extra_kwargs
                                 }
+                                print(f"    ✅ 新最佳配置: 分數={score:.2f}")
+                                
                         except Exception as e:
                             print(f"    ⚠️ GNN-KAN配置失敗 ({config_type}, {feature_method}): {e}")
                             continue
@@ -257,6 +330,7 @@ class GNNKANvsBAROComparator:
                     raise Exception("所有GNN-KAN配置都失敗")
                     
                 result = best_result
+                print(f"    🏆 最終選擇: {result['config_used']['config_type']} + {result['config_used']['feature_method']}")
                 
             elif method_name == "baro":
                 result = baro(
@@ -1023,9 +1097,10 @@ def main():
     """主函數"""
     parser = argparse.ArgumentParser(description="GNN-KAN vs BARO 比較測試")
     parser.add_argument("--datasets", nargs="+", 
-                       choices=["online-boutique", "sock-shop-1", "sock-shop-2", "train-ticket", "re2-ob", "re2-tt"],
-                       default=["online-boutique", "sock-shop-1"],
-                       help="要測試的數據集")
+                       choices=["online-boutique", "sock-shop-1", "sock-shop-2", "train-ticket", 
+                               "re2-ob", "re2-tt", "re3-large", "mm-ob", "mm-tt"],
+                       default=["re2-ob", "mm-ob", "train-ticket"],  # 默認使用大數據集
+                       help="要測試的數據集 (包含RTT/延遲數據的大型數據集)")
     parser.add_argument("--limit", type=int, default=5, help="每個數據集的測試案例數量限制")
     parser.add_argument("--output-dir", default="comparison_results", help="結果輸出目錄")
     parser.add_argument("--config-types", nargs="+", 

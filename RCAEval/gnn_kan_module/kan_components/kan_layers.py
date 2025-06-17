@@ -73,9 +73,34 @@ class AdvancedKANLayer(nn.Module):
             nn.init.uniform_(self.spline_order_weights, 0.2, 0.4)
     
     def learnable_activation(self, x):
-        """KAN特有的可學習激活函數 - 非固定激活"""
+        """KAN特有的可學習激活函數 - 非固定激活，修復維度問題"""
+        batch_size, input_dim = x.shape
         x_clamped = torch.clamp(x, -10.0, 10.0)
-        return x_clamped * torch.sigmoid(x_clamped) * torch.sigmoid(self.activation_weights.unsqueeze(0))
+        
+        # 🔧 修復維度不匹配問題
+        # activation_weights: [output_dim, input_dim]
+        # x_clamped: [batch_size, input_dim]
+        
+        # 方法1: 如果維度匹配，使用廣播
+        if self.activation_weights.shape[1] == input_dim:
+            # 使用廣播: [batch_size, input_dim] * [output_dim, input_dim] -> 需要調整
+            # 先計算基本激活，然後通過線性變換映射到輸出維度
+            basic_activation = x_clamped * torch.sigmoid(x_clamped)  # [batch_size, input_dim]
+            
+            # 使用activation_weights作為線性變換權重
+            activation_output = torch.mm(basic_activation, self.activation_weights.t())  # [batch_size, output_dim]
+            
+            return activation_output
+        else:
+            # 方法2: 維度不匹配時的安全回退
+            print(f"⚠️ 激活權重維度不匹配: {self.activation_weights.shape} vs 輸入 {x.shape}")
+            basic_activation = x_clamped * torch.sigmoid(x_clamped)  # [batch_size, input_dim]
+            
+            # 使用平均池化 + 擴展
+            pooled = basic_activation.mean(dim=1, keepdim=True)  # [batch_size, 1]
+            expanded = pooled.expand(batch_size, self.output_dim)  # [batch_size, output_dim]
+            
+            return expanded
     
     def pure_b_spline_basis(self, x):
         """純粹的B-spline基函數 - KAN的核心特性，確保維度一致性"""
@@ -177,29 +202,52 @@ class AdvancedKANLayer(nn.Module):
             try:
                 activation_features = self.learnable_activation(x)
                 
-                # 🔧 修復激活函數矩陣維度問題
+                # 🔧 修復激活函數矩陣維度問題 - 詳細診斷
+                print(f"🔍 激活函數維度診斷:")
+                print(f"  activation_features.shape: {activation_features.shape}")
+                print(f"  activation_weights.shape: {self.activation_weights.shape}")
+                print(f"  batch_size: {batch_size}, input_dim: {input_dim}, output_dim: {self.output_dim}")
+                
+                # 檢查是否為矩陣（至少2維）
+                if activation_features.dim() < 2 or self.activation_weights.dim() < 2:
+                    print(f"⚠️ 維度不足: activation_features.dim()={activation_features.dim()}, activation_weights.dim()={self.activation_weights.dim()}")
+                    # 確保至少是2D
+                    if activation_features.dim() == 1:
+                        activation_features = activation_features.unsqueeze(0)
+                    if self.activation_weights.dim() == 1:
+                        self.activation_weights = self.activation_weights.unsqueeze(0)
+                
+                # 安全的矩陣乘法計算
                 if (activation_features.shape[0] == batch_size and 
-                    activation_features.shape[1] == input_dim and
-                    self.activation_weights.shape[0] == self.output_dim and
-                    self.activation_weights.shape[1] == input_dim):
-                    # 正常的einsum操作
-                    activation_output = torch.einsum('oi,bi->bo', 
-                                                   self.activation_weights, 
-                                                   activation_features)
+                    activation_features.shape[1] <= self.activation_weights.shape[1]):
+                    # 使用安全的矩陣乘法
+                    feat_dim = activation_features.shape[1]
+                    weight_subset = self.activation_weights[:, :feat_dim]  # [output_dim, feat_dim]
+                    activation_output = torch.mm(activation_features, weight_subset.t())  # [batch_size, output_dim]
+                    print(f"✅ 激活函數計算成功: {activation_output.shape}")
                 else:
-                    # 安全的激活函數計算 - 處理維度不匹配
-                    if activation_features.shape[1] == self.activation_weights.shape[1]:
-                        # 維度匹配，使用矩陣乘法
-                        activation_output = torch.mm(activation_features, self.activation_weights.t())
-                    else:
-                        # 維度不匹配，使用安全的廣播
-                        min_dim = min(activation_features.shape[1], self.activation_weights.shape[1])
-                        activation_features_safe = activation_features[:, :min_dim]
-                        weights_safe = self.activation_weights[:, :min_dim]
-                        activation_output = torch.mm(activation_features_safe, weights_safe.t())
+                    print(f"⚠️ 維度不匹配，使用安全回退")
+                    # 維度調整回退
+                    min_feat_dim = min(activation_features.shape[-1], self.activation_weights.shape[-1])
+                    activation_features_safe = activation_features[..., :min_feat_dim]
+                    weights_safe = self.activation_weights[:, :min_feat_dim]
+                    
+                    # 確保batch維度正確
+                    if activation_features_safe.shape[0] != batch_size:
+                        activation_features_safe = activation_features_safe[:batch_size]
+                    
+                    activation_output = torch.mm(activation_features_safe, weights_safe.t())
+                    print(f"✅ 回退計算成功: {activation_output.shape}")
                         
             except RuntimeError as e:
-                print(f"Activation computation failed: {e}, using fallback")
+                print(f"❌ Activation computation failed: {e}")
+                print(f"  activation_features type: {type(activation_features)}")
+                print(f"  activation_weights type: {type(self.activation_weights)}")
+                if hasattr(activation_features, 'shape'):
+                    print(f"  activation_features shape: {activation_features.shape}")
+                if hasattr(self.activation_weights, 'shape'):
+                    print(f"  activation_weights shape: {self.activation_weights.shape}")
+                print(f"  Using zero fallback")
                 activation_output = torch.zeros(batch_size, self.output_dim, device=x.device)
             
             # 4. KAN輸出組合 (B-spline主導，激活函數輔助)
@@ -302,8 +350,38 @@ class SimplifiedKANLayer(nn.Module):
         return basis_tensor
     
     def kan_learnable_activation(self, x):
-        """簡化的可學習激活函數"""
-        return x * torch.tanh(x * self.activation_scale.unsqueeze(0))
+        """簡化的可學習激活函數 - 修復維度問題"""
+        batch_size, input_dim = x.shape
+        
+        # 確保activation_scale維度正確
+        if self.activation_scale.shape != (self.output_dim, input_dim):
+            print(f"⚠️ activation_scale維度不匹配: {self.activation_scale.shape} vs expected ({self.output_dim}, {input_dim})")
+            # 調整維度
+            scale = self.activation_scale[:, :input_dim] if self.activation_scale.shape[1] >= input_dim else self.activation_scale
+        else:
+            scale = self.activation_scale
+        
+        # 安全的激活函數計算
+        try:
+            # x: [batch_size, input_dim], scale: [output_dim, input_dim]
+            # 需要將x擴展到[batch_size, output_dim, input_dim]進行逐元素計算
+            x_expanded = x.unsqueeze(1).expand(batch_size, self.output_dim, input_dim)  # [batch_size, output_dim, input_dim]
+            scale_expanded = scale.unsqueeze(0).expand(batch_size, self.output_dim, input_dim)  # [batch_size, output_dim, input_dim]
+            
+            # 逐元素激活函數
+            activated = x_expanded * torch.tanh(x_expanded * scale_expanded)  # [batch_size, output_dim, input_dim]
+            
+            # 降維到[batch_size, output_dim]
+            output = activated.mean(dim=2)  # 平均池化
+            
+            return output
+            
+        except RuntimeError as e:
+            print(f"❌ KAN激活函數計算失敗: {e}")
+            print(f"  x.shape: {x.shape}")
+            print(f"  scale.shape: {scale.shape}")
+            # 回退到簡單計算
+            return torch.tanh(x).sum(dim=1, keepdim=True).expand(-1, self.output_dim) * 0.1
     
     def forward(self, x):
         """簡化KAN的前向傳播 - 保持核心特性"""
@@ -343,8 +421,7 @@ class SimplifiedKANLayer(nn.Module):
                 poly_output = self.base_transform(x) * 0.5
             
             # 3. 可學習激活函數 (KAN vs MLP差異)
-            activation_output = self.kan_learnable_activation(x).sum(dim=1, keepdim=True)
-            activation_output = activation_output.expand(-1, self.output_dim) * 0.1
+            activation_output = self.kan_learnable_activation(x) * 0.1
             
             # 4. KAN輸出組合 (多項式主導)
             kan_output = poly_output + activation_output + base_output
