@@ -388,14 +388,22 @@ def train_gnn_kan_model(model, node_features, edge_index, config):
     node_features = node_features.to(device)
     edge_index = edge_index.to(device)
     
-    # 創建目標鄰接矩陣（基於邊索引）
+    # 創建目標鄰接矩陣（基於邊索引）- 修復邊索引越界問題
     num_nodes = node_features.size(0)
     target_adj = torch.zeros(num_nodes, num_nodes, device=device)
     
     if edge_index.size(1) > 0:
-        target_adj[edge_index[0], edge_index[1]] = 1.0
-        # 確保對稱性
-        target_adj = (target_adj + target_adj.t()) / 2.0
+        # 🔧 安全邊索引檢查 - 避免越界
+        valid_edges_mask = (edge_index[0] < num_nodes) & (edge_index[1] < num_nodes)
+        valid_edge_index = edge_index[:, valid_edges_mask]
+        
+        if valid_edge_index.size(1) > 0:
+            target_adj[valid_edge_index[0], valid_edge_index[1]] = 1.0
+            # 確保對稱性
+            target_adj = (target_adj + target_adj.t()) / 2.0
+        else:
+            print(f"⚠️ 所有邊索引都超出範圍，使用單位矩陣作為目標")
+            target_adj = torch.eye(num_nodes, device=device) * 0.1
     
     # 優化器和調度器
     optimizer = optim.AdamW(
@@ -578,14 +586,22 @@ class AdvancedGNNKANTrainer:
         
         criterion = GNNKANLoss(self.config)
         
-        # 創建目標鄰接矩陣
+        # 創建目標鄰接矩陣 - 修復邊索引越界問題
         num_nodes = features.size(0)
         device = features.device
         target_adj = torch.zeros(num_nodes, num_nodes, device=device)
         
         if edge_index.size(1) > 0:
-            target_adj[edge_index[0], edge_index[1]] = 1.0
-            target_adj = (target_adj + target_adj.t()) / 2.0
+            # 🔧 安全邊索引檢查 - 避免越界
+            valid_edges_mask = (edge_index[0] < num_nodes) & (edge_index[1] < num_nodes)
+            valid_edge_index = edge_index[:, valid_edges_mask]
+            
+            if valid_edge_index.size(1) > 0:
+                target_adj[valid_edge_index[0], valid_edge_index[1]] = 1.0
+                target_adj = (target_adj + target_adj.t()) / 2.0
+            else:
+                print(f"⚠️ {phase_name}: 所有邊索引都超出範圍，使用單位矩陣")
+                target_adj = torch.eye(num_nodes, device=device) * 0.1
         
         model.train()
         for epoch in range(epochs):

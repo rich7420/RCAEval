@@ -193,22 +193,49 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
         device = 'cuda' if hasattr(config, 'use_cuda') and config.use_cuda and torch.cuda.is_available() else 'cpu'
         print(f"📱 使用設備: {device}")
         
-        # 確保張量在正確設備上
+        # 🔧 改善設備管理和錯誤處理
         try:
-            if device == 'cuda':
+            if device == 'cuda' and torch.cuda.is_available():
+                # 檢查CUDA設備狀態
+                torch.cuda.empty_cache()  # 清理GPU內存
+                
+                # 嘗試創建小張量測試CUDA
+                test_tensor = torch.randn(2, 2, device='cuda')
+                del test_tensor
+                
+                # 如果測試成功，移動模型和數據到GPU
                 model = model.cuda()
                 edge_index = edge_index.cuda() if hasattr(edge_index, 'cuda') else torch.tensor(edge_index, device='cuda', dtype=torch.long)
                 node_features_tensor = torch.tensor(node_features, dtype=torch.float, device='cuda')
+                print(f"✅ 成功使用CUDA設備")
             else:
+                device = 'cpu'
                 model = model.cpu()
                 edge_index = edge_index.cpu() if hasattr(edge_index, 'cpu') else torch.tensor(edge_index, device='cpu', dtype=torch.long)
                 node_features_tensor = torch.tensor(node_features, dtype=torch.float, device='cpu')
-        except RuntimeError as e:
-            print(f"設備設置失敗: {e}，回退到 CPU")
+                print(f"📱 使用CPU設備")
+                
+        except (RuntimeError, AssertionError, Exception) as e:
+            print(f"⚠️ 設備設置失敗: {str(e)[:100]}，強制回退到 CPU")
             device = 'cpu'
+            
+            # 強制清理GPU狀態
+            if torch.cuda.is_available():
+                try:
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                except:
+                    pass
+            
+            # 確保所有組件都在CPU上
             model = model.cpu()
-            edge_index = torch.tensor(edge_index, device='cpu', dtype=torch.long) if not isinstance(edge_index, torch.Tensor) else edge_index.cpu()
+            edge_index = torch.tensor(edge_index.cpu().numpy() if hasattr(edge_index, 'cpu') else edge_index, 
+                                    device='cpu', dtype=torch.long)
             node_features_tensor = torch.tensor(node_features, dtype=torch.float, device='cpu')
+            
+            # 更新配置以避免後續CUDA嘗試
+            config.use_cuda = False
+            config.device = 'cpu'
         
         # 🎯 6. 訓練純粹KAN模型
         print("🏋️ 訓練純粹KAN模型（證明KAN>MLP）...")
