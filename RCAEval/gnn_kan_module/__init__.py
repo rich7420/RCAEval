@@ -65,7 +65,9 @@ from .kan_components import (
 # 工具函數
 from .utils import (
     compute_service_criticality_weights,
-    validate_model_setup
+    validate_model_setup,
+    safe_pca_transform,
+    safe_feature_alignment
 )
 
 # 別名定義 - 確保向後兼容
@@ -119,7 +121,9 @@ __all__ = [
     
     # 工具函數
     'compute_service_criticality_weights',
-    'validate_model_setup'
+    'validate_model_setup',
+    'safe_pca_transform',
+    'safe_feature_alignment'
 ]
 
 print("✅ 純粹KAN模組完全載入成功 - 專注於KAN取代MLP的核心價值")

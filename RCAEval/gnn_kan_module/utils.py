@@ -14,6 +14,122 @@ import os
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 
 
+def safe_pca_transform(features, target_dim, random_state=42):
+    """
+    安全的PCA降維函數 - 自動處理維度限制
+    
+    Args:
+        features: 輸入特徵矩陣 (n_samples, n_features)
+        target_dim: 目標維度
+        random_state: 隨機種子
+    
+    Returns:
+        transformed_features: 降維後的特徵矩陣
+    """
+    try:
+        from sklearn.decomposition import PCA
+        
+        # 檢查輸入
+        if features is None or features.size == 0:
+            return np.zeros((1, target_dim))
+        
+        # 確保是2D數組
+        if features.ndim == 1:
+            features = features.reshape(1, -1)
+        
+        n_samples, n_features = features.shape
+        
+        # 如果特徵數已經等於或小於目標維度
+        if n_features <= target_dim:
+            if n_features < target_dim:
+                # 填充零到目標維度
+                padding = np.zeros((n_samples, target_dim - n_features))
+                return np.hstack([features, padding])
+            else:
+                return features
+        
+        # 計算最大可能的PCA成分數
+        max_components = min(n_samples, n_features)
+        actual_components = min(target_dim, max_components)
+        
+        if actual_components <= 0:
+            # 無法進行PCA，創建默認特徵
+            return np.zeros((n_samples, target_dim))
+        
+        # 執行安全的PCA
+        pca = PCA(n_components=actual_components, random_state=random_state)
+        transformed = pca.fit_transform(features)
+        
+        # 如果降維後維度仍不足target_dim，用零填充
+        if transformed.shape[1] < target_dim:
+            padding = np.zeros((transformed.shape[0], target_dim - transformed.shape[1]))
+            transformed = np.hstack([transformed, padding])
+        
+        return transformed
+        
+    except Exception as e:
+        print(f"⚠️ PCA變換失敗: {e}, 返回零填充特徵")
+        return np.zeros((features.shape[0] if features.ndim > 1 else 1, target_dim))
+
+
+def safe_feature_alignment(features_list, target_dim=None, method='pad'):
+    """
+    安全的特徵對齊函數
+    
+    Args:
+        features_list: 特徵列表
+        target_dim: 目標維度
+        method: 對齊方法 ('pad', 'truncate', 'pca')
+    
+    Returns:
+        aligned_features: 對齊後的特徵列表
+    """
+    if not features_list:
+        return []
+    
+    # 過濾空特徵
+    valid_features = [f for f in features_list if f is not None and f.size > 0]
+    if not valid_features:
+        return []
+    
+    # 對齊節點數（行數）
+    max_nodes = max(f.shape[0] for f in valid_features)
+    aligned_features = []
+    
+    for features in valid_features:
+        if features.shape[0] < max_nodes:
+            # 重複最後一行以對齊節點數
+            padding = np.repeat(features[-1:], max_nodes - features.shape[0], axis=0)
+            features = np.vstack([features, padding])
+        aligned_features.append(features)
+    
+    # 對齊特徵維度（列數）
+    if target_dim is not None:
+        final_features = []
+        for features in aligned_features:
+            if method == 'pca':
+                features = safe_pca_transform(features, target_dim)
+            elif method == 'truncate':
+                if features.shape[1] > target_dim:
+                    features = features[:, :target_dim]
+                elif features.shape[1] < target_dim:
+                    padding = np.zeros((features.shape[0], target_dim - features.shape[1]))
+                    features = np.hstack([features, padding])
+            else:  # 'pad'
+                if features.shape[1] < target_dim:
+                    padding = np.zeros((features.shape[0], target_dim - features.shape[1]))
+                    features = np.hstack([features, padding])
+                elif features.shape[1] > target_dim:
+                    # 使用安全PCA
+                    features = safe_pca_transform(features, target_dim)
+            
+            final_features.append(features)
+        
+        return final_features
+    
+    return aligned_features
+
+
 def safe_tensor_operation(func, *args, **kwargs):
     """
     安全的張量操作包裝器

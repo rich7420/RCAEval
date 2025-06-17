@@ -418,15 +418,38 @@ def simplified_metric_processing(metrics_data, target_dim=64):
     if all_features:
         feature_matrix = np.array(all_features).reshape(1, -1)
         
-        # PCA降維到目標維度
+        # 🎯 安全的PCA降維 - 檢查維度限制
         if feature_matrix.shape[1] > target_dim:
             from sklearn.decomposition import PCA
-            pca = PCA(n_components=target_dim, random_state=42)
-            feature_matrix = pca.fit_transform(feature_matrix)
-            feature_names = [f'pca_component_{i}' for i in range(target_dim)]
+            # 確保n_components不超過min(n_samples, n_features)
+            max_components = min(feature_matrix.shape[0], feature_matrix.shape[1])
+            actual_components = min(target_dim, max_components)
+            
+            if actual_components > 0:
+                pca = PCA(n_components=actual_components, random_state=42)
+                feature_matrix = pca.fit_transform(feature_matrix)
+                
+                # 如果降維後維度仍不足target_dim，用零填充
+                if feature_matrix.shape[1] < target_dim:
+                    padding = np.zeros((feature_matrix.shape[0], target_dim - feature_matrix.shape[1]))
+                    feature_matrix = np.hstack([feature_matrix, padding])
+                
+                feature_names = [f'pca_component_{i}' for i in range(target_dim)]
+            else:
+                # 無法進行PCA，直接填充到目標維度
+                if feature_matrix.shape[1] < target_dim:
+                    padding = np.zeros((1, target_dim - feature_matrix.shape[1]))
+                    feature_matrix = np.hstack([feature_matrix, padding])
+                feature_names = feature_names + [f'padding_{i}' for i in range(len(feature_names), target_dim)]
+        elif feature_matrix.shape[1] < target_dim:
+            # 特徵數不足，用零填充
+            padding = np.zeros((1, target_dim - feature_matrix.shape[1]))
+            feature_matrix = np.hstack([feature_matrix, padding])
+            feature_names = feature_names + [f'padding_{i}' for i in range(len(feature_names), target_dim)]
     else:
-        feature_matrix = np.array([[0]])
-        feature_names = ['default_feature']
+        # 沒有特徵，創建默認特徵
+        feature_matrix = np.zeros((1, target_dim))
+        feature_names = [f'default_feature_{i}' for i in range(target_dim)]
     
     print(f"✓ Simplified processing: {feature_matrix.shape[1]} features extracted")
     return feature_matrix, feature_names
@@ -661,16 +684,45 @@ def simplified_feature_fusion(log_feats, metric_feats, topo_feats, error_feats, 
         fused_features = np.hstack(aligned_features)
         print(f"✓ 簡單拼接融合 {len(feature_names)} 種特徵")
     
-    # 簡化的PCA降維
+    # 🎯 安全的PCA降維 - 檢查維度限制
     if fused_features.shape[1] > target_dim:
         try:
             from sklearn.decomposition import PCA
-            pca = PCA(n_components=target_dim, random_state=42)
-            fused_features = pca.fit_transform(fused_features)
-            print(f"✓ PCA 降維到目標維度: {target_dim}")
-        except Exception:
-            # 簡單截斷
-            fused_features = fused_features[:, :target_dim]
+            # 確保n_components不超過min(n_samples, n_features)
+            max_components = min(fused_features.shape[0], fused_features.shape[1])
+            actual_components = min(target_dim, max_components)
+            
+            if actual_components > 0:
+                pca = PCA(n_components=actual_components, random_state=42)
+                fused_features = pca.fit_transform(fused_features)
+                
+                # 如果降維後維度仍不足target_dim，用零填充
+                if fused_features.shape[1] < target_dim:
+                    padding = np.zeros((fused_features.shape[0], target_dim - fused_features.shape[1]))
+                    fused_features = np.hstack([fused_features, padding])
+                
+                print(f"✓ 安全PCA降維: {fused_features.shape[1]} -> {target_dim}")
+            else:
+                # 無法進行PCA，直接截斷或填充
+                if fused_features.shape[1] >= target_dim:
+                    fused_features = fused_features[:, :target_dim]
+                else:
+                    padding = np.zeros((fused_features.shape[0], target_dim - fused_features.shape[1]))
+                    fused_features = np.hstack([fused_features, padding])
+                print(f"✓ 直接調整到目標維度: {target_dim}")
+        except Exception as e:
+            print(f"⚠️ PCA降維失敗: {e}, 使用截斷方法")
+            # 簡單截斷或填充
+            if fused_features.shape[1] >= target_dim:
+                fused_features = fused_features[:, :target_dim]
+            else:
+                padding = np.zeros((fused_features.shape[0], target_dim - fused_features.shape[1]))
+                fused_features = np.hstack([fused_features, padding])
+    elif fused_features.shape[1] < target_dim:
+        # 特徵數不足，用零填充
+        padding = np.zeros((fused_features.shape[0], target_dim - fused_features.shape[1]))
+        fused_features = np.hstack([fused_features, padding])
+        print(f"✓ 特徵填充到目標維度: {target_dim}")
     
     return fused_features
 

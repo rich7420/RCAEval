@@ -178,10 +178,27 @@ def extract_dla_features(log_texts, embedding_dim=128):
     
     features = np.array(features)
     
-    # 使用 PCA 降維到指定維度
+    # 🎯 安全的PCA降維 - 檢查維度限制
     if features.shape[1] > embedding_dim:
-        pca = PCA(n_components=min(embedding_dim, features.shape[1]))
-        features = pca.fit_transform(features)
+        # 確保n_components不超過min(n_samples, n_features)
+        max_components = min(features.shape[0], features.shape[1])
+        actual_components = min(embedding_dim, max_components)
+        
+        if actual_components > 0:
+            pca = PCA(n_components=actual_components)
+            features = pca.fit_transform(features)
+            
+            # 如果降維後維度仍不足embedding_dim，用零填充
+            if features.shape[1] < embedding_dim:
+                padding = np.zeros((features.shape[0], embedding_dim - features.shape[1]))
+                features = np.hstack([features, padding])
+        else:
+            # 無法進行PCA，直接填充
+            if features.shape[1] < embedding_dim:
+                padding = np.zeros((features.shape[0], embedding_dim - features.shape[1]))
+                features = np.hstack([features, padding])
+            else:
+                features = features[:, :embedding_dim]
     
     return features
 
@@ -692,9 +709,24 @@ def feature_fusion(log_features, metric_features, topology_features, error_featu
         
         for features in aligned_features:
             if features.shape[1] > target_cols:
-                # PCA 降維
-                pca = PCA(n_components=target_cols)
-                features = pca.fit_transform(features)
+                # 🎯 安全的PCA降維
+                max_components = min(features.shape[0], features.shape[1])
+                actual_components = min(target_cols, max_components)
+                
+                if actual_components > 0:
+                    pca = PCA(n_components=actual_components)
+                    features = pca.fit_transform(features)
+                    
+                    # 如果降維後仍不足，填充零
+                    if features.shape[1] < target_cols:
+                        padding = np.zeros((features.shape[0], target_cols - features.shape[1]))
+                        features = np.hstack([features, padding])
+                else:
+                    # 無法PCA，直接截斷或填充
+                    features = features[:, :target_cols] if features.shape[1] >= target_cols else features
+                    if features.shape[1] < target_cols:
+                        padding = np.zeros((features.shape[0], target_cols - features.shape[1]))
+                        features = np.hstack([features, padding])
             elif features.shape[1] < target_cols:
                 # 填充零
                 padding = np.zeros((features.shape[0], target_cols - features.shape[1]))
@@ -714,10 +746,30 @@ def feature_fusion(log_features, metric_features, topology_features, error_featu
     else:
         fused_features = np.hstack(aligned_features)
     
-    # 降維到目標維度
+    # 🎯 安全的PCA降維到目標維度
     if target_dim is not None and fused_features.shape[1] > target_dim:
-        pca = PCA(n_components=target_dim)
-        fused_features = pca.fit_transform(fused_features)
+        max_components = min(fused_features.shape[0], fused_features.shape[1])
+        actual_components = min(target_dim, max_components)
+        
+        if actual_components > 0:
+            pca = PCA(n_components=actual_components)
+            fused_features = pca.fit_transform(fused_features)
+            
+            # 如果降維後仍不足target_dim，填充零
+            if fused_features.shape[1] < target_dim:
+                padding = np.zeros((fused_features.shape[0], target_dim - fused_features.shape[1]))
+                fused_features = np.hstack([fused_features, padding])
+        else:
+            # 無法PCA，直接截斷或填充
+            if fused_features.shape[1] >= target_dim:
+                fused_features = fused_features[:, :target_dim]
+            else:
+                padding = np.zeros((fused_features.shape[0], target_dim - fused_features.shape[1]))
+                fused_features = np.hstack([fused_features, padding])
+    elif target_dim is not None and fused_features.shape[1] < target_dim:
+        # 特徵不足，填充零
+        padding = np.zeros((fused_features.shape[0], target_dim - fused_features.shape[1]))
+        fused_features = np.hstack([fused_features, padding])
     
     return fused_features
 
