@@ -5,16 +5,20 @@ KAN Components: 純粹KAN實現的核心組件
 
 # 基礎KAN層
 from .kan_layers import (
-    AdvancedKANLayer,
     SimplifiedKANLayer,
-    OptimizedGNNKANEncoder
+    OptimizedGNNKANEncoder,
+    AdvancedKANLayer  # alias to SimplifiedKANLayer for compatibility
 )
 
-# 高容量穩定KAN
-from .high_capacity_stable_kan import (
-    HighCapacityGNNKANEncoder,
-    HighCapacityStableKANLayer
-)
+# 高容量穩定KAN (可選)
+try:
+    from .high_capacity_stable_kan import (
+        HighCapacityGNNKANEncoder,
+        HighCapacityStableKANLayer
+    )
+except ImportError:
+    HighCapacityGNNKANEncoder = None
+    HighCapacityStableKANLayer = None
 
 # 梯度穩定器
 from .gradient_stabilizer import GradientStabilizer

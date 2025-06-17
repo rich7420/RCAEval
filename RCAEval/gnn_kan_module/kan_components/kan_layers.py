@@ -633,7 +633,7 @@ class OptimizedGNNKANEncoder(nn.Module):
     
     def __init__(self, input_dim, hidden_dims, output_dim, 
                  num_layers=2, kan_grid_size=8, kan_spline_order=3, 
-                 dropout=0.1, learnable_graph=True):
+                 dropout=0.1, learnable_graph=True, **kwargs):
         super(OptimizedGNNKANEncoder, self).__init__()
         
         self.num_layers = num_layers
@@ -869,6 +869,8 @@ class OptimizedGNNKANEncoder(nn.Module):
                 print("⚠️ 使用原始輸入的安全變換")
                 current_x = torch.tanh(x) * 0.1
         
+        # 僅返回節點嵌入，保持向後兼容
+        self.last_adj = final_adj  # 可選：儲存以便外部存取
         return current_x
 
 
@@ -881,3 +883,6 @@ class KANLayer(SimplifiedKANLayer):
 class GNNKANEncoder(OptimizedGNNKANEncoder):
     """向後兼容的GNN-KAN編碼器"""
     pass
+
+# 向後兼容：將 AdvancedKANLayer 定義為 SimplifiedKANLayer
+AdvancedKANLayer = SimplifiedKANLayer
