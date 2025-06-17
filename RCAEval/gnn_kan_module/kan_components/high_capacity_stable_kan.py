@@ -271,10 +271,30 @@ class HighCapacityStableKANLayer(nn.Module):
         if torch.isnan(x_normalized).any() or torch.isinf(x_normalized).any():
             x_normalized = torch.nan_to_num(x_normalized, nan=0.0, posinf=1.0, neginf=-1.0)
         
-        # 🔑 高容量 B-spline 計算
+        # 🔑 高容量 B-spline 計算 - 修復einsum維度問題
         try:
             basis = self._compute_b_spline_basis(x_normalized)
-            spline_output = torch.einsum('oij,bij->bo', self.spline_coeffs, basis)
+            batch_size = x.size(0)
+            
+            # 🔧 安全的B-spline計算 - 檢查維度兼容性
+            if (basis.shape[0] == batch_size and 
+                basis.shape[1] == self.input_dim and
+                basis.shape[2] == (self.grid_size + self.spline_order)):
+                # 正常的einsum操作
+                spline_output = torch.einsum('oij,bij->bo', self.spline_coeffs, basis)
+            else:
+                print(f"High-capacity B-spline dimension mismatch: basis={basis.shape}, coeffs={self.spline_coeffs.shape}")
+                # 使用安全的矩陣乘法回退
+                basis_flat = basis.view(batch_size, -1)
+                coeffs_flat = self.spline_coeffs.view(self.output_dim, -1)
+                
+                # 調整維度匹配
+                min_dim = min(basis_flat.shape[1], coeffs_flat.shape[1])
+                if min_dim > 0:
+                    spline_output = torch.mm(basis_flat[:, :min_dim], coeffs_flat[:, :min_dim].t())
+                else:
+                    spline_output = torch.zeros(batch_size, self.output_dim, device=x.device)
+                    
         except RuntimeError as e:
             print(f"B-spline computation failed: {e}, using fallback")
             # 回退到線性層

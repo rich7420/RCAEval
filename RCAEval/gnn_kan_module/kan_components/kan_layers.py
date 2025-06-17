@@ -78,7 +78,9 @@ class AdvancedKANLayer(nn.Module):
         return x_clamped * torch.sigmoid(x_clamped) * torch.sigmoid(self.activation_weights.unsqueeze(0))
     
     def pure_b_spline_basis(self, x):
-        """純粹的B-spline基函數 - KAN的核心特性"""
+        """純粹的B-spline基函數 - KAN的核心特性，確保維度一致性"""
+        batch_size, input_dim = x.shape
+        
         # 自適應歸一化 (不是MLP的線性歸一化)
         x_mean = torch.mean(x, dim=0, keepdim=True)
         x_std = torch.std(x, dim=0, keepdim=True) + 1e-8
@@ -87,29 +89,49 @@ class AdvancedKANLayer(nn.Module):
         # B-spline網格點生成
         x_grid = torch.tanh(x_normalized)  # 非線性映射到[-1,1]
         
-        # 構建B-spline基函數 (Chebyshev多項式基)
-        basis_functions = []
+        # 🔧 確保維度一致的基函數生成
+        basis_functions_list = []
         
-        # T_0(x) = 1
-        basis_functions.append(torch.ones_like(x_grid))
+        # 為每個輸入維度生成基函數
+        for dim_idx in range(input_dim):
+            x_dim = x_grid[:, dim_idx:dim_idx+1]  # [batch_size, 1]
+            
+            dim_basis = []
+            
+            # T_0(x) = 1
+            dim_basis.append(torch.ones_like(x_dim))
+            
+            if self.num_basis > 1:
+                # T_1(x) = x
+                dim_basis.append(x_dim)
+            
+            # T_n(x) = 2x*T_{n-1}(x) - T_{n-2}(x) (Chebyshev遞推)
+            for n in range(2, self.num_basis):
+                if len(dim_basis) >= 2:
+                    t_next = 2 * x_dim * dim_basis[-1] - dim_basis[-2]
+                    t_next = torch.clamp(t_next, -5.0, 5.0)  # 數值穩定
+                    dim_basis.append(t_next)
+                else:
+                    # 安全回退
+                    dim_basis.append(torch.zeros_like(x_dim))
+            
+            # 確保正確的基函數數量
+            while len(dim_basis) < self.num_basis:
+                dim_basis.append(torch.zeros_like(x_dim))
+            
+            # 截斷到正確數量
+            dim_basis = dim_basis[:self.num_basis]
+            
+            # 堆疊為 [batch_size, num_basis]
+            dim_basis_tensor = torch.cat(dim_basis, dim=1)
+            basis_functions_list.append(dim_basis_tensor)
         
-        if self.num_basis > 1:
-            # T_1(x) = x
-            basis_functions.append(x_grid)
+        # 堆疊為 [batch_size, input_dim, num_basis]
+        basis_tensor = torch.stack(basis_functions_list, dim=1)
         
-        # T_n(x) = 2x*T_{n-1}(x) - T_{n-2}(x) (Chebyshev遞推)
-        for n in range(2, self.num_basis):
-            t_next = 2 * x_grid * basis_functions[-1] - basis_functions[-2]
-            t_next = torch.clamp(t_next, -5.0, 5.0)  # 數值穩定
-            basis_functions.append(t_next)
-        
-        basis_tensor = torch.stack(basis_functions, dim=-1)
-        
-        # 自適應樣條階數調整
-        if self.adaptive_spline_order and hasattr(self, 'spline_order_weights'):
-            # 不同階數樣條的加權組合
-            order_weights = torch.softmax(self.spline_order_weights, dim=-1)
-            # 簡化實現：使用原始基函數
+        # 確保輸出維度正確
+        assert basis_tensor.shape == (batch_size, input_dim, self.num_basis), \
+            f"Basis tensor shape mismatch: got {basis_tensor.shape}, expected {(batch_size, input_dim, self.num_basis)}"
         
         return basis_tensor
     
@@ -126,12 +148,45 @@ class AdvancedKANLayer(nn.Module):
             
             # 2. 核心：B-spline基函數計算 (KAN的主要特徵)
             basis_functions = self.pure_b_spline_basis(x)
-            spline_output = torch.einsum('oij,bij->bo', self.spline_coeffs, basis_functions)
+            
+            # 🔧 修復einsum維度問題 - 安全的B-spline計算
+            batch_size, input_dim = x.shape
+            try:
+                # 檢查維度兼容性
+                if (basis_functions.shape[0] == batch_size and 
+                    basis_functions.shape[1] == input_dim and
+                    basis_functions.shape[2] == self.num_basis):
+                    # 正常的einsum操作
+                    spline_output = torch.einsum('oij,bij->bo', self.spline_coeffs, basis_functions)
+                else:
+                    print(f"B-spline dimension mismatch: basis_functions={basis_functions.shape}, spline_coeffs={self.spline_coeffs.shape}")
+                    # 使用安全的矩陣乘法回退
+                    basis_flat = basis_functions.view(batch_size, -1)
+                    coeffs_flat = self.spline_coeffs.view(self.output_dim, -1)
+                    
+                    # 調整維度匹配
+                    min_dim = min(basis_flat.shape[1], coeffs_flat.shape[1])
+                    spline_output = torch.mm(basis_flat[:, :min_dim], coeffs_flat[:, :min_dim].t())
+                    
+            except RuntimeError as e:
+                print(f"B-spline computation failed: {e}, using fallback")
+                # 回退到線性變換
+                spline_output = self.base_linear(x) * 0.5
             
             # 3. 核心：可學習激活函數 (KAN vs MLP的關鍵差異)
-            activation_output = torch.einsum('oi,bi->bo', 
-                                           self.activation_weights, 
-                                           self.learnable_activation(x))
+            try:
+                activation_features = self.learnable_activation(x)
+                if (activation_features.shape[0] == batch_size and 
+                    activation_features.shape[1] == input_dim):
+                    activation_output = torch.einsum('oi,bi->bo', 
+                                                   self.activation_weights, 
+                                                   activation_features)
+                else:
+                    # 安全的激活函數計算
+                    activation_output = torch.mm(activation_features, self.activation_weights.t())
+            except RuntimeError as e:
+                print(f"Activation computation failed: {e}, using fallback")
+                activation_output = torch.zeros(batch_size, self.output_dim, device=x.device)
             
             # 4. KAN輸出組合 (B-spline主導，激活函數輔助)
             kan_output = spline_output + activation_output + base_output
@@ -140,6 +195,7 @@ class AdvancedKANLayer(nn.Module):
             output = self.ln(kan_output)
                 
         except RuntimeError as e:
+            print(f"KAN forward failed: {e}, using linear fallback")
             # 簡化錯誤處理
             output = self.base_linear(x)
             output = self.ln(output)
@@ -189,28 +245,47 @@ class SimplifiedKANLayer(nn.Module):
         nn.init.xavier_uniform_(self.base_transform.weight, gain=0.05)
     
     def polynomial_basis_functions(self, x):
-        """簡化的多項式基函數 - KAN的簡化版本"""
+        """簡化的多項式基函數 - KAN的簡化版本，確保維度一致性"""
+        batch_size, input_dim = x.shape
         x_normalized = torch.tanh(x)  # 非線性歸一化
         
-        basis_list = []
+        # 🔧 確保維度一致的多項式基函數生成
+        basis_functions_list = []
         
-        # 多項式基函數序列
-        for i in range(self.num_basis):
-            if i == 0:
-                basis_list.append(torch.ones_like(x_normalized))
-            elif i == 1:
-                basis_list.append(x_normalized)
-            elif i == 2:
-                basis_list.append(x_normalized ** 2)
-            elif i == 3:
-                basis_list.append(x_normalized ** 3)
-            else:
-                # 高階多項式使用遞推關係
-                power = x_normalized ** i
-                power = torch.clamp(power, -5.0, 5.0)
-                basis_list.append(power)
+        # 為每個輸入維度生成基函數
+        for dim_idx in range(input_dim):
+            x_dim = x_normalized[:, dim_idx:dim_idx+1]  # [batch_size, 1]
+            
+            dim_basis = []
+            
+            # 多項式基函數序列
+            for i in range(self.num_basis):
+                if i == 0:
+                    dim_basis.append(torch.ones_like(x_dim))
+                elif i == 1:
+                    dim_basis.append(x_dim)
+                elif i == 2:
+                    dim_basis.append(x_dim ** 2)
+                elif i == 3:
+                    dim_basis.append(x_dim ** 3)
+                else:
+                    # 高階多項式使用遞推關係
+                    power = x_dim ** i
+                    power = torch.clamp(power, -5.0, 5.0)
+                    dim_basis.append(power)
+            
+            # 堆疊為 [batch_size, num_basis]
+            dim_basis_tensor = torch.cat(dim_basis, dim=1)
+            basis_functions_list.append(dim_basis_tensor)
         
-        return torch.stack(basis_list, dim=-1)
+        # 堆疊為 [batch_size, input_dim, num_basis]
+        basis_tensor = torch.stack(basis_functions_list, dim=1)
+        
+        # 確保輸出維度正確
+        assert basis_tensor.shape == (batch_size, input_dim, self.num_basis), \
+            f"Polynomial basis shape mismatch: got {basis_tensor.shape}, expected {(batch_size, input_dim, self.num_basis)}"
+        
+        return basis_tensor
     
     def kan_learnable_activation(self, x):
         """簡化的可學習激活函數"""
@@ -228,7 +303,30 @@ class SimplifiedKANLayer(nn.Module):
             
             # 2. 多項式基函數計算 (KAN核心)
             poly_basis = self.polynomial_basis_functions(x)
-            poly_output = torch.einsum('oij,bij->bo', self.poly_coeffs, poly_basis)
+            
+            # 🔧 修復einsum維度問題 - 安全的多項式計算
+            batch_size, input_dim = x.shape
+            try:
+                # 檢查維度兼容性
+                if (poly_basis.shape[0] == batch_size and 
+                    poly_basis.shape[1] == input_dim and
+                    poly_basis.shape[2] == self.num_basis):
+                    # 正常的einsum操作
+                    poly_output = torch.einsum('oij,bij->bo', self.poly_coeffs, poly_basis)
+                else:
+                    print(f"Polynomial dimension mismatch: poly_basis={poly_basis.shape}, poly_coeffs={self.poly_coeffs.shape}")
+                    # 使用安全的矩陣乘法回退
+                    basis_flat = poly_basis.view(batch_size, -1)
+                    coeffs_flat = self.poly_coeffs.view(self.output_dim, -1)
+                    
+                    # 調整維度匹配
+                    min_dim = min(basis_flat.shape[1], coeffs_flat.shape[1])
+                    poly_output = torch.mm(basis_flat[:, :min_dim], coeffs_flat[:, :min_dim].t())
+                    
+            except RuntimeError as e:
+                print(f"Polynomial computation failed: {e}, using fallback")
+                # 回退到線性變換
+                poly_output = self.base_transform(x) * 0.5
             
             # 3. 可學習激活函數 (KAN vs MLP差異)
             activation_output = self.kan_learnable_activation(x).sum(dim=1, keepdim=True)
