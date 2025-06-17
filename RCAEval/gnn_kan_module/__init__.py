@@ -70,6 +70,15 @@ from .utils import (
     safe_feature_alignment
 )
 
+# 維度適配器 - 解決KAN模型維度問題
+from .dimension_adapters import (
+    DimensionAdapter,
+    TemporalAttentionAdapter,
+    KANLayerAdapter,
+    MessagePassingAdapter,
+    create_adaptive_kan_encoder
+)
+
 # 別名定義 - 確保向後兼容
 AdvancedTrainingManager = AdvancedGNNKANTrainer
 enhanced_feature_fusion = simplified_feature_fusion  # 統一接口
@@ -123,7 +132,14 @@ __all__ = [
     'compute_service_criticality_weights',
     'validate_model_setup',
     'safe_pca_transform',
-    'safe_feature_alignment'
+    'safe_feature_alignment',
+    
+    # 維度適配器
+    'DimensionAdapter',
+    'TemporalAttentionAdapter',
+    'KANLayerAdapter', 
+    'MessagePassingAdapter',
+    'create_adaptive_kan_encoder'
 ]
 
 print("✅ 純粹KAN模組完全載入成功 - 專注於KAN取代MLP的核心價值")

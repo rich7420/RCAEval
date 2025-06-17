@@ -707,13 +707,17 @@ class OptimizedGNNKANEncoder(nn.Module):
                 current_x = layer(current_x)
             else:
                 try:
-                    # 🎯 KAN層處理 (核心：用KAN取代MLP)
+                    # 🎯 KAN層處理 (核心：用KAN取代MLP) - 修復維度問題
                     kan_output = layer(current_x)
                     
                     # 🔧 檢查KAN層輸出
                     if torch.isnan(kan_output).any() or torch.isinf(kan_output).any():
                         print(f"⚠️ KAN層{i}輸出包含無效值，使用輸入")
-                        kan_output = current_x
+                        # 如果維度不匹配，創建安全的輸出
+                        if hasattr(layer, 'output_dim'):
+                            kan_output = torch.zeros(current_x.size(0), layer.output_dim, device=current_x.device)
+                        else:
+                            kan_output = current_x
                     
                     # KAN消息傳遞 (每兩層一次，減少計算)
                     if i % 2 == 0 and edge_index.size(1) > 0:

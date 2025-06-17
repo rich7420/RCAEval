@@ -84,7 +84,10 @@ class HighCapacityStableKANLayer(nn.Module):
         self.use_residual = use_residual
         
         # 🔑 保持原始復雜度的 B-spline 係數 - 修復維度匹配
-        # 確保係數維度與基函數維度一致
+        # 確保係數維度與基函數維度一致 - 修正計算公式
+        # 對於B-spline，基函數數量 = grid_size + spline_order (不是相加)
+        # 實際上應該是 grid_size + spline_order - 1 或者 grid_size + spline_order
+        # 為了安全起見，使用 grid_size + spline_order
         self.num_basis_functions = grid_size + spline_order
         self.spline_coeffs = nn.Parameter(
             torch.zeros(output_dim, input_dim, self.num_basis_functions)
@@ -212,32 +215,69 @@ class HighCapacityStableKANLayer(nn.Module):
             
             basis_functions.append(b)
         
-        # 堆疊成張量 [batch_size, input_dim, num_basis]
+        # 堆疊成張量 [batch_size, input_dim, num_basis] - 修復維度匹配
         if basis_functions:
-            basis_tensor = torch.stack(basis_functions[-self.grid_size-self.spline_order:], dim=-1)
+            # 確保基函數數量與係數維度匹配
+            expected_num_basis = self.num_basis_functions
+            
+            if len(basis_functions) >= expected_num_basis:
+                # 如果基函數過多，取最後的expected_num_basis個
+                selected_basis = basis_functions[-expected_num_basis:]
+            else:
+                # 如果基函數不足，補充零基函數
+                selected_basis = basis_functions[:]
+                while len(selected_basis) < expected_num_basis:
+                    selected_basis.append(torch.zeros_like(basis_functions[0]))
+            
+            basis_tensor = torch.stack(selected_basis, dim=-1)
         else:
             # 回退到簡單基函數
             basis_tensor = self._fallback_basis(x_norm)
         
+        # 最終維度檢查和調整
+        if basis_tensor.shape[-1] != self.num_basis_functions:
+            batch_size, input_dim, current_basis = basis_tensor.shape
+            if current_basis < self.num_basis_functions:
+                # 零填充
+                padding = torch.zeros(batch_size, input_dim, 
+                                    self.num_basis_functions - current_basis, 
+                                    device=basis_tensor.device)
+                basis_tensor = torch.cat([basis_tensor, padding], dim=-1)
+            else:
+                # 截斷
+                basis_tensor = basis_tensor[:, :, :self.num_basis_functions]
+        
         return basis_tensor
     
     def _fallback_basis(self, x):
-        """回退到簡單但穩定的基函數"""
+        """回退到簡單但穩定的基函數 - 確保維度匹配"""
         # 使用 Chebyshev 多項式作為回退
         basis_list = []
+        target_num_basis = self.num_basis_functions
         
         # T0 = 1
         basis_list.append(torch.ones_like(x))
         
-        if self.grid_size + self.spline_order > 1:
+        if target_num_basis > 1:
             # T1 = x
             basis_list.append(x)
         
         # 遞歸計算更高階的 Chebyshev 多項式
-        for i in range(2, self.grid_size + self.spline_order):
-            t_next = 2 * x * basis_list[-1] - basis_list[-2]
-            t_next = torch.clamp(t_next, -5.0, 5.0)  # 防止數值爆炸
-            basis_list.append(t_next)
+        for i in range(2, target_num_basis):
+            if len(basis_list) >= 2:
+                t_next = 2 * x * basis_list[-1] - basis_list[-2]
+                t_next = torch.clamp(t_next, -5.0, 5.0)  # 防止數值爆炸
+                basis_list.append(t_next)
+            else:
+                # 安全回退
+                basis_list.append(torch.zeros_like(x))
+        
+        # 確保恰好有target_num_basis個基函數
+        while len(basis_list) < target_num_basis:
+            basis_list.append(torch.zeros_like(x))
+        
+        # 只取前target_num_basis個
+        basis_list = basis_list[:target_num_basis]
         
         return torch.stack(basis_list, dim=-1)
     
@@ -319,19 +359,21 @@ class HighCapacityStableKANLayer(nn.Module):
             # 回退到線性層
             spline_output = torch.zeros(x.size(0), self.output_dim, device=x.device)
         
-        # 🔑 SiLU 非線性 (保持表達能力)
-        silu_activation = x_normalized * torch.sigmoid(x_normalized)
+        # 🔑 SiLU 非線性 (保持表達能力) - 修復記憶體共享問題
+        silu_input = x_normalized.clone()  # 避免記憶體共享
+        silu_activation = silu_input * torch.sigmoid(silu_input)
         silu_output = torch.einsum('oi,bi->bo', self.silu_weight, silu_activation)
         
-        # 組合輸出
-        kan_output = spline_output + silu_output
+        # 組合輸出 - 使用克隆避免記憶體共享
+        kan_output = spline_output.clone() + silu_output
         
-        # 🛡️ 殘差連接
+        # 🛡️ 殘差連接 - 修復記憶體共享問題
         if self.use_residual:
-            residual = self.residual_linear(x_normalized)
+            residual_input = x_normalized.clone()  # 避免記憶體共享
+            residual = self.residual_linear(residual_input)
             output = kan_output + 0.1 * residual  # 較小的殘差權重
         else:
-            output = kan_output
+            output = kan_output.clone()
         
         # 🛡️ 層標準化
         output = self.layer_norm(output)

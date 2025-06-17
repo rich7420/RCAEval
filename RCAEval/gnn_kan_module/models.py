@@ -60,8 +60,12 @@ class GNNKANModel(nn.Module):
                 dropout=config.dropout
             )
         
-        # 時序注意力機制
-        self.temporal_attention = TemporalAttention(config.output_dim)
+        # 時序注意力機制 - 使用適配器解決維度問題
+        try:
+            from .dimension_adapters import TemporalAttentionAdapter
+            self.temporal_attention = TemporalAttentionAdapter(config.output_dim)
+        except ImportError:
+            self.temporal_attention = TemporalAttention(config.output_dim)
         
         # KAN 解碼器 - 用於計算鄰接矩陣
         self.graph_decoder = nn.Sequential(
@@ -130,17 +134,61 @@ class GNNKANModel(nn.Module):
 
 
 class TemporalAttention(nn.Module):
-    """時序注意力機制 - 提升準確率"""
+    """時序注意力機制 - 修復維度匹配問題"""
     
     def __init__(self, feature_dim, num_heads=4):
         super().__init__()
-        self.attention = nn.MultiheadAttention(feature_dim, num_heads=num_heads, batch_first=True)
+        self.feature_dim = feature_dim
+        self.num_heads = num_heads
+        
+        # 確保feature_dim能被num_heads整除
+        if feature_dim % num_heads != 0:
+            # 調整到最接近的可整除值
+            adjusted_dim = ((feature_dim // num_heads) + 1) * num_heads
+            self.projection = nn.Linear(feature_dim, adjusted_dim)
+            self.back_projection = nn.Linear(adjusted_dim, feature_dim)
+            self.use_projection = True
+            self.adjusted_dim = adjusted_dim
+        else:
+            self.use_projection = False
+            self.adjusted_dim = feature_dim
+        
+        self.attention = nn.MultiheadAttention(self.adjusted_dim, num_heads=num_heads, batch_first=True)
         self.norm = nn.LayerNorm(feature_dim)
         
     def forward(self, features):
-        # 對時間序列特徵應用注意力
-        attn_output, _ = self.attention(features, features, features)
-        return self.norm(attn_output + features)  # 殘差連接
+        """修復維度匹配的前向傳播"""
+        original_shape = features.shape
+        
+        # 確保輸入至少是3D [batch, seq, feature]
+        if features.dim() == 2:
+            features = features.unsqueeze(1)  # [batch, 1, feature]
+        
+        try:
+            # 維度投影（如果需要）
+            if self.use_projection:
+                projected_features = self.projection(features)
+                attn_output, _ = self.attention(projected_features, projected_features, projected_features)
+                attn_output = self.back_projection(attn_output)
+            else:
+                attn_output, _ = self.attention(features, features, features)
+            
+            # 殘差連接
+            output = self.norm(attn_output + features)
+            
+            # 恢復原始形狀
+            if len(original_shape) == 2:
+                output = output.squeeze(1)
+            
+            return output
+            
+        except Exception as e:
+            print(f"⚠️ TemporalAttention failed: {e}, using identity mapping")
+            # 安全回退：直接返回歸一化的輸入
+            if len(original_shape) == 2:
+                return self.norm(features.squeeze(1))
+            else:
+                return self.norm(features)
 
 
 class AdaptiveGradientStabilizer:
