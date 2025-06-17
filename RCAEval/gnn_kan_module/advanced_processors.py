@@ -744,14 +744,10 @@ def psm_metric_processing(metrics_data, target_dim=64):
     if all_features:
         feature_matrix = np.array(all_features).reshape(1, -1)
         
-        # PCA降維到目標維度 - 保留重要信息
-        if feature_matrix.shape[1] > target_dim:
-            from sklearn.decomposition import PCA
-            pca = PCA(n_components=target_dim, random_state=42)
-            feature_matrix = pca.fit_transform(feature_matrix)
-            # 基於解釋方差重新命名特徵
-            explained_var = pca.explained_variance_ratio_
-            feature_names = [f'psm_pc{i}_var{explained_var[i]:.3f}' for i in range(target_dim)]
+        # 🎯 安全的PCA降維 - 使用統一安全函數
+        from .utils import safe_pca_transform
+        feature_matrix = safe_pca_transform(feature_matrix, target_dim)
+        feature_names = [f'psm_component_{i}' for i in range(target_dim)]
     else:
         feature_matrix = np.array([[0]])
         feature_names = ['default_feature']

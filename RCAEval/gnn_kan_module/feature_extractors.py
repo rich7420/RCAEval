@@ -224,12 +224,11 @@ class MultiModalFeatureExtractor:
                 print(f"⚠️ {feature_type}: 過濾後特徵數 {features_filtered.shape[1]} <= 目標維度 {target_components}")
                 return features_filtered
             
-            # 應用 PCA
-            pca = PCA(n_components=target_components, random_state=42)
-            features_pca = pca.fit_transform(features_filtered)
+            # 🎯 安全的PCA應用 - 檢查維度限制
+            from .utils import safe_pca_transform
+            features_pca = safe_pca_transform(features_filtered, target_components)
             
-            explained_variance = np.sum(pca.explained_variance_ratio_)
-            print(f"✓ {feature_type}: PCA {features.shape[1]} -> {target_components}, 解釋方差: {explained_variance:.3f}")
+            print(f"✓ {feature_type}: 安全PCA {features.shape[1]} -> {features_pca.shape[1]}")
             
             return features_pca
             
@@ -249,6 +248,7 @@ class MultiModalFeatureExtractor:
                 metric_data = data[key]
                 
                 print("🔧 Using simplified metric processing (replacing STL decomposition)...")
+                from .feature_processing import simplified_metric_processing
                 features, names = simplified_metric_processing(
                     metric_data, target_dim=self.config.target_feature_dim
                 )
@@ -270,6 +270,7 @@ class MultiModalFeatureExtractor:
         
         # 如果是 DataFrame，當作 metrics 處理
         elif isinstance(data, pd.DataFrame):
+            from .feature_processing import simplified_metric_processing
             features, names = simplified_metric_processing(
                 data, target_dim=self.config.target_feature_dim
             )
@@ -310,7 +311,8 @@ class MultiModalFeatureExtractor:
         # 預處理數據
         processed_data = preprocess(data, dataset='default')
         
-        # 使用簡化的指標處理
+        # 使用簡化的指標處理 - 導入feature_processing中的版本
+        from .feature_processing import simplified_metric_processing
         simplified_features, node_names = simplified_metric_processing(
             processed_data.select_dtypes(include=[np.number]),
             target_dim=self.config.target_feature_dim
@@ -322,137 +324,8 @@ class MultiModalFeatureExtractor:
             return np.array([]), []
 
 
-def simplified_metric_processing(metrics_data, target_dim=64):
-    """
-    簡化的指標處理 - 替換過度複雜的STL分解
-    專注於核心統計特徵，提高通用性和效率
-    
-    Args:
-        metrics_data: 指標數據
-        target_dim: 目標維度
-    
-    Returns:
-        processed_features: 處理後的特徵
-        feature_names: 特徵名稱
-    """
-    print("🔧 Using simplified metric processing (replacing STL decomposition)...")
-    
-    if isinstance(metrics_data, pd.DataFrame):
-        data = metrics_data.select_dtypes(include=[np.number])
-    elif isinstance(metrics_data, np.ndarray):
-        data = pd.DataFrame(metrics_data) if metrics_data.ndim == 2 else pd.DataFrame({'metric': metrics_data})
-    else:
-        try:
-            data = pd.DataFrame(metrics_data)
-        except:
-            return np.array([[0]]), ['default_feature']
-
-    all_features = []
-    feature_names = []
-    
-    for col in data.columns:
-        series = data[col].dropna()
-        col_name = str(col)
-        
-        if len(series) < 3:
-            # 數據太少，使用基本統計
-            basic_stats = [series.mean() if len(series) > 0 else 0, 0, series.min() if len(series) > 0 else 0, series.max() if len(series) > 0 else 0]
-            all_features.extend(basic_stats)
-            feature_names.extend([f'{col_name}_mean', f'{col_name}_std', f'{col_name}_min', f'{col_name}_max'])
-            continue
-        
-        # 🎯 核心統計特徵（替代STL的複雜分解）
-        core_features = [
-            series.mean(),                    # 中心趨勢
-            series.std(),                     # 離散程度
-            series.min(),                     # 最小值
-            series.max(),                     # 最大值
-            series.median(),                  # 中位數
-            np.percentile(series, 25),        # 第一四分位數
-            np.percentile(series, 75),        # 第三四分位數
-            series.skew() if len(series) > 3 else 0,  # 偏度
-        ]
-        
-        # 🎯 簡化的趨勢特徵（替代複雜的週期檢測）
-        if len(series) >= 5:
-            # 線性趨勢
-            x = np.arange(len(series))
-            trend_coef = np.polyfit(x, series.values, 1)[0]
-            
-            # 變化率
-            diff = np.diff(series.values)
-            change_rate = np.mean(np.abs(diff))
-            
-            # 穩定性
-            stability = 1.0 / (1.0 + np.std(diff))
-            
-            trend_features = [trend_coef, change_rate, stability]
-        else:
-            trend_features = [0.0, 0.0, 1.0]
-        
-        # 🎯 異常檢測特徵（替代複雜的回退機制）
-        Q1, Q3 = np.percentile(series, [25, 75])
-        IQR = Q3 - Q1
-        if IQR > 0:
-            outliers = ((series < (Q1 - 1.5 * IQR)) | (series > (Q3 + 1.5 * IQR))).sum()
-            outlier_ratio = outliers / len(series)
-        else:
-            outlier_ratio = 0.0
-        
-        anomaly_features = [outlier_ratio]
-        
-        # 組合所有特徵
-        col_features = core_features + trend_features + anomaly_features
-        all_features.extend(col_features)
-        
-        # 生成特徵名稱
-        names = [
-            f'{col_name}_mean', f'{col_name}_std', f'{col_name}_min', f'{col_name}_max',
-            f'{col_name}_median', f'{col_name}_q25', f'{col_name}_q75', f'{col_name}_skew',
-            f'{col_name}_trend', f'{col_name}_change_rate', f'{col_name}_stability',
-            f'{col_name}_outlier_ratio'
-        ]
-        feature_names.extend(names)
-    
-    # 轉換為矩陣格式
-    if all_features:
-        feature_matrix = np.array(all_features).reshape(1, -1)
-        
-        # 🎯 安全的PCA降維 - 檢查維度限制
-        if feature_matrix.shape[1] > target_dim:
-            from sklearn.decomposition import PCA
-            # 確保n_components不超過min(n_samples, n_features)
-            max_components = min(feature_matrix.shape[0], feature_matrix.shape[1])
-            actual_components = min(target_dim, max_components)
-            
-            if actual_components > 0:
-                pca = PCA(n_components=actual_components, random_state=42)
-                feature_matrix = pca.fit_transform(feature_matrix)
-                
-                # 如果降維後維度仍不足target_dim，用零填充
-                if feature_matrix.shape[1] < target_dim:
-                    padding = np.zeros((feature_matrix.shape[0], target_dim - feature_matrix.shape[1]))
-                    feature_matrix = np.hstack([feature_matrix, padding])
-                
-                feature_names = [f'pca_component_{i}' for i in range(target_dim)]
-            else:
-                # 無法進行PCA，直接填充到目標維度
-                if feature_matrix.shape[1] < target_dim:
-                    padding = np.zeros((1, target_dim - feature_matrix.shape[1]))
-                    feature_matrix = np.hstack([feature_matrix, padding])
-                feature_names = feature_names + [f'padding_{i}' for i in range(len(feature_names), target_dim)]
-        elif feature_matrix.shape[1] < target_dim:
-            # 特徵數不足，用零填充
-            padding = np.zeros((1, target_dim - feature_matrix.shape[1]))
-            feature_matrix = np.hstack([feature_matrix, padding])
-            feature_names = feature_names + [f'padding_{i}' for i in range(len(feature_names), target_dim)]
-    else:
-        # 沒有特徵，創建默認特徵
-        feature_matrix = np.zeros((1, target_dim))
-        feature_names = [f'default_feature_{i}' for i in range(target_dim)]
-    
-    print(f"✓ Simplified processing: {feature_matrix.shape[1]} features extracted")
-    return feature_matrix, feature_names
+# simplified_metric_processing 函數已移至 feature_processing.py
+# 避免重複代碼，統一使用 feature_processing 中的版本
 
 
 def enhanced_trace_processing(trace_data, inject_time=None):
@@ -684,45 +557,10 @@ def simplified_feature_fusion(log_feats, metric_feats, topo_feats, error_feats, 
         fused_features = np.hstack(aligned_features)
         print(f"✓ 簡單拼接融合 {len(feature_names)} 種特徵")
     
-    # 🎯 安全的PCA降維 - 檢查維度限制
-    if fused_features.shape[1] > target_dim:
-        try:
-            from sklearn.decomposition import PCA
-            # 確保n_components不超過min(n_samples, n_features)
-            max_components = min(fused_features.shape[0], fused_features.shape[1])
-            actual_components = min(target_dim, max_components)
-            
-            if actual_components > 0:
-                pca = PCA(n_components=actual_components, random_state=42)
-                fused_features = pca.fit_transform(fused_features)
-                
-                # 如果降維後維度仍不足target_dim，用零填充
-                if fused_features.shape[1] < target_dim:
-                    padding = np.zeros((fused_features.shape[0], target_dim - fused_features.shape[1]))
-                    fused_features = np.hstack([fused_features, padding])
-                
-                print(f"✓ 安全PCA降維: {fused_features.shape[1]} -> {target_dim}")
-            else:
-                # 無法進行PCA，直接截斷或填充
-                if fused_features.shape[1] >= target_dim:
-                    fused_features = fused_features[:, :target_dim]
-                else:
-                    padding = np.zeros((fused_features.shape[0], target_dim - fused_features.shape[1]))
-                    fused_features = np.hstack([fused_features, padding])
-                print(f"✓ 直接調整到目標維度: {target_dim}")
-        except Exception as e:
-            print(f"⚠️ PCA降維失敗: {e}, 使用截斷方法")
-            # 簡單截斷或填充
-            if fused_features.shape[1] >= target_dim:
-                fused_features = fused_features[:, :target_dim]
-            else:
-                padding = np.zeros((fused_features.shape[0], target_dim - fused_features.shape[1]))
-                fused_features = np.hstack([fused_features, padding])
-    elif fused_features.shape[1] < target_dim:
-        # 特徵數不足，用零填充
-        padding = np.zeros((fused_features.shape[0], target_dim - fused_features.shape[1]))
-        fused_features = np.hstack([fused_features, padding])
-        print(f"✓ 特徵填充到目標維度: {target_dim}")
+    # 🎯 安全的PCA降維 - 使用統一安全函數
+    from .utils import safe_pca_transform
+    fused_features = safe_pca_transform(fused_features, target_dim)
+    print(f"✓ 安全特徵融合完成: {fused_features.shape}")
     
     return fused_features
 

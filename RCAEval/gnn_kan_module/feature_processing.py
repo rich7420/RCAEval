@@ -133,33 +133,10 @@ def ica_metric_processing(metrics_data, n_components=None, target_dim=64):
         # 轉換為矩陣格式
         feature_matrix = np.array(ica_features).reshape(1, -1)
         
-        # 🎯 安全的PCA降維 - 確保不超過維度限制
-        if feature_matrix.shape[1] > target_dim:
-            # 確保n_components不超過min(n_samples, n_features)
-            max_components = min(feature_matrix.shape[0], feature_matrix.shape[1])
-            actual_components = min(target_dim, max_components)
-            
-            if actual_components > 0:
-                pca = PCA(n_components=actual_components, random_state=42)
-                feature_matrix = pca.fit_transform(feature_matrix)
-                
-                # 如果降維後維度仍不足target_dim，用零填充
-                if feature_matrix.shape[1] < target_dim:
-                    padding = np.zeros((feature_matrix.shape[0], target_dim - feature_matrix.shape[1]))
-                    feature_matrix = np.hstack([feature_matrix, padding])
-                
-                feature_names = [f'ica_pca_component_{i}' for i in range(target_dim)]
-            else:
-                # 無法進行PCA，直接填充到目標維度
-                if feature_matrix.shape[1] < target_dim:
-                    padding = np.zeros((feature_matrix.shape[0], target_dim - feature_matrix.shape[1]))
-                    feature_matrix = np.hstack([feature_matrix, padding])
-                feature_names = feature_names + [f'ica_padding_{i}' for i in range(len(feature_names), target_dim)]
-        elif feature_matrix.shape[1] < target_dim:
-            # 特徵數不足，用零填充
-            padding = np.zeros((feature_matrix.shape[0], target_dim - feature_matrix.shape[1]))
-            feature_matrix = np.hstack([feature_matrix, padding])
-            feature_names = feature_names + [f'ica_padding_{i}' for i in range(len(feature_names), target_dim)]
+        # 🎯 安全的PCA降維 - 使用統一安全函數
+        from .utils import safe_pca_transform
+        feature_matrix = safe_pca_transform(feature_matrix, target_dim)
+        feature_names = [f'ica_component_{i}' for i in range(target_dim)]
         
         print(f"✓ ICA processing: {feature_matrix.shape[1]} features from {n_components} ICA components")
         return feature_matrix, feature_names, ica
@@ -283,35 +260,10 @@ def kpca_metric_processing(metrics_data, kernel='rbf', gamma=None, target_dim=64
         
         feature_matrix = np.array(all_features).reshape(1, -1)
         
-        # 🎯 安全的維度調整 - 確保不超過維度限制
-        if feature_matrix.shape[1] > target_dim:
-            # 使用PCA進一步降維，但要檢查維度限制
-            max_components = min(feature_matrix.shape[0], feature_matrix.shape[1])
-            actual_components = min(target_dim, max_components)
-            
-            if actual_components > 0:
-                pca = PCA(n_components=actual_components, random_state=42)
-                feature_matrix = pca.fit_transform(feature_matrix)
-                
-                # 如果降維後維度仍不足target_dim，用零填充
-                if feature_matrix.shape[1] < target_dim:
-                    padding = np.zeros((feature_matrix.shape[0], target_dim - feature_matrix.shape[1]))
-                    feature_matrix = np.hstack([feature_matrix, padding])
-                
-                feature_names = [f'kpca_pca_component_{i}' for i in range(target_dim)]
-            else:
-                # 無法進行PCA，直接填充到目標維度
-                if feature_matrix.shape[1] < target_dim:
-                    padding = np.zeros((feature_matrix.shape[0], target_dim - feature_matrix.shape[1]))
-                    feature_matrix = np.hstack([feature_matrix, padding])
-                feature_names = feature_names + [f'kpca_padding_{i}' for i in range(len(feature_names), target_dim)]
-        elif feature_matrix.shape[1] < target_dim:
-            # 如果特徵數不足，進行填充
-            padding = np.zeros((feature_matrix.shape[0], target_dim - feature_matrix.shape[1]))
-            feature_matrix = np.hstack([feature_matrix, padding])
-            # 添加填充特徵名稱
-            for i in range(len(feature_names), target_dim):
-                feature_names.append(f'kpca_padded_{i}')
+        # 🎯 安全的維度調整 - 使用統一安全函數
+        from .utils import safe_pca_transform
+        feature_matrix = safe_pca_transform(feature_matrix, target_dim)
+        feature_names = [f'kpca_component_{i}' for i in range(target_dim)]
         
         print(f"✓ kPCA processing: {feature_matrix.shape[1]} features from {n_components} components")
         return feature_matrix, feature_names
@@ -417,34 +369,10 @@ def simplified_metric_processing(metrics_data, target_dim=64):
     if all_features:
         feature_matrix = np.array(all_features).reshape(1, -1)
         
-        # 🎯 安全的PCA降維 - 檢查維度限制
-        if feature_matrix.shape[1] > target_dim:
-            from sklearn.decomposition import PCA
-            # 確保n_components不超過min(n_samples, n_features)
-            max_components = min(feature_matrix.shape[0], feature_matrix.shape[1])
-            actual_components = min(target_dim, max_components)
-            
-            if actual_components > 0:
-                pca = PCA(n_components=actual_components, random_state=42)
-                feature_matrix = pca.fit_transform(feature_matrix)
-                
-                # 如果降維後維度仍不足target_dim，用零填充
-                if feature_matrix.shape[1] < target_dim:
-                    padding = np.zeros((feature_matrix.shape[0], target_dim - feature_matrix.shape[1]))
-                    feature_matrix = np.hstack([feature_matrix, padding])
-                
-                feature_names = [f'pca_component_{i}' for i in range(target_dim)]
-            else:
-                # 無法進行PCA，直接填充到目標維度
-                if feature_matrix.shape[1] < target_dim:
-                    padding = np.zeros((1, target_dim - feature_matrix.shape[1]))
-                    feature_matrix = np.hstack([feature_matrix, padding])
-                feature_names = feature_names + [f'padding_{i}' for i in range(len(feature_names), target_dim)]
-        elif feature_matrix.shape[1] < target_dim:
-            # 特徵數不足，用零填充
-            padding = np.zeros((1, target_dim - feature_matrix.shape[1]))
-            feature_matrix = np.hstack([feature_matrix, padding])
-            feature_names = feature_names + [f'padding_{i}' for i in range(len(feature_names), target_dim)]
+        # 🎯 安全的PCA降維 - 使用統一安全函數
+        from .utils import safe_pca_transform
+        feature_matrix = safe_pca_transform(feature_matrix, target_dim)
+        feature_names = [f'simplified_component_{i}' for i in range(target_dim)]
     else:
         # 沒有特徵，創建默認特徵
         feature_matrix = np.zeros((1, target_dim))
@@ -688,14 +616,10 @@ def psm_metric_processing(metrics_data, target_dim=64):
     if all_features:
         feature_matrix = np.array(all_features).reshape(1, -1)
         
-        # PCA降維到目標維度 - 保留重要信息
-        if feature_matrix.shape[1] > target_dim:
-            from sklearn.decomposition import PCA
-            pca = PCA(n_components=target_dim, random_state=42)
-            feature_matrix = pca.fit_transform(feature_matrix)
-            # 基於解釋方差重新命名特徵
-            explained_var = pca.explained_variance_ratio_
-            feature_names = [f'psm_pc{i}_var{explained_var[i]:.3f}' for i in range(target_dim)]
+        # 🎯 安全的PCA降維 - 使用統一安全函數
+        from .utils import safe_pca_transform
+        feature_matrix = safe_pca_transform(feature_matrix, target_dim)
+        feature_names = [f'psm_component_{i}' for i in range(target_dim)]
     else:
         feature_matrix = np.array([[0]])
         feature_names = ['default_feature']
