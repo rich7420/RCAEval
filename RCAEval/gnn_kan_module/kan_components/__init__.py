@@ -7,8 +7,13 @@ KAN Components: 純粹KAN實現的核心組件
 from .kan_layers import (
     SimplifiedKANLayer,
     OptimizedGNNKANEncoder,
-    AdvancedKANLayer  # alias to SimplifiedKANLayer for compatibility
+    AdvancedKANLayer,
+    CompatibleSimplifiedKANLayer,
+    create_compatible_kan_layer
 )
+
+# 確保向後兼容性
+KANLayer = SimplifiedKANLayer
 
 # 高容量穩定KAN (可選)
 try:
@@ -28,17 +33,20 @@ __all__ = [
     # 基礎KAN層
     'AdvancedKANLayer',
     'SimplifiedKANLayer',
+    'CompatibleSimplifiedKANLayer',
     'OptimizedGNNKANEncoder',
+    'KANLayer',
     
     # 高容量KAN
     'HighCapacityGNNKANEncoder',
     'HighCapacityStableKANLayer',
     
-    # 穩定性組件
+    # 穩定性組件  
     'GradientStabilizer',
     
     # 工具函數
-    'create_high_capacity_stable_model'
+    'create_high_capacity_stable_model',
+    'create_compatible_kan_layer'
 ]
 
 print("✅ KAN組件完全載入成功 - 專注於KAN取代MLP的核心價值")

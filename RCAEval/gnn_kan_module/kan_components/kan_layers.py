@@ -335,15 +335,15 @@ class SimplifiedKANLayer(nn.Module):
         self.reset_parameters()
     
     def reset_parameters(self):
-        """KAN特有的初始化"""
-        # 多項式係數初始化
-        nn.init.normal_(self.poly_coeffs, mean=0.0, std=0.02)
+        """KAN特有的初始化 - 加強數值穩定性"""
+        # 多項式係數初始化 - 更小的初始值
+        nn.init.normal_(self.poly_coeffs, mean=0.0, std=0.01)
         
-        # 激活尺度初始化
-        nn.init.uniform_(self.activation_scale, 0.05, 0.15)
+        # 激活尺度初始化 - 更保守的範圍
+        nn.init.uniform_(self.activation_scale, 0.01, 0.05)
         
-        # 基礎變換初始化 (小權重)
-        nn.init.xavier_uniform_(self.base_transform.weight, gain=0.05)
+        # 基礎變換初始化 - 更小的權重
+        nn.init.xavier_uniform_(self.base_transform.weight, gain=0.01)
     
     def polynomial_basis_functions(self, x):
         """簡化的多項式基函數 - KAN的簡化版本，修復維度問題"""
@@ -647,13 +647,12 @@ class OptimizedGNNKANEncoder(nn.Module):
         dims = [input_dim] + hidden_dims + [output_dim]
         
         for i in range(len(dims) - 1):
-            # 使用AdvancedKANLayer完全取代MLP線性層
-            kan_layers.append(AdvancedKANLayer(
+            # 🔧 修復：使用兼容的KAN層創建函數
+            kan_layers.append(CompatibleSimplifiedKANLayer(
                 dims[i], dims[i + 1], 
                 num_basis=kan_grid_size,
-                spline_order=kan_spline_order,
                 grid_size=kan_grid_size,
-                adaptive_spline_order=True
+                spline_order=kan_spline_order
             ))
             
             # Dropout (但不使用MLP常用的ReLU/GELU等固定激活)
@@ -664,15 +663,15 @@ class OptimizedGNNKANEncoder(nn.Module):
         
         # 簡化消息傳遞 (避免MLP結構)
         self.message_processors = nn.ModuleList([
-            SimplifiedKANLayer(dims[i + 1], dims[i + 1])
+            CompatibleSimplifiedKANLayer(dims[i + 1], dims[i + 1])
             for i in range(len(dims) - 1)
         ])
         
         # 可學習圖結構
         if learnable_graph:
             self.edge_learner = nn.Sequential(
-                SimplifiedKANLayer(dims[-1] * 2, dims[-1]),
-                SimplifiedKANLayer(dims[-1], 1)
+                CompatibleSimplifiedKANLayer(dims[-1] * 2, dims[-1]),
+                CompatibleSimplifiedKANLayer(dims[-1], 1)
             )
         
     def kan_message_passing(self, x, edge_index, layer_idx):
@@ -870,19 +869,52 @@ class OptimizedGNNKANEncoder(nn.Module):
                 current_x = torch.tanh(x) * 0.1
         
         # 僅返回節點嵌入，保持向後兼容
-        self.last_adj = final_adj  # 可選：儲存以便外部存取
+        # self.last_adj = final_adj  # 可選：儲存以便外部存取
         return current_x
 
 
 # 向後兼容的別名 - 統一接口
 class KANLayer(SimplifiedKANLayer):
     """向後兼容的KAN層"""
-    pass
+    def __init__(self, input_dim, output_dim, num_basis=8, grid_size=None, spline_order=None, **kwargs):
+        # 調用SimplifiedKANLayer，忽略不支持的參數
+        super().__init__(input_dim, output_dim, num_basis)
 
 
 class GNNKANEncoder(OptimizedGNNKANEncoder):
     """向後兼容的GNN-KAN編碼器"""
     pass
 
-# 向後兼容：將 AdvancedKANLayer 定義為 SimplifiedKANLayer
-AdvancedKANLayer = SimplifiedKANLayer
+
+# 🔧 修復：確保 SimplifiedKANLayer 可以處理 AdvancedKANLayer 的參數但忽略不支持的參數
+class CompatibleSimplifiedKANLayer(SimplifiedKANLayer):
+    """兼容性增強的簡化KAN層 - 可接受但忽略高級參數"""
+    
+    def __init__(self, input_dim, output_dim, num_basis=8, 
+                 spline_order=None, grid_size=None, 
+                 adaptive_spline_order=None, **kwargs):
+        # 只使用 SimplifiedKANLayer 支持的參數
+        super().__init__(input_dim, output_dim, num_basis)
+        
+        # 記錄但不使用高級參數
+        self._ignored_params = {
+            'spline_order': spline_order,
+            'grid_size': grid_size, 
+            'adaptive_spline_order': adaptive_spline_order
+        }
+
+
+# 🔧 正確的向後兼容：不要重新定義原本的 AdvancedKANLayer
+# 如果需要簡化版本，創建一個包裝器而不是別名
+def create_compatible_kan_layer(input_dim, output_dim, **kwargs):
+    """創建兼容的KAN層 - 自動選擇合適的實現"""
+    # 如果傳入了高級參數，嘗試使用 AdvancedKANLayer
+    advanced_params = {'spline_order', 'grid_size', 'adaptive_spline_order'}
+    if any(param in kwargs for param in advanced_params):
+        try:
+            return AdvancedKANLayer(input_dim, output_dim, **kwargs)
+        except Exception:
+            # 回退到兼容的簡化版本
+            return CompatibleSimplifiedKANLayer(input_dim, output_dim, **kwargs)
+    else:
+        return SimplifiedKANLayer(input_dim, output_dim, **kwargs)

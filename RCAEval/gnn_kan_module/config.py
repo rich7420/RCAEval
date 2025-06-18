@@ -53,8 +53,8 @@ class SimplifiedGNNKANConfig:
         self.warmup_epochs = 10  # 預熱階段
         
         # 🔧 穩定性配置 - 簡化但有效
-        self.gradient_clip_norm = 1.0      # 保持梯度裁剪
-        self.stability_check_freq = 50     # 減少檢查頻率（從20→50）
+        self.gradient_clip_norm = 0.5      # 更嚴格的梯度裁剪
+        self.stability_check_freq = 10     # 更頻繁的檢查
         self.use_layer_norm = True         # 使用LayerNorm
         self.use_batch_norm = False        # 不使用BatchNorm（避免MLP特性）
         
@@ -100,6 +100,14 @@ class SimplifiedGNNKANConfig:
         self.num_layers = self.num_gnn_layers  # 層數別名
         self.use_residual = True  # 殘差連接
         self.kan_config = self.get_kan_config()  # KAN配置對象
+        
+        # 🔧 新增數值穩定性配置
+        self.nan_detection_freq = 5        # NaN檢測頻率
+        self.parameter_reset_threshold = 3  # 參數重置閾值
+        self.learning_rate_decay = 0.95    # 學習率衰減
+        self.min_learning_rate = 1e-6      # 最小學習率
+        self.use_ema = True                # 指數移動平均
+        self.ema_decay = 0.999             # EMA衰減率
     
     def get_feature_processing_config(self):
         """獲取特徵處理配置"""

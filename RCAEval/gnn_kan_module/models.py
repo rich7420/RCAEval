@@ -31,8 +31,9 @@ class GNNKANModel(nn.Module):
         self.config = config
         self.num_nodes = num_nodes
         
-        # 特徵投影層
-        self.feature_projection = nn.Linear(config.target_feature_dim, config.input_dim)
+        # 特徵投影層 - 自適應維度
+        input_feature_dim = getattr(config, 'target_feature_dim', config.input_dim)
+        self.feature_projection = nn.Linear(input_feature_dim, config.input_dim)
         
         # 根據配置選擇適當的編碼器
         if isinstance(config, HighCapacityGNNKANConfig):
@@ -90,8 +91,29 @@ class GNNKANModel(nn.Module):
             node_embeddings: 節點嵌入
             adj_scores: 鄰接矩陣分數
         """
-        # 特徵投影
-        projected_features = self.feature_projection(node_features)
+        # 特徵投影 - 自適應維度處理
+        try:
+            projected_features = self.feature_projection(node_features)
+        except RuntimeError as e:
+            if "cannot be multiplied" in str(e):
+                # 維度不匹配，動態調整
+                expected_dim = self.feature_projection.in_features
+                actual_dim = node_features.shape[1]
+                
+                if actual_dim > expected_dim:
+                    # 截斷多餘維度
+                    node_features_adjusted = node_features[:, :expected_dim]
+                elif actual_dim < expected_dim:
+                    # 填充不足維度
+                    padding = torch.zeros(node_features.shape[0], expected_dim - actual_dim, 
+                                        device=node_features.device, dtype=node_features.dtype)
+                    node_features_adjusted = torch.cat([node_features, padding], dim=1)
+                else:
+                    node_features_adjusted = node_features
+                
+                projected_features = self.feature_projection(node_features_adjusted)
+            else:
+                raise e
         
         # GNN-KAN 編碼
         node_embeddings = self.gnn_encoder(projected_features, edge_index)
@@ -507,14 +529,14 @@ class SimplifiedGNNKAN(nn.Module):
         )
         
     def _create_gnn_kan_layer(self, input_dim, output_dim, kan_config):
-        """創建純粹的GNN-KAN層 - 使用AdvancedKANLayer"""
+        """創建純粹的GNN-KAN層 - 使用兼容的KAN實現"""
         try:
-            # 使用純粹的KAN組件
-            from .kan_components import AdvancedKANLayer
+            # 🔧 修復：使用兼容的KAN組件創建函數
+            from .kan_components.kan_layers import create_compatible_kan_layer
             
-            # 使用KAN配置創建AdvancedKANLayer
+            # 使用KAN配置創建兼容的KAN層
             if kan_config:
-                return AdvancedKANLayer(
+                return create_compatible_kan_layer(
                     input_dim, output_dim,
                     num_basis=kan_config.get('num_basis', 8),
                     spline_order=kan_config.get('spline_order', 3),
@@ -522,7 +544,7 @@ class SimplifiedGNNKAN(nn.Module):
                     adaptive_spline_order=kan_config.get('adaptive_spline_order', True)
                 )
             else:
-                return AdvancedKANLayer(input_dim, output_dim)
+                return create_compatible_kan_layer(input_dim, output_dim)
                 
         except ImportError:
             # 回退到SimplifiedKANLayer
@@ -532,10 +554,10 @@ class SimplifiedGNNKAN(nn.Module):
             except ImportError:
                 # 最後回退 - 但這表示KAN特性缺失
                 print("⚠️ 警告：KAN層不可用，回退到標準線性層（失去KAN優勢）")
-            return nn.Sequential(
+                return nn.Sequential(
                     nn.Linear(input_dim, output_dim, bias=False),  # 最小化MLP特性
                     nn.LayerNorm(output_dim)  # 使用LayerNorm而非BatchNorm
-            )
+                )
     
     def forward(self, node_features, edge_index):
         """

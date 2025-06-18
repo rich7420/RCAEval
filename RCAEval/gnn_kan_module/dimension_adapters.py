@@ -295,7 +295,8 @@ def create_adaptive_kan_encoder(input_dim, hidden_dims, output_dim, **kwargs):
     創建自適應KAN編碼器 - 自動處理維度匹配
     確保KAN取代MLP的過程順利進行
     """
-    from .kan_components import AdvancedKANLayer, SimplifiedKANLayer
+    # 🔧 修復：使用兼容的KAN層創建函數
+    from .kan_components.kan_layers import create_compatible_kan_layer, AdvancedKANLayer, SimplifiedKANLayer
     
     layers = []
     dims = [input_dim] + hidden_dims + [output_dim]
@@ -304,11 +305,20 @@ def create_adaptive_kan_encoder(input_dim, hidden_dims, output_dim, **kwargs):
         current_input = dims[i]
         current_output = dims[i + 1]
         
-        # 創建KAN層
+        # 🔧 修復：創建兼容的KAN層
         try:
-            kan_layer = AdvancedKANLayer(current_input, current_output)
-        except:
-            kan_layer = SimplifiedKANLayer(current_input, current_output)
+            kan_layer = create_compatible_kan_layer(current_input, current_output, **kwargs)
+        except Exception as first_error:
+            try:
+                # 回退到原始 AdvancedKANLayer
+                kan_layer = AdvancedKANLayer(current_input, current_output)
+            except Exception as second_error:
+                try:
+                    # 最後回退到 SimplifiedKANLayer
+                    kan_layer = SimplifiedKANLayer(current_input, current_output)
+                except Exception as final_error:
+                    print(f"⚠️ 所有KAN層創建失敗: {final_error}，使用線性層")
+                    kan_layer = nn.Linear(current_input, current_output)
         
         # 包裝為適配器
         adapted_layer = KANLayerAdapter(kan_layer, current_output)
