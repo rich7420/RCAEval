@@ -95,8 +95,7 @@ def align_to_timestamps(df, target_timestamps, timestamp_col='time'):
 
 def extract_log_features(log_data, use_dla=False, max_features=1000, ngram_range=(1, 2)):
     """
-    🔧 重定向到統一日誌特徵提取器
-    避免重複實現，保持向後兼容性
+    🔧 重定向到統一日誌處理器
     """
     try:
         from ..processors.log_processors import extract_log_features as unified_extract_log_features
@@ -104,37 +103,12 @@ def extract_log_features(log_data, use_dla=False, max_features=1000, ngram_range
             log_data=log_data,
             use_dla=use_dla,
             max_features=max_features,
-            method='tfidf' if max_features > 100 else 'simple',
-            target_dim=max_features
+            method='dla' if use_dla else 'tfidf',
+            target_dim=min(max_features, 1000)
         )
-    except ImportError:
-        # 基本回退實現
-        if isinstance(log_data, pd.DataFrame):
-            log_texts = []
-            for col in log_data.columns:
-                if log_data[col].dtype == 'object':
-                    log_texts.extend(log_data[col].dropna().astype(str).tolist())
-        else:
-            log_texts = log_data if isinstance(log_data, list) else [str(log_data)]
-        
-        if not log_texts:
-            return np.array([]), []
-        
-        # 簡化特徵
-        features = []
-        for text in log_texts:
-            text_features = [
-                len(text),
-                text.count(' '),
-                text.count('ERROR'),
-                text.count('WARN'),
-            ]
-            features.append(text_features)
-        
-        return np.array(features), ['length', 'spaces', 'errors', 'warnings']
     except Exception as e:
-        print(f"⚠️ 日誌特徵提取重定向失敗: {e}")
-        return np.array([[0]]), ['fallback_feature']
+        print(f"⚠️ 重定向到統一日誌處理器失敗: {e}")
+        return np.array([[0]]), ['default_log_feature']
 
 
 def extract_dla_features(log_texts, embedding_dim=128):

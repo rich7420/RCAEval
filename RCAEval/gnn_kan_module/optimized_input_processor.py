@@ -36,27 +36,236 @@ class KANOptimizedData:
 
 
 class FastServiceExtractor:
-    """快速微服務提取器"""
+    """快速微服務提取器 - 學習其他e2e方法的通用性"""
     
     def __init__(self):
-        self.service_patterns = [
+        # 🎯 分層的微服務模式匹配策略
+        
+        # 第一層：已知微服務名稱模式（來自數據集）
+        self.known_services = {
+            # Online Boutique
             'adservice', 'cartservice', 'checkoutservice', 'currencyservice',
             'emailservice', 'paymentservice', 'productcatalogservice', 
-            'recommendationservice', 'shippingservice', 'frontend'
+            'recommendationservice', 'shippingservice', 'frontend',
+            # Sock Shop
+            'front-end', 'user', 'carts', 'orders', 'shipping', 'payment',
+            'catalogue', 'user-db', 'carts-db', 'orders-db', 'catalogue-db',
+            # Train Ticket  
+            'ts-ui-dashboard', 'ts-auth-service', 'ts-user-service', 'ts-verification-code-service',
+            'ts-account-service', 'ts-route-service', 'ts-train-service', 'ts-travel-service',
+            'ts-preserve-service', 'ts-security-service', 'ts-inside-payment-service',
+            'ts-execute-service', 'ts-contacts-service', 'ts-order-service', 'ts-order-other-service',
+            'ts-config-service', 'ts-station-service', 'ts-travel2-service', 'ts-preserve-other-service',
+            'ts-basic-service', 'ts-ticketinfo-service', 'ts-price-service', 'ts-notification-service',
+            'ts-seat-service', 'ts-travel-plan-service', 'ts-route-plan-service', 'ts-food-service',
+            'ts-consign-service', 'ts-consign-price-service', 'ts-admin-order-service',
+            'ts-admin-basic-info-service', 'ts-admin-route-service', 'ts-admin-travel-service',
+            'ts-admin-user-service', 'ts-cancel-service', 'ts-rebook-service', 'ts-assurance-service',
+            'ts-food-map-service', 'ts-gateway-service'
+        }
+        
+        # 第二層：通用組件模式
+        self.component_patterns = [
+            'service', 'api', 'backend', 'frontend', 'database', 'db', 'web', 'app',
+            'server', 'client', 'worker', 'processor', 'handler', 'gateway', 'proxy',
+            'auth', 'user', 'admin', 'ui', 'dashboard', 'config', 'monitor'
         ]
         
-    def extract_services_batch(self, columns: List[str]) -> Dict[str, List[str]]:
-        """批量提取微服務對應的列"""
-        service_columns = {}
-        columns_lower = [col.lower() for col in columns]
+        # 第三層：指標類型模式（如果無法按服務分組）
+        self.metric_patterns = {
+            'cpu': ['cpu', 'processor'],
+            'memory': ['mem', 'memory', 'ram'],
+            'network': ['net', 'network', 'io', 'rx', 'tx', 'bytes'],
+            'disk': ['disk', 'storage', 'volume'],
+            'latency': ['lat', 'latency', 'response', 'duration'],
+            'throughput': ['rps', 'qps', 'throughput', 'rate'],
+            'error': ['error', 'err', 'exception', 'fail'],
+            'availability': ['up', 'down', 'available', 'health']
+        }
         
-        for service in self.service_patterns:
-            matching_cols = [
-                columns[i] for i, col_lower in enumerate(columns_lower)
-                if service in col_lower
-            ]
+    def extract_services_batch(self, columns: List[str]) -> Dict[str, List[str]]:
+        """批量提取微服務對應的列 - 多層策略"""
+        service_columns = {}
+        
+        # 🎯 策略1：精確匹配已知微服務
+        service_columns = self._extract_known_services(columns)
+        
+        # 🎯 策略2：如果精確匹配結果不足，使用模式匹配
+        if len(service_columns) <= 1:
+            service_columns.update(self._extract_pattern_services(columns))
+        
+        # 🎯 策略3：如果仍然不足，使用前綴分組
+        if len(service_columns) <= 1:
+            service_columns.update(self._extract_prefix_services(columns))
+        
+        # 🎯 策略4：如果還是不足，按指標類型分組
+        if len(service_columns) <= 1:
+            service_columns = self._extract_metric_services(columns)
+        
+        # 🚀 策略5：最後手段，智能分割確保多節點
+        if len(service_columns) <= 1 and len(columns) > 1:
+            service_columns = self._create_multiple_services(columns)
+        
+        # 📊 優化：清理空分組並限制分組數量
+        service_columns = self._optimize_service_groups(service_columns, columns)
+        
+        return service_columns
+    
+    def _extract_known_services(self, columns: List[str]) -> Dict[str, List[str]]:
+        """精確匹配已知微服務"""
+        service_columns = {}
+        
+        for col in columns:
+            col_lower = col.lower().replace('-', '_').replace('.', '_')
+            
+            # 檢查是否包含已知微服務名稱
+            for service in self.known_services:
+                service_normalized = service.replace('-', '_')
+                if service_normalized in col_lower:
+                    if service not in service_columns:
+                        service_columns[service] = []
+                    service_columns[service].append(col)
+                    break
+        
+        return service_columns
+    
+    def _extract_pattern_services(self, columns: List[str]) -> Dict[str, List[str]]:
+        """基於通用組件模式匹配"""
+        service_columns = {}
+        
+        for col in columns:
+            col_lower = col.lower()
+            
+            for pattern in self.component_patterns:
+                if pattern in col_lower:
+                    # 嘗試提取更具體的服務名
+                    service_name = self._extract_specific_service_name(col, pattern)
+                    if service_name not in service_columns:
+                        service_columns[service_name] = []
+                    service_columns[service_name].append(col)
+                    break
+        
+        return service_columns
+    
+    def _extract_specific_service_name(self, col: str, pattern: str) -> str:
+        """從列名中提取具體的服務名稱"""
+        col_lower = col.lower()
+        
+        # 嘗試提取前綴
+        if '_' in col_lower:
+            parts = col_lower.split('_')
+            for part in parts:
+                if pattern in part:
+                    # 找到包含模式的部分，返回前面的部分作為服務名
+                    idx = parts.index(part)
+                    if idx > 0:
+                        return '_'.join(parts[:idx+1])
+                    else:
+                        return part
+        
+        # 如果沒有下劃線，嘗試提取包含模式的部分
+        if pattern in col_lower:
+            return f"{pattern}_service"
+        
+        return "unknown_service"
+    
+    def _extract_prefix_services(self, columns: List[str]) -> Dict[str, List[str]]:
+        """基於前綴分組（學習BARO等方法的通用性）"""
+        service_columns = {}
+        
+        # 收集所有前綴
+        prefixes = {}
+        for col in columns:
+            # 嘗試多種分隔符
+            for sep in ['_', '-', '.', ':']:
+                if sep in col:
+                    prefix = col.split(sep)[0].lower()
+                    if len(prefix) >= 2:  # 避免太短的前綴
+                        if prefix not in prefixes:
+                            prefixes[prefix] = []
+                        prefixes[prefix].append(col)
+                        break
+        
+        # 只保留有多個列的前綴，或者所有前綴都只有一個列時保留所有
+        if prefixes:
+            multi_col_prefixes = {k: v for k, v in prefixes.items() if len(v) > 1}
+            if multi_col_prefixes:
+                service_columns.update({f"{k}_service": v for k, v in multi_col_prefixes.items()})
+            else:
+                # 如果所有前綴都只有一個列，也包含它們
+                service_columns.update({f"{k}_service": v for k, v in prefixes.items()})
+        
+        return service_columns
+    
+    def _extract_metric_services(self, columns: List[str]) -> Dict[str, List[str]]:
+        """按指標類型分組（回退策略）"""
+        service_columns = {}
+        
+        for metric_type, patterns in self.metric_patterns.items():
+            matching_cols = []
+            for col in columns:
+                col_lower = col.lower()
+                for pattern in patterns:
+                    if pattern in col_lower:
+                        matching_cols.append(col)
+                        break
+            
             if matching_cols:
-                service_columns[service] = matching_cols
+                service_columns[f"{metric_type}_metrics"] = matching_cols
+        
+        # 處理未分類的列
+        classified_cols = set()
+        for cols in service_columns.values():
+            classified_cols.update(cols)
+        
+        unclassified = [col for col in columns if col not in classified_cols]
+        if unclassified:
+            service_columns['other_metrics'] = unclassified
+        
+        return service_columns
+    
+    def _create_multiple_services(self, columns: List[str]) -> Dict[str, List[str]]:
+        """強制創建多個服務節點（最後手段）"""
+        services = {}
+        
+        # 根據列數量動態決定服務數
+        num_cols = len(columns)
+        if num_cols <= 4:
+            target_services = 2
+        elif num_cols <= 12:
+            target_services = min(4, num_cols // 2)
+        else:
+            target_services = min(8, num_cols // 3)
+        
+        cols_per_service = max(1, num_cols // target_services)
+        
+        for i in range(target_services):
+            start_idx = i * cols_per_service
+            end_idx = start_idx + cols_per_service if i < target_services - 1 else num_cols
+            
+            if start_idx < num_cols:
+                service_cols = columns[start_idx:end_idx]
+                services[f"auto_service_{i+1}"] = service_cols
+        
+        return services
+    
+    def _optimize_service_groups(self, service_columns: Dict[str, List[str]], 
+                                columns: List[str]) -> Dict[str, List[str]]:
+        """優化服務分組"""
+        # 移除空分組
+        service_columns = {k: v for k, v in service_columns.items() if v}
+        
+        # 限制分組數量（避免過度分割）
+        max_services = min(15, max(2, len(columns) // 2))
+        if len(service_columns) > max_services:
+            # 保留最大的分組
+            sorted_services = sorted(service_columns.items(), 
+                                   key=lambda x: len(x[1]), reverse=True)
+            service_columns = dict(sorted_services[:max_services])
+        
+        # 確保至少有2個分組
+        if len(service_columns) < 2 and len(columns) > 1:
+            service_columns = self._create_multiple_services(columns)
         
         return service_columns
 

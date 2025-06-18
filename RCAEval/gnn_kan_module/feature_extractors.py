@@ -49,12 +49,10 @@ def sliding_window_alignment(data, window_size, step_size, timestamp_col='time')
 
 def extract_log_features(log_data, use_dla=False, max_features=100):
     """
-    🔧 統一的日誌特徵提取 - 向後兼容版本
-    集成了所有重複實現的最佳部分
+    🔧 統一的日誌特徵提取 - 重定向到統一實現
     """
     try:
         from .processors.log_processors import extract_log_features as unified_extract_log_features
-        # 使用統一處理器的實現
         return unified_extract_log_features(
             log_data=log_data,
             use_dla=use_dla,
@@ -62,20 +60,8 @@ def extract_log_features(log_data, use_dla=False, max_features=100):
             method='dla' if use_dla else 'simple',
             target_dim=max_features
         )
-    except ImportError:
-        # 回退到簡化實現
-        if isinstance(log_data, (list, str)):
-            # 基本文本特徵
-            text_length = len(str(log_data))
-            word_count = len(str(log_data).split())
-            features = np.array([[text_length, word_count, 0, 0]])
-            names = ['text_length', 'word_count', 'error_count', 'warning_count']
-        else:
-            features = np.array([[1, 2, 0, 0]])
-            names = ['log_feature_1', 'log_feature_2', 'log_feature_3', 'log_feature_4']
-        return features, names
     except Exception as e:
-        print(f"⚠️ 日誌特徵提取失敗: {e}")
+        print(f"⚠️ 重定向到統一日誌處理器失敗: {e}")
         return np.array([[0]]), ['default_log_feature']
 
 def extract_trace_features(trace_data, inject_time=None):
