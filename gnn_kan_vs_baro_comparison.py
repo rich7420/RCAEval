@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-GNN-KAN vs BARO 完整比較測試
+GNN-KAN vs BARO 完整比較測試 (重複清理版)
 =========================
 
 本文件用於比較GNN-KAN與BARO方法在不同數據集下的性能表現
 評估指標包括：準確率、Precision@k、Recall@k、F1-Score、執行時間等
 
-目標：證明用KAN取代GNN中的MLP層是有效的方法（準確率極高）
+🎯 目標：證明用KAN取代GNN中的MLP層是有效的方法（準確率極高）
+🧹 重點：使用清理後的模組化架構，確保無重複內容
+📁 確保：e2e/gnnkan.py 為主入口點，gnn_kan_module/ 為依賴模組
 """
 
 import os
@@ -31,10 +33,30 @@ from collections import defaultdict
 # 添加項目路徑
 sys.path.insert(0, '.')
 
-# 導入RCAEval模組
+# 🧹 導入清理後的RCAEval模組
 try:
-    from RCAEval.e2e.baro import baro
+    # 主入口點：e2e/gnnkan.py
     from RCAEval.e2e.gnnkan import gnn_kan_rca
+    from RCAEval.e2e.baro import baro
+    
+    # 驗證重複清理是否成功
+    print("🧹 驗證重複清理狀態...")
+    try:
+        # 檢查統一特徵處理
+        from RCAEval.gnn_kan_module.processors.log_processors import extract_log_features as unified_log_features
+        from RCAEval.gnn_kan_module.feature_processing import enhanced_trace_processing as unified_trace_processing
+        print("✅ 統一特徵處理模組導入成功")
+        
+        # 檢查清理後的模組
+        from RCAEval.gnn_kan_module import (
+            SimplifiedGNNKANConfig, HighCapacityGNNKANConfig, FastGNNKANConfig,
+            MultiModalFeatureExtractor, SimplifiedGraphConstructor, GNNKANModel
+        )
+        print("✅ 清理後的核心模組導入成功")
+        
+    except ImportError as e:
+        print(f"⚠️ 重複清理驗證部分失敗: {e}")
+    
     # 可選導入 - 如果不存在則使用替代方案
     try:
         from RCAEval.benchmark.evaluation import Evaluator
@@ -48,6 +70,7 @@ try:
         print("⚠️ Node類不可用，將使用替代方案")
         Node = None
     
+    # 數據集下載函數 - 使用替代方案避免依賴問題
     try:
         from RCAEval.utility import (
             download_online_boutique_dataset,
@@ -59,6 +82,7 @@ try:
             load_json,
             dump_json
         )
+        print("✅ 工具函數導入成功")
     except ImportError:
         print("⚠️ 部分工具函數不可用，將使用替代方案")
         # 創建替代函數
@@ -86,6 +110,7 @@ try:
 except ImportError as e:
     print(f"❌ 關鍵模組導入錯誤: {e}")
     print("請確保在RCAEval項目根目錄下運行此腳本")
+    print("並確保已完成重複清理流程")
     sys.exit(1)
 
 warnings.filterwarnings("ignore")

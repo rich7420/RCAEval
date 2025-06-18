@@ -95,58 +95,46 @@ def align_to_timestamps(df, target_timestamps, timestamp_col='time'):
 
 def extract_log_features(log_data, use_dla=False, max_features=1000, ngram_range=(1, 2)):
     """
-    提取日誌特徵使用 TF-IDF 向量化
-    
-    Args:
-        log_data: DataFrame 包含日誌數據
-        use_dla: 是否使用深度日誌分析
-        max_features: TF-IDF 最大特徵數
-        ngram_range: n-gram 範圍
-    
-    Returns:
-        features: 提取的日誌特徵
-        feature_names: 特徵名稱
+    🔧 重定向到統一日誌特徵提取器
+    避免重複實現，保持向後兼容性
     """
-    if isinstance(log_data, pd.DataFrame):
-        # 假設日誌數據在多個列中
-        log_texts = []
-        for col in log_data.columns:
-            if log_data[col].dtype == 'object':  # 文本列
-                log_texts.extend(log_data[col].dropna().astype(str).tolist())
-    else:
-        log_texts = log_data
-    
-    if not log_texts:
-        return np.array([]), []
-    
-    # TF-IDF 向量化
-    vectorizer = TfidfVectorizer(
-        max_features=max_features,
-        ngram_range=ngram_range,
-        stop_words='english' if all(isinstance(x, str) for x in log_texts) else None,
-        lowercase=True,
-        token_pattern=r'\b\w+\b'
-    )
-    
     try:
-        tfidf_features = vectorizer.fit_transform(log_texts)
-        feature_names = vectorizer.get_feature_names_out().tolist()
-        
-        # 如果使用 DLA，添加深度特徵
-        if use_dla:
-            dla_features = extract_dla_features(log_texts)
-            features = np.hstack([tfidf_features.toarray(), dla_features])
-            feature_names.extend([f'dla_{i}' for i in range(dla_features.shape[1])])
+        from ..processors.log_processors import extract_log_features as unified_extract_log_features
+        return unified_extract_log_features(
+            log_data=log_data,
+            use_dla=use_dla,
+            max_features=max_features,
+            method='tfidf' if max_features > 100 else 'simple',
+            target_dim=max_features
+        )
+    except ImportError:
+        # 基本回退實現
+        if isinstance(log_data, pd.DataFrame):
+            log_texts = []
+            for col in log_data.columns:
+                if log_data[col].dtype == 'object':
+                    log_texts.extend(log_data[col].dropna().astype(str).tolist())
         else:
-            features = tfidf_features.toarray()
-            
+            log_texts = log_data if isinstance(log_data, list) else [str(log_data)]
+        
+        if not log_texts:
+            return np.array([]), []
+        
+        # 簡化特徵
+        features = []
+        for text in log_texts:
+            text_features = [
+                len(text),
+                text.count(' '),
+                text.count('ERROR'),
+                text.count('WARN'),
+            ]
+            features.append(text_features)
+        
+        return np.array(features), ['length', 'spaces', 'errors', 'warnings']
     except Exception as e:
-        print(f"TF-IDF extraction failed: {e}")
-        # 回退到簡單特徵
-        features = np.array([[len(text), text.count(' ')] for text in log_texts])
-        feature_names = ['log_length', 'log_word_count']
-    
-    return features, feature_names
+        print(f"⚠️ 日誌特徵提取重定向失敗: {e}")
+        return np.array([[0]]), ['fallback_feature']
 
 
 def extract_dla_features(log_texts, embedding_dim=128):

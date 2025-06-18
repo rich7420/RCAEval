@@ -10,7 +10,25 @@ from .config import (
     FastGNNKANConfig
 )
 
-# 特徵提取模組 - 支持ICA/kPCA新方法
+# 🔧 新的統一特徵處理器 - 解決重複和一致性問題
+from .processors import (
+    UnifiedLogProcessor,
+    UnifiedMetricProcessor,
+    UnifiedTraceProcessor,
+    UnifiedMultiModalProcessor
+)
+
+# 🔧 統一數據接口 - 標準化所有input格式
+from .core import (
+    UnifiedDataInterface,
+    StandardizedData,
+    DataType,
+    BaseFeatureProcessor,
+    BaseGraphConstructor,
+    BaseKANProcessor
+)
+
+# 特徵提取模組 - 支持ICA/kPCA新方法（向後兼容）
 from .feature_extractors import (
     MultiModalFeatureExtractor,
     simplified_feature_fusion
@@ -90,7 +108,21 @@ __all__ = [
     'HighCapacityGNNKANConfig', 
     'FastGNNKANConfig',
     
-    # 特徵處理
+    # 🔧 統一處理器
+    'UnifiedLogProcessor',
+    'UnifiedMetricProcessor', 
+    'UnifiedTraceProcessor',
+    'UnifiedMultiModalProcessor',
+    
+    # 🔧 統一接口
+    'UnifiedDataInterface',
+    'StandardizedData',
+    'DataType',
+    'BaseFeatureProcessor',
+    'BaseGraphConstructor', 
+    'BaseKANProcessor',
+    
+    # 特徵處理（向後兼容）
     'MultiModalFeatureExtractor', 
     'ica_metric_processing',
     'kpca_metric_processing', 

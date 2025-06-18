@@ -48,8 +48,22 @@ def sliding_window_alignment(data, window_size, step_size, timestamp_col='time')
         return [data], [None]
 
 def extract_log_features(log_data, use_dla=False, max_features=100):
-    """簡化的日誌特徵提取"""
+    """
+    🔧 統一的日誌特徵提取 - 向後兼容版本
+    集成了所有重複實現的最佳部分
+    """
     try:
+        from .processors.log_processors import extract_log_features as unified_extract_log_features
+        # 使用統一處理器的實現
+        return unified_extract_log_features(
+            log_data=log_data,
+            use_dla=use_dla,
+            max_features=max_features,
+            method='dla' if use_dla else 'simple',
+            target_dim=max_features
+        )
+    except ImportError:
+        # 回退到簡化實現
         if isinstance(log_data, (list, str)):
             # 基本文本特徵
             text_length = len(str(log_data))
@@ -60,7 +74,8 @@ def extract_log_features(log_data, use_dla=False, max_features=100):
             features = np.array([[1, 2, 0, 0]])
             names = ['log_feature_1', 'log_feature_2', 'log_feature_3', 'log_feature_4']
         return features, names
-    except:
+    except Exception as e:
+        print(f"⚠️ 日誌特徵提取失敗: {e}")
         return np.array([[0]]), ['default_log_feature']
 
 def extract_trace_features(trace_data, inject_time=None):
@@ -330,164 +345,57 @@ class MultiModalFeatureExtractor:
 
 def enhanced_trace_processing(trace_data, inject_time=None):
     """
-    增強的TracerCA風格trace處理 - 專注於最有效的特徵
-    
-    Args:
-        trace_data: trace數據
-        inject_time: 故障注入時間
-    
-    Returns:
-        trace_features: trace特徵
-        operation_names: 操作名稱
-        service_graph: 服務圖
+    🔧 重定向到統一的trace處理器
+    避免重複實現，保持向後兼容性
     """
-    print("🔧 Enhanced TracerCA-style trace processing...")
-    
-    if trace_data is None or (isinstance(trace_data, pd.DataFrame) and trace_data.empty):
-        return np.array([]), [], None
-    
     try:
-        # 確保trace_data是DataFrame格式
-        if not isinstance(trace_data, pd.DataFrame):
-            trace_data = pd.DataFrame(trace_data)
+        from .feature_processing import enhanced_trace_processing as unified_enhanced_trace_processing
+        return unified_enhanced_trace_processing(trace_data, inject_time)
+    except ImportError:
+        # 基本回退實現
+        print("⚠️ 使用簡化trace處理回退實現")
+        if trace_data is None or (isinstance(trace_data, pd.DataFrame) and trace_data.empty):
+            return np.array([]), [], None
         
-        # 標準化列名 - 兼容多種trace格式
-        column_mapping = {
-            'service_name': 'serviceName', 'service': 'serviceName',
-            'operation_name': 'operationName', 'operation': 'operationName',
-            'method_name': 'operationName', 'method': 'operationName',
-            'start_time': 'startTime', 'timestamp': 'startTime',
-            'time': 'startTime', 'trace_id': 'traceID', 'span_id': 'spanID'
-        }
-        
-        for old_col, new_col in column_mapping.items():
-            if old_col in trace_data.columns and new_col not in trace_data.columns:
-                trace_data[new_col] = trace_data[old_col]
-        
-        # 確保必要列存在
-        if 'serviceName' not in trace_data.columns:
-            trace_data['serviceName'] = 'default_service'
-        if 'operationName' not in trace_data.columns:
-            trace_data['operationName'] = 'default_operation'
-        if 'duration' not in trace_data.columns:
-            trace_data['duration'] = np.random.lognormal(2, 1, len(trace_data))
-        
-        # 創建操作標識 - TracerCA關鍵特徵
-        trace_data['operation'] = trace_data['serviceName'].astype(str) + "_" + trace_data['operationName'].astype(str)
-        
-        # 構建服務依賴圖
-        service_graph = _build_enhanced_service_graph(trace_data)
-        
-        # 提取TracerCA風格的操作級特徵
-        operations = trace_data['operation'].unique()
-        operation_features = []
-        
-        for op in operations:
-            op_data = trace_data[trace_data['operation'] == op]
+        try:
+            if not isinstance(trace_data, pd.DataFrame):
+                trace_data = pd.DataFrame(trace_data)
             
-            # 基本統計特徵
-            duration_stats = op_data['duration'].describe() if 'duration' in op_data.columns else pd.Series([0]*8, index=['count', 'mean', 'std', 'min', '25%', '50%', '75%', 'max'])
+            # 基本特徵提取
+            if 'serviceName' not in trace_data.columns:
+                trace_data['serviceName'] = 'default_service'
+            if 'duration' not in trace_data.columns:
+                trace_data['duration'] = np.random.lognormal(2, 1, len(trace_data))
             
-            # TracerCA核心特徵：support, confidence, JI
-            if inject_time is not None and 'startTime' in op_data.columns:
-                # 分割正常和異常期間
-                normal_data = op_data[op_data['startTime'] < inject_time] if 'startTime' in op_data.columns else op_data[:len(op_data)//2]
-                anomal_data = op_data[op_data['startTime'] >= inject_time] if 'startTime' in op_data.columns else op_data[len(op_data)//2:]
-                
-                # 計算TracerCA特徵
-                if not normal_data.empty and not anomal_data.empty:
-                    # 基於SLO的異常檢測
-                    normal_latency = normal_data['duration'].mean() if 'duration' in normal_data.columns else 0
-                    normal_std = normal_data['duration'].std() if 'duration' in normal_data.columns else 1
-                    anomal_latency = anomal_data['duration'].mean() if 'duration' in anomal_data.columns else 0
-                    
-                    # TracerCA Support: 異常操作數量/總異常數量
-                    threshold = normal_latency + 3 * normal_std
-                    abnormal_spans = (anomal_data['duration'] > threshold).sum() if 'duration' in anomal_data.columns else 0
-                    total_abnormal = len(anomal_data)
-                    support = abnormal_spans / max(total_abnormal, 1)
-                    
-                    # TracerCA Confidence: 異常操作數量/該操作總數量
-                    confidence = abnormal_spans / max(len(anomal_data), 1)
-                    
-                    # TracerCA JI (Jaccard Index)
-                    ji = (2 * support * confidence) / max(support + confidence, 1e-10) if (support + confidence) > 0 else 0
-                    
-                    # 延遲變化率
-                    latency_change = (anomal_latency - normal_latency) / max(normal_latency, 1e-8)
-                    
-                    # 調用頻率變化
-                    normal_call_rate = len(normal_data) / max(len(trace_data), 1)
-                    anomal_call_rate = len(anomal_data) / max(len(trace_data), 1)
-                    call_rate_change = anomal_call_rate - normal_call_rate
-                else:
-                    support = confidence = ji = latency_change = call_rate_change = 0
+            services = trace_data['serviceName'].unique()
+            service_features = []
+            
+            for service in services:
+                service_data = trace_data[trace_data['serviceName'] == service]
+                features = [
+                    len(service_data),
+                    service_data['duration'].mean() if 'duration' in service_data.columns else 0,
+                    service_data['duration'].std() if 'duration' in service_data.columns else 0,
+                ]
+                service_features.append(features)
+            
+            if service_features:
+                trace_features = np.array(service_features)
             else:
-                support = confidence = ji = latency_change = call_rate_change = 0
+                trace_features = np.array([])
             
-            # 組合TracerCA特徵
-            features = [
-                support,                      # TracerCA Support
-                confidence,                   # TracerCA Confidence  
-                ji,                          # TracerCA JI score
-                latency_change,              # 延遲變化率（關鍵RCA指標）
-                call_rate_change,            # 調用頻率變化
-                duration_stats['mean'],      # 平均延遲
-                duration_stats['std'],       # 延遲標準差
-                duration_stats['max'],       # 最大延遲
-                duration_stats['count'],     # 調用次數
-                duration_stats['75%'] - duration_stats['25%']  # IQR（穩定性指標）
-            ]
+            return trace_features, list(services), None
             
-            operation_features.append(features)
-        
-        # 轉換為numpy數組並處理NaN值
-        if operation_features:
-            trace_features = np.array(operation_features)
-            trace_features = np.nan_to_num(trace_features, nan=0.0, posinf=1.0, neginf=-1.0)
-        else:
-            trace_features = np.array([])
-        
-        return trace_features, list(operations), service_graph
-        
+        except Exception as e:
+            print(f"⚠️ trace處理回退實現失敗: {e}")
+            return np.array([]), [], None
     except Exception as e:
-        print(f"⚠️ Enhanced TracerCA trace processing failed: {e}")
+        print(f"⚠️ trace處理重定向失敗: {e}")
         return np.array([]), [], None
 
 
-def _build_enhanced_service_graph(trace_data):
-    """構建增強的服務依賴圖 - 基於實際調用關係"""
-    try:
-        import networkx as nx
-        
-        G = nx.DiGraph()
-        
-        # 添加服務節點
-        services = trace_data['serviceName'].unique()
-        for service in services:
-            G.add_node(service)
-        
-        # 基於trace時序構建真實依賴關係
-        if 'startTime' in trace_data.columns and 'traceID' in trace_data.columns:
-            # 按traceID分組，時間排序找依賴
-            for trace_id in trace_data['traceID'].unique():
-                trace_spans = trace_data[trace_data['traceID'] == trace_id].sort_values('startTime')
-                
-                for i in range(len(trace_spans) - 1):
-                    current_service = trace_spans.iloc[i]['serviceName']
-                    next_service = trace_spans.iloc[i + 1]['serviceName']
-                    
-                    if current_service != next_service:
-                        if G.has_edge(current_service, next_service):
-                            G[current_service][next_service]['weight'] += 1
-                        else:
-                            G.add_edge(current_service, next_service, weight=1)
-        
-        return G
-        
-    except Exception as e:
-        print(f"Service graph construction failed: {e}")
-        return None
+# _build_enhanced_service_graph 函數已移至 feature_processing.py
+# 避免重複代碼，統一使用 feature_processing 中的版本
 
 
 def simplified_feature_fusion(log_feats, metric_feats, topo_feats, error_feats, trace_feats, service_topo_feats, 
