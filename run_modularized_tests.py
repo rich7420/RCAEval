@@ -310,9 +310,9 @@ for name, config in configs:
     print(f'\\n  📊 {name}Config:')
     print(f'    - KAN grid_size: {config.kan_grid_size}')
     print(f'    - KAN spline_order: {config.kan_spline_order}')
-    print(f'    - 自適應樣條: {getattr(config, \"adaptive_spline_order\", False)}')
-    print(f'    - 可學習激活: {getattr(config, \"learnable_activation\", True)}')
-    print(f'    - 特徵方法: {getattr(config, \"feature_method\", \"ica\")}')
+    print(f'    - 自適應樣條: {config.adaptive_spline_order}')
+    print(f'    - 可學習激活: {config.learnable_activation}')
+    print(f'    - 特徵方法: {config.feature_method}')
     print(f'    - GPU支持: {config.use_cuda}')
     
     # 測試KAN純粹性更新
@@ -344,7 +344,7 @@ config = SimplifiedGNNKANConfig()
 print(f'✓ 配置target_feature_dim: {config.target_feature_dim}')
 
 # 檢查關鍵KAN配置參數
-print('\n📋 KAN核心參數檢查:')
+print('\\n📋 KAN核心參數檢查:')
 print(f'  - kan_grid_size: {config.kan_grid_size}')
 print(f'  - kan_spline_order: {config.kan_spline_order}')
 print(f'  - adaptive_spline_order: {config.adaptive_spline_order}')
@@ -431,7 +431,7 @@ else:
         },
         {
             'description': '⚡ KAN表達能力與準確率驗證',
-            'command': """python -c "
+            'command': '''python -c "
 import sys
 sys.path.insert(0, '.')
 import torch
@@ -465,8 +465,7 @@ encoded = encoder(node_features, edge_index)
 print(f'✓ GNN-KAN Encoder: {node_features.shape} → {encoded.shape}')
 
 print('🏆 KAN表達能力驗證完成：KAN展現獨特的可學習激活函數能力!')
-"
-""",
+"''',
             'timeout': 360
         },
         {
@@ -515,7 +514,7 @@ print('🏆 高容量KAN模型測試完成：能處理大規模數據!')
         },
         {
             'description': '🔍 ICA/kPCA特徵處理功能測試',
-            'command': """python -c "
+            'command': '''python -c "
 import sys
 sys.path.insert(0, '.')
 import numpy as np
@@ -540,7 +539,7 @@ print(f'✓ 創建測試數據: {metrics_data.shape}')
 
 # 測試ICA處理
 print('\\n📊 測試ICA特徵處理:')
-ica_features, ica_names, ica_model = ica_metric_processing(metrics_data, target_dim=64)
+ica_features, ica_names = ica_metric_processing(metrics_data, target_dim=64)
 print(f'✓ ICA輸出: {ica_features.shape}')
 
 # 測試kPCA處理
@@ -572,13 +571,12 @@ simple_std = np.std(simple_features)
 print(f'✓ 特徵變異性：ICA={ica_std:.4f}, kPCA={kpca_std:.4f}, Simple={simple_std:.4f}')
 
 print('🏆 特徵處理測試完成：ICA/kPCA成功取代STL分解!')
-"
-""",
+"''',
             'timeout': 240
         },
         {
             'description': '🎯 KAN純粹性實現驗證',
-            'command': """python -c "
+            'command': '''python -c "
 import sys
 sys.path.insert(0, '.')
 
@@ -617,8 +615,7 @@ print('✓ 保留了AdvancedKANLayer和SimplifiedKANLayer')
 print('✓ KAN特性：B-spline基函數、自適應樣條階數') 
 print('✓ 最小化MLP特性：移除BatchNorm，使用LayerNorm')
 print('🏆 KAN純粹性實現驗證完成!')
-"
-""",
+"''',
             'timeout': 90
         }
     ]
@@ -875,7 +872,7 @@ result3 = gnn_kan_rca(data, config_type='fast', feature_method='simplified')
 ranks3 = result3.get('ranks', [])
 print(f'✓ Fast+Simplified: {len(ranks3)} 根因節點')
 
-print('\n🎯 主入口點測試結果:')
+print('\\n🎯 主入口點測試結果:')
 print('✅ 支持多種config_type: simplified, high_capacity, fast')
 print('✅ 支持多種feature_method: ica, kpca, simplified')
 print('✅ 返回完整結果: adj, node_names, ranks')
@@ -923,7 +920,7 @@ configs_methods = [
 
 results = {}
 for config_type, feature_method in configs_methods:
-    print(f'\n🧪 測試: {config_type} + {feature_method}')
+    print(f'\\n🧪 測試: {config_type} + {feature_method}')
     
     start_time = time.time()
     result = gnn_kan_rca(data, config_type=config_type, feature_method=feature_method)
@@ -946,14 +943,14 @@ for config_type, feature_method in configs_methods:
     print(f'  🔗 圖邊數: {num_edges}')
     print(f'  🎯 根因排序: {num_ranks}')
 
-print('\n🏆 端到端性能測試總結:')
+print('\\n🏆 端到端性能測試總結:')
 for key, metrics in results.items():
     time_val = metrics.get('time', 0)
     nodes_val = metrics.get('nodes', 0)
     ranks_val = metrics.get('ranks', 0)
     print(f'  {key}: {time_val:.2f}s, {nodes_val} 節點, {ranks_val} 根因')
 
-print('\n✅ 證明: KAN取代MLP層的方法運行正常，準確率穩定')
+print('\\n✅ 證明: KAN取代MLP層的方法運行正常，準確率穩定')
 print('🎯 模組化架構: e2e/gnnkan.py → gnn_kan_module/ 依賴正確')
 "''',
             'timeout': 600
@@ -967,13 +964,13 @@ sys.path.insert(0, '.')
 print('🔍 最終模組依賴關係驗證...')
 
 # 1. 檢查主入口點
-print('\n📁 1. 主入口點檢查:')
+print('\\n📁 1. 主入口點檢查:')
 from RCAEval.e2e.gnnkan import gnn_kan_rca, GNNKANEndToEnd
 print('✓ e2e/gnnkan.py: 主函數 gnn_kan_rca 可用')
 print('✓ e2e/gnnkan.py: 主類別 GNNKANEndToEnd 可用')
 
 # 2. 檢查gnn_kan_module依賴
-print('\n📦 2. gnn_kan_module 依賴檢查:')
+print('\\n📦 2. gnn_kan_module 依賴檢查:')
 dependencies = [
     ('配置系統', 'SimplifiedGNNKANConfig, HighCapacityGNNKANConfig, FastGNNKANConfig'),
     ('特徵處理', 'ica_metric_processing, kpca_metric_processing, simplified_metric_processing'),
@@ -991,7 +988,7 @@ for category, components in dependencies:
         print(f'❌ {category}: 導入失敗 - {e}')
 
 # 3. 檢查無重複內容
-print('\n🧹 3. 重複內容檢查:')
+print('\\n🧹 3. 重複內容檢查:')
 removed_duplicates = [
     'UltraFastKANLayer', 'FastKANLayer', 'StabilizedKANLayer',
     'complex STL decomposition', 'KLL processing',
@@ -1002,7 +999,7 @@ for item in removed_duplicates:
     print(f'✓ 已移除: {item}')
 
 # 4. 檢查模組化功能完整性
-print('\n🎯 4. 功能完整性檢查:')
+print('\\n🎯 4. 功能完整性檢查:')
 completeness_checks = [
     '✓ KAN取代MLP: AdvancedKANLayer with B-spline basis',
     '✓ 可學習激活函數: learnable_activation=True',
@@ -1015,7 +1012,7 @@ completeness_checks = [
 for check in completeness_checks:
     print(check)
 
-print('\n🏆 最終驗證結果:')
+print('\\n🏆 最終驗證結果:')
 print('✅ e2e/gnnkan.py 作為唯一主入口點')
 print('✅ gnn_kan_module/ 包含所有依賴模組')
 print('✅ 模組間交互參數名稱與函數調用正確')
