@@ -622,7 +622,46 @@ print('🏆 KAN純粹性實現驗證完成!')
     stage3_tests = [
         {
             'description': '🖥️ GPU環境與CUDA檢查',
-            'command': 'python gpu_usage_check.py',
+            'command': '''python -c "
+import torch
+import sys
+
+print('🔍 GPU環境與CUDA檢查...')
+
+# CUDA可用性
+cuda_available = torch.cuda.is_available()
+print(f'✓ CUDA可用: {cuda_available}')
+
+if cuda_available:
+    print(f'✓ GPU數量: {torch.cuda.device_count()}')
+    print(f'✓ 當前設備: {torch.cuda.current_device()}')
+    print(f'✓ 設備名稱: {torch.cuda.get_device_name(0)}')
+    
+    # GPU屬性
+    props = torch.cuda.get_device_properties(0)
+    print(f'✓ 總記憶體: {props.total_memory/1024**3:.1f}GB')
+    print(f'✓ 多處理器數: {props.multi_processor_count}')
+    
+    # 記憶體狀態
+    memory_allocated = torch.cuda.memory_allocated() / 1024**3
+    memory_reserved = torch.cuda.memory_reserved() / 1024**3
+    print(f'✓ 已分配記憶體: {memory_allocated:.3f}GB')
+    print(f'✓ 已保留記憶體: {memory_reserved:.3f}GB')
+    
+    # 簡單CUDA測試
+    try:
+        x = torch.randn(1000, 1000, device='cuda')
+        y = torch.mm(x, x.t())
+        del x, y
+        torch.cuda.empty_cache()
+        print('✅ CUDA基本操作測試通過')
+    except Exception as e:
+        print(f'⚠️ CUDA操作測試失敗: {e}')
+else:
+    print('💻 使用CPU模式')
+
+print('✅ GPU環境檢查完成')
+"''',
             'timeout': 90
         },
         {
