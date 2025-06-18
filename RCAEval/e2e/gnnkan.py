@@ -277,9 +277,16 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
         with torch.no_grad():
             try:
                 # GNN-KAN前向傳播
-                embeddings = model(node_features, edge_index)
+                model_output = model(node_features, edge_index)
                 
-                print(f"✓ KAN推理成功: 輸入{node_features.shape} -> 輸出{embeddings.shape}")
+                # 🔧 修復：處理模型返回值（可能是tuple）
+                if isinstance(model_output, tuple):
+                    embeddings, adj_scores = model_output
+                    print(f"✓ KAN推理成功: 輸入{node_features.shape} -> 嵌入{embeddings.shape}, 鄰接{adj_scores.shape}")
+                else:
+                    embeddings = model_output
+                    adj_scores = None
+                    print(f"✓ KAN推理成功: 輸入{node_features.shape} -> 輸出{embeddings.shape}")
                 
                 # 檢查輸出質量
                 if torch.isnan(embeddings).any() or torch.isinf(embeddings).any():
@@ -290,6 +297,7 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
                 print(f"⚠️ KAN模型推理失敗: {model_error}")
                 # 回退：使用簡化的特徵作為嵌入
                 embeddings = node_features
+                adj_scores = None
         
         # 🎯 5. 轉換為鄰接矩陣進行PageRank
         print("🔗 構建鄰接矩陣用於PageRank...")
