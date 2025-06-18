@@ -687,7 +687,16 @@ class OptimizedGNNKANEncoder(nn.Module):
         row, col = edge_index
         num_nodes = x.size(0)
         
+        # 🔧 特殊情況：只有一個節點時，跳過圖消息傳遞
+        if num_nodes <= 1:
+            print(f"⚠️ 節點數過少({num_nodes})，跳過圖消息傳遞")
+            return x
+        
         # 安全索引檢查
+        if edge_index.size(1) == 0:
+            print("⚠️ 沒有邊信息，跳過圖消息傳遞")
+            return x
+            
         if row.max() >= num_nodes or col.max() >= num_nodes or row.min() < 0 or col.min() < 0:
             print(f"⚠️ 邊索引超出範圍: row=[{row.min()}, {row.max()}], col=[{col.min()}, {col.max()}], num_nodes={num_nodes}")
             # 過濾無效索引

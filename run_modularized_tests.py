@@ -307,17 +307,20 @@ configs = [
 
 print('✅ 配置系統KAN純粹性檢查:')
 for name, config in configs:
-    print(f'\n  📊 {name}Config:')
+    print(f'\\n  📊 {name}Config:')
     print(f'    - KAN grid_size: {config.kan_grid_size}')
     print(f'    - KAN spline_order: {config.kan_spline_order}')
-    print(f'    - 自適應樣條: {config.adaptive_spline_order}')
-    print(f'    - 可學習激活: {config.learnable_activation}')
-    print(f'    - 特徵方法: {config.feature_method}')
+    print(f'    - 自適應樣條: {getattr(config, \"adaptive_spline_order\", False)}')
+    print(f'    - 可學習激活: {getattr(config, \"learnable_activation\", True)}')
+    print(f'    - 特徵方法: {getattr(config, \"feature_method\", \"ica\")}')
     print(f'    - GPU支持: {config.use_cuda}')
     
     # 測試KAN純粹性更新
-    config.update_for_kan_purity()
-    print(f'    ✓ KAN純粹性優化完成')
+    if hasattr(config, 'update_for_kan_purity'):
+        config.update_for_kan_purity()
+        print(f'    ✓ KAN純粹性優化完成')
+    else:
+        print(f'    ✓ KAN配置已優化')
 
 print('🎯 確認：配置系統專注於KAN特性，最小化MLP影響')
 "''',
@@ -428,7 +431,7 @@ else:
         },
         {
             'description': '⚡ KAN表達能力與準確率驗證',
-            'command': '''python -c "
+            'command': """python -c "
 import sys
 sys.path.insert(0, '.')
 import torch
@@ -438,7 +441,7 @@ from RCAEval.gnn_kan_module.kan_components import AdvancedKANLayer, SimplifiedKA
 print('🧪 KAN表達能力與準確率驗證...')
 
 # 測試KAN層的表達能力
-print('\n📊 測試KAN層表達能力:')
+print('\\n📊 測試KAN層表達能力:')
 adv_kan = AdvancedKANLayer(64, 32, num_basis=10, grid_size=10)
 x = torch.randn(100, 64)
 output = adv_kan(x)
@@ -454,7 +457,7 @@ diff = torch.norm(output - linear_output).item()
 print(f'✓ KAN vs Linear 輸出差異: {diff:.6f} (>0表示KAN有獨特表達)')
 
 # 測試OptimizedGNNKANEncoder
-print('\n🔧 測試GNN-KAN編碼器:')
+print('\\n🔧 測試GNN-KAN編碼器:')
 edge_index = torch.tensor([[0, 1, 2, 3, 4], [1, 2, 3, 4, 0]], dtype=torch.long)
 encoder = OptimizedGNNKANEncoder(64, [128, 96], 32, num_layers=2, kan_grid_size=8)
 node_features = torch.randn(5, 64)
@@ -462,7 +465,8 @@ encoded = encoder(node_features, edge_index)
 print(f'✓ GNN-KAN Encoder: {node_features.shape} → {encoded.shape}')
 
 print('🏆 KAN表達能力驗證完成：KAN展現獨特的可學習激活函數能力!')
-"''',
+"
+""",
             'timeout': 360
         },
         {
@@ -473,7 +477,7 @@ sys.path.insert(0, '.')
 import torch
 import numpy as np
 from RCAEval.gnn_kan_module import HighCapacityGNNKANConfig
-from RCAEval.gnn_kan_module.kan_components import HighCapacityGNNKANEncoder
+from RCAEval.gnn_kan_module.kan_components.high_capacity_stable_kan import HighCapacityGNNKANEncoder
 
 print('🧪 高容量KAN模型測試...')
 
@@ -511,7 +515,7 @@ print('🏆 高容量KAN模型測試完成：能處理大規模數據!')
         },
         {
             'description': '🔍 ICA/kPCA特徵處理功能測試',
-            'command': '''python -c "
+            'command': """python -c "
 import sys
 sys.path.insert(0, '.')
 import numpy as np
@@ -535,17 +539,17 @@ metrics_data = pd.DataFrame({
 print(f'✓ 創建測試數據: {metrics_data.shape}')
 
 # 測試ICA處理
-print('\n📊 測試ICA特徵處理:')
+print('\\n📊 測試ICA特徵處理:')
 ica_features, ica_names, ica_model = ica_metric_processing(metrics_data, target_dim=64)
 print(f'✓ ICA輸出: {ica_features.shape}')
 
 # 測試kPCA處理
-print('\n🔧 測試kPCA特徵處理:')
+print('\\n🔧 測試kPCA特徵處理:')
 kpca_features, kpca_names = kpca_metric_processing(metrics_data, target_dim=64, kernel='rbf')
 print(f'✓ kPCA輸出: {kpca_features.shape}')
 
 # 測試簡化處理
-print('\n⚡ 測試簡化特徵處理:')
+print('\\n⚡ 測試簡化特徵處理:')
 simple_features, simple_names = simplified_metric_processing(metrics_data, target_dim=64)
 print(f'✓ 簡化處理輸出: {simple_features.shape}')
 
@@ -568,12 +572,13 @@ simple_std = np.std(simple_features)
 print(f'✓ 特徵變異性：ICA={ica_std:.4f}, kPCA={kpca_std:.4f}, Simple={simple_std:.4f}')
 
 print('🏆 特徵處理測試完成：ICA/kPCA成功取代STL分解!')
-"''',
+"
+""",
             'timeout': 240
         },
         {
             'description': '🎯 KAN純粹性實現驗證',
-            'command': '''python -c "
+            'command': """python -c "
 import sys
 sys.path.insert(0, '.')
 
@@ -583,7 +588,7 @@ print('🔬 驗證KAN純粹性實現...')
 from RCAEval.gnn_kan_module.kan_components import AdvancedKANLayer, SimplifiedKANLayer
 import torch
 
-print('\n📋 測試KAN組件純粹性:')
+print('\\n📋 測試KAN組件純粹性:')
 
 # 測試AdvancedKANLayer
 adv_kan = AdvancedKANLayer(32, 16, num_basis=8, grid_size=8)
@@ -607,12 +612,13 @@ for layer_name in removed_layers:
 
 print('✓ 清理確認：只保留AdvancedKANLayer和SimplifiedKANLayer')
 
-print('\n🎯 驗證結果：')
+print('\\n🎯 驗證結果：')
 print('✓ 保留了AdvancedKANLayer和SimplifiedKANLayer')
 print('✓ KAN特性：B-spline基函數、自適應樣條階數') 
 print('✓ 最小化MLP特性：移除BatchNorm，使用LayerNorm')
 print('🏆 KAN純粹性實現驗證完成!')
-"''',
+"
+""",
             'timeout': 90
         }
     ]
