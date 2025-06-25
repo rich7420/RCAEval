@@ -7,7 +7,8 @@ GNN-KAN Module: 純粹KAN模組化實現
 from .config import (
     SimplifiedGNNKANConfig,
     HighCapacityGNNKANConfig,
-    FastGNNKANConfig
+    FastGNNKANConfig,
+    ConfigFactory
 )
 
 # 🔧 新的統一特徵處理器 - 解決重複和一致性問題
@@ -107,6 +108,7 @@ __all__ = [
     'SimplifiedGNNKANConfig',
     'HighCapacityGNNKANConfig', 
     'FastGNNKANConfig',
+    'ConfigFactory',
     
     # 🔧 統一處理器
     'UnifiedLogProcessor',
