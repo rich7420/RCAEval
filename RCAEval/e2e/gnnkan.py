@@ -447,6 +447,61 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
     total_time = time.time() - start_time
     print(f"⏱️ 總處理時間: {total_time:.3f}秒")
     
+    # 7. 計算模型統計信息用於高級指標評估
+    print("📊 計算模型統計信息...")
+    
+    # 模型參數統計
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    
+    # 稀疏性統計（用於可解釋性指標）
+    sparsity_info = {
+        'total_connections': numpy_adj.size,
+        'active_connections': np.count_nonzero(numpy_adj),
+        'sparsity_ratio': 1.0 - (np.count_nonzero(numpy_adj) / numpy_adj.size),
+        'pruned_connections': numpy_adj.size - np.count_nonzero(numpy_adj)
+    }
+    
+    # 記憶體使用估算
+    try:
+        if use_gpu and torch.cuda.is_available():
+            memory_allocated = torch.cuda.memory_allocated() / 1024 / 1024  # MB
+            memory_cached = torch.cuda.memory_reserved() / 1024 / 1024     # MB
+            memory_usage = memory_allocated
+        else:
+            # CPU記憶體估算（基於參數數量）
+            memory_usage = total_params * 4 / 1024 / 1024  # float32, MB
+    except:
+        memory_usage = total_params * 4 / 1024 / 1024
+    
+    # 構建完整的模型信息
+    model_info = {
+        'model_parameters': {
+            'total': total_params,
+            'trainable': trainable_params,
+            'non_trainable': total_params - trainable_params
+        },
+        'sparsity_info': sparsity_info,
+        'memory_usage': memory_usage,
+        'num_nodes': len(node_names),
+        'hidden_dim': config.hidden_dim if hasattr(config, 'hidden_dim') else 64,
+        'config_type': config_type,
+        'feature_method': feature_method,
+        'device_info': {
+            'device_used': device,
+            'gpu_accelerated': use_gpu,
+            'cuda_available': torch.cuda.is_available() if use_gpu else False
+        },
+        'performance_stats': {
+            'total_edges': edge_index.shape[1] if hasattr(edge_index, 'shape') else 0,
+            'avg_node_degree': numpy_adj.sum() / len(node_names) if len(node_names) > 0 else 0,
+            'max_edge_weight': numpy_adj.max(),
+            'processing_time': total_time
+        }
+    }
+    
+    print(f"✓ 模型統計: {total_params:,}參數, {sparsity_info['sparsity_ratio']:.3f}稀疏性, {memory_usage:.1f}MB記憶體")
+    
     return {
         'ranks': ranks,
         'adj': numpy_adj,
@@ -454,7 +509,18 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
         'embeddings': embeddings.detach().numpy(),
         'processing_time': total_time,
         'device_used': device,
-        'gpu_accelerated': use_gpu
+        'gpu_accelerated': use_gpu,
+        'model_info': model_info,  # 🔥 新增：完整模型信息用於高級指標
+        'final_scores': final_scores,  # 🔥 新增：詳細分數用於分析
+        'pagerank_scores': pagerank_scores,  # 🔥 新增：PageRank分數
+        'degree_scores': degree_scores,  # 🔥 新增：度中心性分數
+        'embedding_scores': embedding_scores,  # 🔥 新增：嵌入分數
+        'config_info': {  # 🔥 新增：配置信息
+            'config_type': config_type,
+            'feature_method': feature_method,
+            'use_optimized_input': use_optimized_input,
+            'extra_kwargs': kwargs
+        }
     }
 
 

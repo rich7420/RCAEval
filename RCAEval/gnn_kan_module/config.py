@@ -197,7 +197,76 @@ class SimplifiedGNNKANConfig:
         return issues
     
     def update_for_kan_purity(self):
-        """更新配置以最大化KAN純粹性，最小化MLP特性"""
+        """
+        更新配置以最大化KAN純粹性，最小化MLP特性
+        🎯 目標：證明用KAN取代MLP的有效性（高準確率）
+        """
+        print("🎯 優化KAN配置以實現最高準確率...")
+        
+        # 🔥 提升KAN核心能力 - 更細緻的B-spline基函數
+        self.kan_grid_size = 12             # 從8→12，提升表達能力
+        self.kan_spline_order = 4           # 從3→4，更平滑的樣條
+        self.kan_num_basis = 16             # 從8→16，更豐富的基函數
+        self.adaptive_spline_order = True   # 保持自適應
+        
+        # 🎯 強化可學習激活函數（KAN的核心優勢）
+        self.learnable_activation = True
+        self.minimize_linear_component = True
+        
+        # 🚀 增強特徵處理能力
+        self.target_feature_dim = 128       # 從64→128，提升特徵維度
+        self.input_dim = 128                # 匹配目標維度
+        self.hidden_dims = [256, 192, 128, 96]  # 更深層的KAN網絡
+        self.output_dim = 64                # 提升輸出維度
+        
+        # 🔧 訓練參數優化 - 針對準確率
+        self.learning_rate = 0.0005         # 從0.001→0.0005，更穩定
+        self.num_epochs = 150               # 從100→150，更充分訓練
+        self.batch_size = 64                # 從32→64，GPU友好
+        self.patience = 25                  # 從15→25，更耐心等待收斂
+        self.warmup_epochs = 20             # 從10→20，更長預熱
+        
+        # 🎯 KAN特有正則化調優
+        self.kan_l1_lambda = 5e-4           # 從1e-3→5e-4，平衡稀疏性
+        self.kan_entropy_lambda = 5e-4      # 熵正則化調優
+        self.spline_weight_decay = 5e-6     # 從1e-5→5e-6，更溫和
+        self.activation_weight_decay = 5e-6  # 激活權重衰減調優
+        
+        # 🔧 穩定性增強
+        self.gradient_clip_norm = 0.3       # 從0.5→0.3，更嚴格裁剪
+        self.use_layer_norm = True          # 保持層歸一化
+        self.use_batch_norm = False         # 避免MLP特性
+        
+        # 📊 新增準確率提升配置
+        self.use_attention_mechanism = True  # 新增：注意力機制
+        self.attention_heads = 8            # 多頭注意力
+        self.use_residual_connections = True # 殘差連接增強
+        self.residual_strength = 0.8       # 殘差連接強度
+        
+        # 🎯 根因分析特化配置
+        self.causality_enhancement = True   # 因果關係增強
+        self.temporal_awareness = True      # 時序感知
+        self.anomaly_boosting = 1.5         # 異常信號放大
+        self.root_cause_focus = True        # 根因聚焦機制
+        
+        # 🔥 自適應學習率調度
+        self.use_adaptive_lr = True         # 自適應學習率
+        self.lr_schedule = 'cosine_warmup'  # 餘弦預熱調度
+        self.lr_decay_factor = 0.8          # 學習率衰減因子
+        self.lr_decay_patience = 10         # 學習率衰減耐心值
+        
+        print("✅ KAN配置優化完成 - 針對最高準確率調優")
+        print(f"  🎯 KAN grid_size: {self.kan_grid_size}, basis: {self.kan_num_basis}")
+        print(f"  🎯 Hidden dims: {self.hidden_dims}")
+        print(f"  🎯 Learning rate: {self.learning_rate}, epochs: {self.num_epochs}")
+        print(f"  🎯 特徵維度: {self.target_feature_dim}")
+        
+        # 🔧 兼容性更新
+        self.hidden_dim = self.hidden_dims[0] if self.hidden_dims else 128
+        self.epochs = self.num_epochs
+        self.base_learning_rate = self.learning_rate
+        self.base_l1_lambda = self.kan_l1_lambda
+        self.base_entropy_lambda = self.kan_entropy_lambda
         print("🎯 Updating config for maximum KAN purity...")
         
         # 增強KAN特性
