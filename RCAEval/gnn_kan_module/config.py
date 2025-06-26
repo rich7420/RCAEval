@@ -229,7 +229,11 @@ class SimplifiedGNNKANConfig:
         self.dropout = max(0.2, self.dropout)  # 更強的正則化
         
         # 🔧 ICA增強配置 - 專門處理複雜時序特徵
-        self.ica_components = max(48, getattr(self, 'ica_components', 16))
+        current_ica = getattr(self, 'ica_components', None)
+        if current_ica is None:
+            self.ica_components = 48  # 默認值
+        else:
+            self.ica_components = max(48, current_ica)
         self.ica_max_iter = 1500  # 更多ICA迭代
         self.ica_fun = 'logcosh'  # 更穩定的ICA函數
         
@@ -337,7 +341,11 @@ class HighCapacityGNNKANConfig(SimplifiedGNNKANConfig):
         self.dropout = max(0.2, self.dropout)  # 更強的正則化
         
         # 🔧 ICA增強配置 - 專門處理複雜時序特徵
-        self.ica_components = max(48, getattr(self, 'ica_components', 16))
+        current_ica = getattr(self, 'ica_components', None)
+        if current_ica is None:
+            self.ica_components = 48  # 默認值
+        else:
+            self.ica_components = max(48, current_ica)
         self.ica_max_iter = 1500  # 更多ICA迭代
         self.ica_fun = 'logcosh'  # 更穩定的ICA函數
         
@@ -427,12 +435,12 @@ class FastGNNKANConfig(SimplifiedGNNKANConfig):
         if self.feature_method == 'simplified':
             self.feature_method = 'kpca'  # 快速版本使用kPCA
         
-        # 🔥 適度深化網絡架構 - 平衡速度與準確率
+        # �� 適度深化網絡架構 - 平衡速度與準確率
         if hasattr(self, 'hidden_dims'):
             # 適度擴展網絡 - 快速版本
             self.hidden_dims = [256, 192, 128, 96, 64]
         else:
-            self.hidden_dims = [128, 96, 64]
+            self.hidden_dims = [192, 128, 64]
         
         # 📈 優化訓練配置 - 提升準確率但保持速度
         self.learning_rate = min(0.0008, self.learning_rate)  # 適中學習率
@@ -444,8 +452,13 @@ class FastGNNKANConfig(SimplifiedGNNKANConfig):
         self.dropout = max(0.1, self.dropout)  # 適中的dropout
         
         # 🔧 kPCA配置 - 快速且有效的特徵處理
-        self.kpca_components = max(24, getattr(self, 'kpca_components', 12))
-        self.kpca_kernel = 'rbf'  # RBF核函數
+        current_ica = getattr(self, 'ica_components', None)
+        if current_ica is None:
+            self.ica_components = 24  # 默認值
+        else:
+            self.ica_components = max(24, current_ica)
+        self.ica_max_iter = 800  # 適中ICA迭代
+        self.ica_fun = 'logcosh'  # RBF核函數
         
         # 🚀 添加新的KAN特性
         self.kan_adaptive_activation = True
