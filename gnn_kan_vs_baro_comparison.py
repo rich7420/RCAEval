@@ -576,7 +576,7 @@ class GNNKANvsBAROComparator:
                 metrics[f'precision@{k}'] = precision_k
                 
                 # Recall@k - 召回率
-                recall_k = true_positives / len(ground_truth_set) if len(ground_truth_set) > 0 else 0
+                recall_k = true_positives / len(ground_truth) if len(ground_truth) > 0 else 0
                 metrics[f'recall@{k}'] = recall_k
                 
                 # F1@k - F1分數

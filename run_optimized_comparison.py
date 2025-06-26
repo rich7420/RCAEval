@@ -83,12 +83,26 @@ result = gnn_kan_rca(
     use_optimized_input=True
 )
 
-print(f'✅ GNN-KAN測試成功!')
-print(f'  - 檢測根因數: {len(result[\"ranks\"])}')
-print(f'  - 識別節點數: {len(result[\"node_names\"])}')
-print(f'  - 使用設備: {result.get(\"device_used\", \"unknown\")}')
-print(f'  - GPU加速: {result.get(\"gpu_accelerated\", False)}')
-print(f'  - top-3根因: {result[\"ranks\"][:3]}')
+print(f'📊 結果類型: {type(result)}')
+if isinstance(result, dict):
+    print(f'📋 結果鍵: {list(result.keys())}')
+    
+    if 'ranks' in result:
+        ranks = result['ranks']
+        node_names = result.get('node_names', [])
+        device_used = result.get('device_used', 'unknown')
+        gpu_accelerated = result.get('gpu_accelerated', False)
+        
+        print(f'✅ GNN-KAN測試成功!')
+        print(f'  - 檢測根因數: {len(ranks)}')
+        print(f'  - 識別節點數: {len(node_names)}')
+        print(f'  - 使用設備: {device_used}')
+        print(f'  - GPU加速: {gpu_accelerated}')
+        print(f'  - top-3根因: {ranks[:3]}')
+    else:
+        print(f'⚠️ 結果中缺少ranks字段')
+else:
+    print(f'⚠️ 測試結果異常: {type(result)}')
 "'''
         
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)

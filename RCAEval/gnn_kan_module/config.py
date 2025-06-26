@@ -29,7 +29,7 @@ class SimplifiedGNNKANConfig:
         self.use_kll_processing = False     # 移除複雜KLL處理
         self.use_ica = True                 # 啟用ICA特徵提取
         self.use_kpca = False               # 可選的kPCA
-        self.ica_components = None          # 自動確定ICA成分數
+        self.ica_components = 16            # ICA成分數量
         self.kpca_kernel = 'rbf'           # kPCA核函數
         
         # 🎯 GNN-KAN架構配置 - 純粹KAN實現
