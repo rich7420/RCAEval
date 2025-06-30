@@ -887,7 +887,7 @@ def create_advanced_processor(config):
 
 # DynamicModelAdjuster 已移動到 graph_constructors.py 中統一管理
 # 避免重複定義，從 graph_constructors 導入
-from .graph_constructors import DynamicModelAdjuster
+from .advanced_graph_constructors import DynamicModelAdjuster
 
 # 確保所有需要的類都被導出
 __all__ = [

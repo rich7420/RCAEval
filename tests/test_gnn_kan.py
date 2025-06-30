@@ -172,7 +172,8 @@ def test_simple_rca():
         import pandas as pd
         import numpy as np
         from RCAEval.kan.kan_layer import KANLayer
-        from RCAEval.kan.feature_extraction import stl_decomposition, kll_feature_processing
+        # 更新導入 - 使用新的統一接口
+        from RCAEval.gnn_kan_module.feature_processing import ica_metric_processing, kpca_metric_processing
         
         # 創建測試數據
         np.random.seed(42)
@@ -183,29 +184,84 @@ def test_simple_rca():
             'network_latency': np.random.rand(100) * 50
         })
         
-        # STL 分解
-        features, node_names = stl_decomposition(test_data, seasonal=7)
-        print(f"✓ Extracted features: {features.shape}, nodes: {len(node_names)}")
+        # 測試ICA處理
+        ica_features, ica_names = ica_metric_processing(test_data, target_dim=32)
+        print(f"✓ ICA features: {ica_features.shape}, nodes: {len(ica_names)}")
         
-        # KLL 處理
-        if features.size > 0:
-            processed_features = kll_feature_processing(features, k=64)
-            print(f"✓ Processed features: {processed_features.shape}")
-            
-            # 測試 KAN 層
-            if processed_features.shape[1] >= 4:
-                kan = KANLayer(input_dim=processed_features.shape[1], output_dim=len(node_names))
-                import torch
-                input_tensor = torch.tensor(processed_features, dtype=torch.float32)
-                output = kan(input_tensor)
-                print(f"✓ KAN output: {output.shape}")
+        # 測試kPCA處理  
+        kpca_features, kpca_names = kpca_metric_processing(test_data, target_dim=32)
+        print(f"✓ kPCA features: {kpca_features.shape}, nodes: {len(kpca_names)}")
+        
+        # 測試 KAN 層
+        if ica_features.shape[1] >= 4:
+            kan = KANLayer(input_dim=ica_features.shape[1], output_dim=len(ica_names))
+            import torch
+            input_tensor = torch.tensor(ica_features, dtype=torch.float32)
+            output = kan(input_tensor)
+            print(f"✓ KAN output: {output.shape}")
         
         print("✓ Simplified RCA test passed")
         return True
         
     except Exception as e:
         print(f"✗ Simplified RCA test failed: {e}")
+        import traceback
         traceback.print_exc()
+        return False
+
+def test_kan_layer_basic():
+    """測試KAN層的基本功能"""
+    try:
+        input_dim = 10
+        output_dim = 5
+        grid_size = 5
+        spline_order = 3
+        
+        # 創建KAN層
+        kan_layer = KANLayer(
+            input_dim=input_dim,
+            output_dim=output_dim, 
+            grid_size=grid_size,
+            spline_order=spline_order
+        )
+        
+        # 測試前向傳播
+        x = torch.randn(32, input_dim)
+        output = kan_layer(x)
+        
+        # 檢查輸出形狀
+        assert output.shape == (32, output_dim), f"期望 (32, {output_dim}), 得到 {output.shape}"
+        
+        # 檢查數值穩定性
+        assert not torch.isnan(output).any(), "輸出包含NaN值"
+        assert not torch.isinf(output).any(), "輸出包含無窮值"
+        
+        print("✅ KAN層基本測試通過")
+        return True
+        
+    except Exception as e:
+        print(f"❌ KAN層基本測試失敗: {e}")
+        return False
+
+def test_feature_processing():
+    """測試特徵處理功能"""
+    try:
+        # 創建測試數據
+        data = np.random.randn(100, 20)
+        
+        # 測試ICA處理
+        ica_features, ica_names = ica_metric_processing(data, target_dim=32)
+        assert ica_features.shape[1] == 32, f"ICA特徵維度錯誤: {ica_features.shape}"
+        
+        # 測試kPCA處理
+        kpca_features, kpca_names = kpca_metric_processing(data, target_dim=32)
+        assert kpca_features.shape[1] == 32, f"kPCA特徵維度錯誤: {kpca_features.shape}"
+        
+        print("✅ 特徵處理測試通過")
+        return True
+        
+    except Exception as e:
+        print(f"❌ 特徵處理測試失敗: {e}")
         return False
 
 def main():

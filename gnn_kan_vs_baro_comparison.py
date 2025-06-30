@@ -1303,16 +1303,100 @@ class GNNKANvsBAROComparator:
         
         return summary
     
+    def safe_json_serializer(self, obj):
+        """安全的JSON序列化器，避免循環引用"""
+        if hasattr(obj, '__dict__'):
+            # 檢查是否已經處理過這個對象（避免循環引用）
+            if id(obj) in getattr(self, '_serialized_objects', set()):
+                return f"<已處理對象 {type(obj).__name__}>"
+            
+            if not hasattr(self, '_serialized_objects'):
+                self._serialized_objects = set()
+            self._serialized_objects.add(id(obj))
+            
+            # 過濾掉可能導致循環引用的屬性
+            safe_dict = {}
+            for key, value in obj.__dict__.items():
+                if not key.startswith('_') and not callable(value):
+                    try:
+                        # 嘗試序列化值
+                        if isinstance(value, (str, int, float, bool, list, dict, type(None))):
+                            safe_dict[key] = value
+                        elif hasattr(value, '__dict__'):
+                            # 遞歸處理對象，但限制深度
+                            if len(getattr(self, '_serialized_objects', set())) < 50:
+                                safe_dict[key] = self.safe_json_serializer(value)
+                            else:
+                                safe_dict[key] = str(value)
+                        else:
+                            safe_dict[key] = str(value)
+                    except:
+                        safe_dict[key] = str(value)
+            return safe_dict
+        elif isinstance(obj, (list, tuple)):
+            return [self.safe_json_serializer(item) for item in obj]
+        elif isinstance(obj, dict):
+            return {key: self.safe_json_serializer(value) for key, value in obj.items()}
+        elif hasattr(obj, 'tolist'):  # numpy arrays
+            return obj.tolist()
+        elif torch and torch.is_tensor(obj):
+            return obj.detach().cpu().numpy().tolist()
+        else:
+            return str(obj)
+
     def save_results(self):
-        """保存比較結果"""
+        """保存比較結果 - 修復循環引用問題"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # 保存詳細結果
+        # 保存詳細結果 - 使用安全序列化
         detailed_file = os.path.join(self.output_dir, f"detailed_results_{timestamp}.json")
-        with open(detailed_file, 'w', encoding='utf-8') as f:
-            json.dump(self.results, f, indent=2, ensure_ascii=False, default=str)
         
-        print(f"📄 詳細結果已保存: {detailed_file}")
+        try:
+            # 重置序列化對象追蹤
+            self._serialized_objects = set()
+            
+            # 創建安全的結果副本
+            safe_results = self.safe_json_serializer(self.results)
+            
+            with open(detailed_file, 'w', encoding='utf-8') as f:
+                json.dump(safe_results, f, indent=2, ensure_ascii=False)
+            
+            print(f"📄 詳細結果已保存: {detailed_file}")
+            
+        except Exception as e:
+            print(f"❌ 保存詳細結果失敗: {e}")
+            
+            # 回退方案：保存簡化版本
+            try:
+                simplified_results = {
+                    'summary': {
+                        'total_datasets': len(self.results),
+                        'timestamp': timestamp,
+                        'error': f"原始保存失敗: {str(e)}"
+                    },
+                    'datasets': {}
+                }
+                
+                for dataset_name, dataset_result in self.results.items():
+                    if isinstance(dataset_result, dict) and 'summary' in dataset_result:
+                        simplified_results['datasets'][dataset_name] = {
+                            'summary': dataset_result['summary'],
+                            'case_count': len(dataset_result.get('cases', []))
+                        }
+                
+                simplified_file = os.path.join(self.output_dir, f"simplified_results_{timestamp}.json")
+                with open(simplified_file, 'w', encoding='utf-8') as f:
+                    json.dump(simplified_results, f, indent=2, ensure_ascii=False)
+                
+                print(f"📄 簡化結果已保存: {simplified_file}")
+                
+            except Exception as e2:
+                print(f"❌ 簡化保存也失敗: {e2}")
+        
+        finally:
+            # 清理序列化追蹤
+            if hasattr(self, '_serialized_objects'):
+                delattr(self, '_serialized_objects')
     
     def generate_report(self) -> str:
         """生成比較報告"""
