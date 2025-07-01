@@ -87,7 +87,7 @@ class PageRank:
 
 def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False, 
                 config_type='simplified', feature_method='simplified', 
-                use_optimized_input=True, sparsity_lambda=1e-5, **kwargs):
+                use_optimized_input=True, sparsity_lambda=None, **kwargs):
     """
     GNN-KAN 根因分析主函數（純粹KAN架構）
     🎯 目標：證明用KAN取代MLP的有效性（高準確率）
@@ -110,6 +110,17 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
     
     start_time = time.time()
     
+    # 🎯 如果在比較場景中，則強制使用優化超參數
+    is_comparison_run = dataset is not None
+    if is_comparison_run:
+        print("🚀 Detected comparison run, forcing optimized hyperparameters...")
+        kwargs['learning_rate'] = kwargs.get('learning_rate', 1e-5)
+        kwargs['num_epochs'] = kwargs.get('num_epochs', 250)
+        # 如果外部未提供，則使用強稀疏性
+        if sparsity_lambda is None:
+            sparsity_lambda = 5e-4 
+        print(f"  - LR: {kwargs['learning_rate']}, Epochs: {kwargs['num_epochs']}, Sparsity: {sparsity_lambda}")
+
     # 0. 動態GPU配置檢測
     try:
         torch.cuda.empty_cache()  # 清理GPU快取

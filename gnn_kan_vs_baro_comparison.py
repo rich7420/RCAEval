@@ -948,9 +948,9 @@ class GNNKANvsBAROComparator:
                         'feature_method': 'ica',
                         'use_cuda': True,
                         'cpu_fallback': True,
-                        'learning_rate': 1e-6,       # 顯著降低學習率
-                        'num_epochs': 200,           # 增加訓練週期
-                        'sparsity_lambda': 2e-5      # 應用稀疏正則化
+                        'learning_rate': 5e-6,       # 顯著降低學習率
+                        'num_epochs': 250,           # 增加訓練週期
+                        'sparsity_lambda': 5e-4      # 應用稀疏正則化
                     }
                     
                     try:

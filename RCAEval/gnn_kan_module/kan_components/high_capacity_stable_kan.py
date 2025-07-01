@@ -103,10 +103,10 @@ class HighCapacityStableKANLayer(nn.Module):
                 self.residual_linear = SpectralNorm(self.residual_linear)
         
         # 🛡️ 層標準化 (比 BatchNorm 更穩定)
-        self.layer_norm = nn.LayerNorm(output_dim)
+        self.layer_norm = nn.LayerNorm(output_dim, eps=1e-4)
         
         # 🛡️ 預標準化 (在激活前標準化)
-        self.pre_norm = nn.LayerNorm(input_dim)
+        self.pre_norm = nn.LayerNorm(input_dim, eps=1e-4)
         
         # Dropout for regularization
         self.dropout = nn.Dropout(0.1)
@@ -454,7 +454,7 @@ class HighCapacityGNNKANEncoder(nn.Module):
             self.message_passing_layers.append(message_layer)
             
             # 層標準化
-            self.layer_norms.append(nn.LayerNorm(dims[i + 1]))
+            self.layer_norms.append(nn.LayerNorm(dims[i + 1], eps=1e-4))
         
         self.dropout = nn.Dropout(dropout)
         

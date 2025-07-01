@@ -121,7 +121,7 @@ class TemporalAttentionAdapter(nn.Module):
             batch_first=True,
             dropout=0.1
         )
-        self.norm = nn.LayerNorm(feature_dim)
+        self.norm = nn.LayerNorm(feature_dim, eps=1e-4)
         
         print(f"✓ 注意力適配器: {feature_dim}→{self.adjusted_dim}, heads={self.num_heads}")
     

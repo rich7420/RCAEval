@@ -651,9 +651,9 @@ class OptimizedGNNKANEncoder(nn.Module):
                 current_x = layer(current_x)
             else:
                 try:
-                    print(f"🔍 執行KAN層{i}: {type(layer).__name__}")
-                    print(f"  輸入形狀: {current_x.shape}")
-                    print(f"  輸入範圍: [{current_x.min():.6f}, {current_x.max():.6f}]")
+                    # print(f"🔍 執行KAN層{i}: {type(layer).__name__}")
+                    # print(f"  輸入形狀: {current_x.shape}")
+                    # print(f"  輸入範圍: [{current_x.min():.6f}, {current_x.max():.6f}]")
                     
                     # 🎯 KAN層處理 (核心：用KAN取代MLP) - 強制使用KAN
                     kan_output = layer(current_x)

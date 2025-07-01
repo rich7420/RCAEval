@@ -176,7 +176,7 @@ class TemporalAttention(nn.Module):
             self.adjusted_dim = feature_dim
         
         self.attention = nn.MultiheadAttention(self.adjusted_dim, num_heads=num_heads, batch_first=True)
-        self.norm = nn.LayerNorm(feature_dim)
+        self.norm = nn.LayerNorm(feature_dim, eps=1e-4)
         
     def forward(self, features):
         """修復維度匹配的前向傳播"""
@@ -234,18 +234,6 @@ class AdaptiveGradientStabilizer:
         self.grad_norm_history.append(grad_norm.item() if isinstance(grad_norm, torch.Tensor) else grad_norm)
         
         return grad_norm
-
-
-def create_model_with_config(config, num_nodes):
-    """根據配置創建模型"""
-    try:
-        model = GNNKANModel(config, num_nodes)
-        print(f"✓ Created GNN-KAN model with {sum(p.numel() for p in model.parameters())} parameters")
-        return model
-    except Exception as e:
-        print(f"⚠️ Model creation failed: {e}")
-        # 創建簡化版本的模型
-        return create_fallback_model(config, num_nodes)
 
 
 def create_fallback_model(config, num_nodes):
@@ -515,7 +503,7 @@ class SimplifiedGNNKAN(nn.Module):
             
             # 批量歸一化
             if use_batch_norm and i < num_layers - 1:
-                self.batch_norms.append(nn.BatchNorm1d(layer_output_dim))
+                self.batch_norms.append(nn.LayerNorm(layer_output_dim, eps=1e-4))
         
         # Dropout
         self.dropout = nn.Dropout(dropout)
@@ -556,7 +544,7 @@ class SimplifiedGNNKAN(nn.Module):
                 print("⚠️ 警告：KAN層不可用，回退到標準線性層（失去KAN優勢）")
                 return nn.Sequential(
                     nn.Linear(input_dim, output_dim, bias=False),  # 最小化MLP特性
-                    nn.LayerNorm(output_dim)  # 使用LayerNorm而非BatchNorm
+                    nn.LayerNorm(output_dim, eps=1e-4)  # 使用LayerNorm而非BatchNorm
                 )
     
     def forward(self, node_features, edge_index):
@@ -664,5 +652,5 @@ class SimplifiedGNNKAN(nn.Module):
         }
 
 # 將SimplifiedGNNKAN添加到可用的模型中
-__all__ = ['GNNKANModel', 'SimplifiedGNNKAN', 'TemporalAttention', 'create_model_with_config', 
+__all__ = ['GNNKANModel', 'SimplifiedGNNKAN', 'TemporalAttention', 'create_fallback_model', 
            'train_gnn_kan_model', 'compute_loss_stable']

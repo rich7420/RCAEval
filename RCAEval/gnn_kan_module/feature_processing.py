@@ -464,16 +464,8 @@ def simplified_metric_processing(metrics_data, target_dim=64):
     return feature_matrix, services
 
 
-def extract_service_names_from_columns(columns):
-    """
-    從列名中提取微服務名稱
-    
-    Args:
-        columns: 數據列名
-        
-    Returns:
-        services: 微服務名稱列表
-    """
+def extract_service_names_from_columns(columns: list) -> list:
+    """從列名中提取服務名稱 - 更智能的版本"""
     services = set()
     
     # 常見的微服務模式
@@ -503,168 +495,6 @@ def extract_service_names_from_columns(columns):
                     services.add(prefix)
     
     return sorted(list(services))
-
-
-def enhanced_trace_processing(trace_data, inject_time=None):
-    """
-    增強的TracerCA風格trace處理 - 專注於最有效的特徵
-    
-    Args:
-        trace_data: trace數據
-        inject_time: 故障注入時間
-    
-    Returns:
-        trace_features: trace特徵
-        operation_names: 操作名稱
-        service_graph: 服務圖
-    """
-    print("🔧 Enhanced TracerCA-style trace processing...")
-    
-    if trace_data is None or (isinstance(trace_data, pd.DataFrame) and trace_data.empty):
-        return np.array([]), [], None
-    
-    try:
-        # 確保trace_data是DataFrame格式
-        if not isinstance(trace_data, pd.DataFrame):
-            trace_data = pd.DataFrame(trace_data)
-        
-        # 標準化列名 - 兼容多種trace格式
-        column_mapping = {
-            'service_name': 'serviceName', 'service': 'serviceName',
-            'operation_name': 'operationName', 'operation': 'operationName',
-            'method_name': 'operationName', 'method': 'operationName',
-            'start_time': 'startTime', 'timestamp': 'startTime',
-            'time': 'startTime', 'trace_id': 'traceID', 'span_id': 'spanID'
-        }
-        
-        for old_col, new_col in column_mapping.items():
-            if old_col in trace_data.columns and new_col not in trace_data.columns:
-                trace_data[new_col] = trace_data[old_col]
-        
-        # 確保必要列存在
-        if 'serviceName' not in trace_data.columns:
-            trace_data['serviceName'] = 'default_service'
-        if 'operationName' not in trace_data.columns:
-            trace_data['operationName'] = 'default_operation'
-        if 'duration' not in trace_data.columns:
-            trace_data['duration'] = np.random.lognormal(2, 1, len(trace_data))
-        
-        # 創建操作標識 - TracerCA關鍵特徵
-        trace_data['operation'] = trace_data['serviceName'].astype(str) + "_" + trace_data['operationName'].astype(str)
-        
-        # 構建服務依賴圖
-        service_graph = _build_enhanced_service_graph(trace_data)
-        
-        # 提取TracerCA風格的操作級特徵
-        operations = trace_data['operation'].unique()
-        operation_features = []
-        
-        for op in operations:
-            op_data = trace_data[trace_data['operation'] == op]
-            
-            # 基本統計特徵
-            duration_stats = op_data['duration'].describe() if 'duration' in op_data.columns else pd.Series([0]*8, index=['count', 'mean', 'std', 'min', '25%', '50%', '75%', 'max'])
-            
-            # TracerCA核心特徵：support, confidence, JI
-            if inject_time is not None and 'startTime' in op_data.columns:
-                # 分割正常和異常期間
-                normal_data = op_data[op_data['startTime'] < inject_time] if 'startTime' in op_data.columns else op_data[:len(op_data)//2]
-                anomal_data = op_data[op_data['startTime'] >= inject_time] if 'startTime' in op_data.columns else op_data[len(op_data)//2:]
-                
-                # 計算TracerCA特徵
-                if not normal_data.empty and not anomal_data.empty:
-                    # 基於SLO的異常檢測
-                    normal_latency = normal_data['duration'].mean() if 'duration' in normal_data.columns else 0
-                    normal_std = normal_data['duration'].std() if 'duration' in normal_data.columns else 1
-                    anomal_latency = anomal_data['duration'].mean() if 'duration' in anomal_data.columns else 0
-                    
-                    # TracerCA Support: 異常操作數量/總異常數量
-                    threshold = normal_latency + 3 * normal_std
-                    abnormal_spans = (anomal_data['duration'] > threshold).sum() if 'duration' in anomal_data.columns else 0
-                    total_abnormal = len(anomal_data)
-                    support = abnormal_spans / max(total_abnormal, 1)
-                    
-                    # TracerCA Confidence: 異常操作數量/該操作總數量
-                    confidence = abnormal_spans / max(len(anomal_data), 1)
-                    
-                    # TracerCA JI (Jaccard Index)
-                    ji = (2 * support * confidence) / max(support + confidence, 1e-10) if (support + confidence) > 0 else 0
-                    
-                    # 延遲變化率
-                    latency_change = (anomal_latency - normal_latency) / max(normal_latency, 1e-8)
-                    
-                    # 調用頻率變化
-                    normal_call_rate = len(normal_data) / max(len(trace_data), 1)
-                    anomal_call_rate = len(anomal_data) / max(len(trace_data), 1)
-                    call_rate_change = anomal_call_rate - normal_call_rate
-                else:
-                    support = confidence = ji = latency_change = call_rate_change = 0
-            else:
-                support = confidence = ji = latency_change = call_rate_change = 0
-            
-            # 組合TracerCA特徵
-            features = [
-                support,                      # TracerCA Support
-                confidence,                   # TracerCA Confidence  
-                ji,                          # TracerCA JI score
-                latency_change,              # 延遲變化率（關鍵RCA指標）
-                call_rate_change,            # 調用頻率變化
-                duration_stats['mean'],      # 平均延遲
-                duration_stats['std'],       # 延遲標準差
-                duration_stats['max'],       # 最大延遲
-                duration_stats['count'],     # 調用次數
-                duration_stats['75%'] - duration_stats['25%']  # IQR（穩定性指標）
-            ]
-            
-            operation_features.append(features)
-        
-        # 轉換為numpy數組並處理NaN值
-        if operation_features:
-            trace_features = np.array(operation_features)
-            trace_features = np.nan_to_num(trace_features, nan=0.0, posinf=1.0, neginf=-1.0)
-        else:
-            trace_features = np.array([])
-        
-        return trace_features, list(operations), service_graph
-        
-    except Exception as e:
-        print(f"⚠️ Enhanced TracerCA trace processing failed: {e}")
-        return np.array([]), [], None
-
-
-def _build_enhanced_service_graph(trace_data):
-    """構建增強的服務依賴圖 - 基於實際調用關係"""
-    try:
-        import networkx as nx
-        
-        G = nx.DiGraph()
-        
-        # 添加服務節點
-        services = trace_data['serviceName'].unique()
-        for service in services:
-            G.add_node(service)
-        
-        # 基於trace時序構建真實依賴關係
-        if 'startTime' in trace_data.columns and 'traceID' in trace_data.columns:
-            # 按traceID分組，時間排序找依賴
-            for trace_id in trace_data['traceID'].unique():
-                trace_spans = trace_data[trace_data['traceID'] == trace_id].sort_values('startTime')
-                
-                for i in range(len(trace_spans) - 1):
-                    current_service = trace_spans.iloc[i]['serviceName']
-                    next_service = trace_spans.iloc[i + 1]['serviceName']
-                    
-                    if current_service != next_service:
-                        if G.has_edge(current_service, next_service):
-                            G[current_service][next_service]['weight'] += 1
-                        else:
-                            G.add_edge(current_service, next_service, weight=1)
-        
-        return G
-        
-    except Exception as e:
-        print(f"Service graph construction failed: {e}")
-        return None
 
 
 def psm_metric_processing(metrics_data, target_dim=64):
@@ -879,6 +709,5 @@ def _compute_sample_entropy(series, m=2, r=None):
 
 __all__ = [
     'simplified_metric_processing',
-    'enhanced_trace_processing', 
     'psm_metric_processing'
 ]

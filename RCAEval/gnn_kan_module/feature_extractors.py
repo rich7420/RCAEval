@@ -1,4 +1,13 @@
 """
+This module is deprecated.
+All feature extraction logic has been moved to the `RCAEval.gnn_kan_module.processors` sub-package.
+This file is kept for backward compatibility during transition and will be removed in a future version.
+"""
+
+# To prevent accidental usage, you can raise an error on import.
+# raise DeprecationWarning("This module is deprecated. Use processors sub-package instead.")
+
+"""
 GNN-KAN RCA: Feature extraction modules
 Contains all feature extraction related classes and functions
 """
@@ -12,6 +21,7 @@ import traceback
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics.pairwise import cosine_similarity
+from typing import List
 
 # 從 utils 導入統一的權重計算函數
 from .utils import compute_service_criticality_weights
@@ -35,47 +45,35 @@ except ImportError:
         return data
 
 # Define missing functions that were previously imported from kan module
-def sliding_window_alignment(data, window_size, step_size, timestamp_col='time'):
-    """簡化的滑動窗口對齊"""
-    try:
-        if isinstance(data, dict):
-            return [data], [None]
-        elif isinstance(data, pd.DataFrame):
-            return [data], [None]
-        else:
-            return [data], [None]
-    except:
-        return [data], [None]
+def sliding_window_alignment(data: pd.DataFrame, window_size: int, step: int) -> List[pd.DataFrame]:
+    # This function seems generic, can be kept in a common place or moved to a more specific processor.
+    # For now, keeping it here but noting it's a candidate for relocation.
+    if data.empty or len(data) < window_size:
+        return [data] if not data.empty else []
+    
+    windows = []
+    for i in range(0, len(data) - window_size + 1, step):
+        windows.append(data.iloc[i:i + window_size])
+    return windows
 
-def extract_log_features(log_data, use_dla=False, max_features=100):
-    """
-    🔧 統一的日誌特徵提取 - 重定向到統一實現
-    """
-    try:
-        from .processors.log_processors import extract_log_features as unified_extract_log_features
-        return unified_extract_log_features(
-            log_data=log_data,
-            use_dla=use_dla,
-            max_features=max_features,
-            method='dla' if use_dla else 'simple',
-            target_dim=max_features
-        )
-    except Exception as e:
-        print(f"⚠️ 重定向到統一日誌處理器失敗: {e}")
-        return np.array([[0]]), ['default_log_feature']
+from .processors.log_processors import UnifiedLogProcessor
+from .processors.trace_processors import UnifiedTraceProcessor
+from .processors.metric_processors import UnifiedMetricProcessor
 
-def extract_trace_features(trace_data, inject_time=None):
-    """簡化的trace特徵提取"""
-    try:
-        if isinstance(trace_data, pd.DataFrame) and not trace_data.empty:
-            features = np.array([[len(trace_data), trace_data.get('duration', [0]).mean()]])
-            names = ['trace_count', 'avg_duration']
-        else:
-            features = np.array([[0, 0]])
-            names = ['trace_count', 'avg_duration']
-        return features, names
-    except:
-        return np.array([[0]]), ['default_trace_feature']
+def extract_log_features(log_data, **kwargs):
+    """重定向到 UnifiedLogProcessor"""
+    processor = UnifiedLogProcessor(**kwargs)
+    return processor.process(log_data)
+
+def extract_trace_features(trace_data, **kwargs):
+    """重定向到 UnifiedTraceProcessor"""
+    processor = UnifiedTraceProcessor(**kwargs)
+    return processor.process(trace_data, **kwargs)
+
+def extract_metric_features(metric_data, **kwargs):
+    """重定向到 UnifiedMetricProcessor"""
+    processor = UnifiedMetricProcessor(**kwargs)
+    return processor.process(metric_data)
 
 def build_service_dependency_graph(trace_data):
     """簡化的服務依賴圖構建"""
@@ -149,180 +147,57 @@ warnings.filterwarnings("ignore")
 
 
 class MultiModalFeatureExtractor:
-    """多模態特徵提取器"""
-    
+    """
+    多模態特徵提取器 - 現在作為統一處理器的協調器。
+    所有實際的處理邏輯都已移至 `processors` 子模組中。
+    """
     def __init__(self, config):
         self.config = config
-        self.scaler = StandardScaler()
-        
-    def extract_features(self, data, inject_time=None):
+        self.log_processor = UnifiedLogProcessor.from_config(config)
+        self.trace_processor = UnifiedTraceProcessor.from_config(config)
+        self.metric_processor = UnifiedMetricProcessor.from_config(config)
+
+    def extract_features(self, data_dict: dict, inject_time=None, dataset=None):
         """
-        提取多模態特徵
+        從多模態數據中提取特徵。
         
         Args:
-            data: 輸入數據 (dict 或 DataFrame)
-            inject_time: 故障注入時間
-            
+            data_dict (dict): 包含 'metrics', 'logs', 'traces' 的字典。
+            inject_time: 故障注入時間。
+        
         Returns:
-            features: 提取的特徵
-            node_names: 節點名稱
+            fused_features (np.ndarray): 融合後的特徵矩陣。
+            node_names (list): 節點名稱列表。
         """
-        if isinstance(data, dict):
-            return self._extract_multimodal_features(data, inject_time)
-        else:
-            return self._extract_single_modal_features(data, inject_time)
-    
-    def _apply_pca_with_variance_check(self, features, feature_type, target_components=None):
-        """
-        應用 PCA 降維，包含方差檢查
+        all_features = {}
         
-        Args:
-            features: 輸入特徵矩陣
-            feature_type: 特徵類型標識
-            target_components: 目標降維維度
-            
-        Returns:
-            降維後的特徵矩陣
-        """
-        try:
-            from sklearn.decomposition import PCA
-            from sklearn.preprocessing import StandardScaler
-            
-            if features.size == 0:
-                return features
-                
-            # 確保特徵矩陣有足夠的樣本和特徵
-            n_samples, n_features = features.shape
-            if n_samples < 2 or n_features < 2:
-                print(f"⚠️ {feature_type}: 特徵矩陣太小 ({n_samples}x{n_features})，跳過 PCA")
-                return features
-            
-            # 設置目標組件數
-            if target_components is None:
-                target_components = min(self.config.pca_components, n_features, n_samples)
-            else:
-                target_components = min(target_components, n_features, n_samples)
-            
-            if target_components >= n_features:
-                print(f"⚠️ {feature_type}: 目標維度 {target_components} >= 原始維度 {n_features}，跳過 PCA")
-                return features
-            
-            # 標準化
-            scaler = StandardScaler()
-            features_scaled = scaler.fit_transform(features)
-            
-            # 檢查方差
-            feature_var = np.var(features_scaled, axis=0)
-            valid_features = feature_var > 1e-8
-            
-            if not np.any(valid_features):
-                print(f"⚠️ {feature_type}: 所有特徵方差過小，跳過 PCA")
-                return features
-            
-            # 過濾低方差特徵
-            features_filtered = features_scaled[:, valid_features]
-            if features_filtered.shape[1] <= target_components:
-                print(f"⚠️ {feature_type}: 過濾後特徵數 {features_filtered.shape[1]} <= 目標維度 {target_components}")
-                return features_filtered
-            
-            # 🎯 安全的PCA應用 - 檢查維度限制
-            from .utils import safe_pca_transform
-            features_pca = safe_pca_transform(features_filtered, target_components)
-            
-            print(f"✓ {feature_type}: 安全PCA {features.shape[1]} -> {features_pca.shape[1]}")
-            
-            return features_pca
-            
-        except Exception as e:
-            print(f"⚠️ {feature_type}: PCA 失敗 {e}，返回原始特徵")
-            return features
-    
-    def _extract_multimodal_features(self, data, inject_time):
-        """處理多模態數據 - 大幅簡化版本，專注核心功能"""
-        print("Processing multimodal data...")
-        
-        # 🎯 直接處理數據，不使用複雜的滑動窗口
-        if isinstance(data, dict):
-            # 優先處理 metrics 數據（核心）
-            if 'metrics' in data or 'metric' in data:
-                key = 'metrics' if 'metrics' in data else 'metric'
-                metric_data = data[key]
-                
-                print("🔧 Using simplified metric processing (replacing STL decomposition)...")
-                from .feature_processing import simplified_metric_processing
-                features, names = simplified_metric_processing(
-                    metric_data, target_dim=self.config.target_feature_dim
-                )
-                print(f"✓ Simplified processing: {features.shape[1]} features extracted")
-                return features, names
-            
-            # 處理其他類型數據
-            elif 'trace' in data or 'traces' in data:
-                key = 'trace' if 'trace' in data else 'traces'
-                trace_data = data[key]
-                features, names = self._extract_trace_features_simple(trace_data)
-                return features, names
-            
-            elif 'log' in data or 'logs' in data:
-                key = 'log' if 'log' in data else 'logs'
-                log_data = data[key]
-                features, names = extract_log_features(log_data, max_features=self.config.max_log_features)
-                return features, names
-        
-        # 如果是 DataFrame，當作 metrics 處理
-        elif isinstance(data, pd.DataFrame):
-            from .feature_processing import simplified_metric_processing
-            features, names = simplified_metric_processing(
-                data, target_dim=self.config.target_feature_dim
+        if 'metrics' in data_dict and data_dict['metrics'] is not None:
+            metric_features, metric_names = self.metric_processor.process(
+                data_dict['metrics'], inject_time=inject_time
             )
-            return features, names
-        
-        # 最簡回退方案
-        print("⚠️ Using minimal fallback features...")
-        n_features = min(self.config.target_feature_dim, 24)  # 減少到24個特徵
-        fallback_features = np.random.randn(1, n_features) * 0.1
-        fallback_names = [f'fallback_{i}' for i in range(n_features)]
-        return fallback_features, fallback_names
-    
-    def _extract_trace_features_simple(self, trace_data):
-        """簡化的trace特徵提取"""
-        try:
-            if isinstance(trace_data, pd.DataFrame) and not trace_data.empty:
-                # 基本統計特徵
-                features = []
-                names = []
-                
-                numeric_cols = trace_data.select_dtypes(include=[np.number]).columns
-                for col in numeric_cols[:8]:  # 最多8個數值列
-                    col_data = trace_data[col].dropna()
-                    if len(col_data) > 0:
-                        features.extend([col_data.mean(), col_data.std(), col_data.max(), col_data.min()])
-                        names.extend([f'{col}_mean', f'{col}_std', f'{col}_max', f'{col}_min'])
-                
-                if features:
-                    return np.array([features]), names
+            all_features['metrics'] = (metric_features, metric_names)
             
-            # 回退方案
-            return np.array([[0, 0, 0, 0]]), ['trace_count', 'avg_duration', 'max_duration', 'service_count']
-        except:
-            return np.array([[0]]), ['trace_default']
-    
-    def _extract_single_modal_features(self, data, inject_time):
-        """處理單一模態數據"""
-        # 預處理數據
-        processed_data = preprocess(data, dataset='default')
+        if 'traces' in data_dict and data_dict['traces'] is not None:
+            trace_features, trace_names = self.trace_processor.process(
+                data_dict['traces'], inject_time=inject_time
+            )
+            all_features['traces'] = (trace_features, trace_names)
+            
+        if 'logs' in data_dict and data_dict['logs'] is not None:
+            log_features, log_names = self.log_processor.process(data_dict['logs'])
+            all_features['logs'] = (log_features, log_names)
+            
+        # At this point, you would typically fuse the features.
+        # This part of the logic needs to be robustly defined.
+        # For now, we'll prioritize metric features as a placeholder for fusion.
+        if 'metrics' in all_features:
+            return all_features['metrics']
+        elif 'traces' in all_features:
+            return all_features['traces']
+        elif 'logs' in all_features:
+            return all_features['logs']
         
-        # 使用簡化的指標處理 - 導入feature_processing中的版本
-        from .feature_processing import simplified_metric_processing
-        simplified_features, node_names = simplified_metric_processing(
-            processed_data.select_dtypes(include=[np.number]),
-            target_dim=self.config.target_feature_dim
-        )
-        
-        if simplified_features.size > 0:
-            return simplified_features, node_names
-        else:
-            return np.array([]), []
+        return np.array([]), []
 
 
 # simplified_metric_processing 函數已移至 feature_processing.py

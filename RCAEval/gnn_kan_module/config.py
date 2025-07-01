@@ -16,10 +16,10 @@ class SimplifiedGNNKANConfig:
     
     def __init__(self):
         # 🎯 核心KAN配置 - 確保純粹性
-        self.kan_grid_size = 5              # KAN B-spline 網格大小
+        self.kan_grid_size = 3              # KAN B-spline 網格大小 (簡化)
         self.kan_spline_order = 3           # 樣條階數
-        self.kan_num_basis = 5              # 基函數數量
-        self.adaptive_spline_order = True   # 自適應樣條階數
+        self.kan_num_basis = 4              # 基函數數量 (簡化)
+        self.adaptive_spline_order = False  # 關閉自適應以簡化
         self.learnable_activation = True    # 可學習激活函數（KAN vs MLP關鍵）
         self.minimize_linear_component = True  # 最小化MLP特性
         
@@ -42,15 +42,15 @@ class SimplifiedGNNKANConfig:
         self.learnable_graph = True        # 動態圖結構學習
         
         # 🚀 訓練配置 - 針對KAN優化
-        self.learning_rate = 1e-5      # 降低預設學習率
-        self.base_learning_rate = 1e-5     # 兼容性別名
+        self.learning_rate = 1e-4          # 適度增大學習率
+        self.base_learning_rate = 1e-4     # 兼容性別名
         self.weight_decay = 1e-5
-        self.num_epochs = 150              # 增加預設週期
-        self.epochs = 150                  # 兼容性別名
+        self.num_epochs = 200              # 增加預設週期
+        self.epochs = 200                  # 兼容性別名
         self.batch_size = 32
-        self.patience = 20
+        self.patience = 25
         self.min_delta = 1e-5
-        self.warmup_epochs = 10            # 預熱階段
+        self.warmup_epochs = 15            # 預熱階段
         
         # 🔧 穩定性配置 - 簡化但有效
         self.gradient_clip_norm = 1.0      # 放寬梯度裁剪以適應低學習率

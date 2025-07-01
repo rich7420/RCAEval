@@ -349,28 +349,45 @@ def memory_usage_gpu():
     return {'allocated': 0, 'cached': 0, 'max_allocated': 0}
 
 
-def save_model_checkpoint(model, optimizer, epoch, loss, filepath):
+def save_model_checkpoint(model, optimizer, epoch, loss, metrics, save_path, config=None):
     """
-    保存模型檢查點
+    💾 保存模型檢查點 (統一版本)
     
     Args:
-        model: 模型
+        model: 要保存的模型
         optimizer: 優化器
         epoch: 當前epoch
         loss: 當前損失
-        filepath: 保存路徑
+        metrics: 評估指標
+        save_path: 保存路徑
+        config: 配置對象
     """
+    print(f"💾 Saving checkpoint to {save_path}")
+    
     checkpoint = {
-        'epoch': epoch,
         'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict() if optimizer else None,
+        'epoch': epoch,
         'loss': loss,
+        'metrics': metrics,
         'timestamp': time.time()
     }
     
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    torch.save(checkpoint, filepath)
-    print(f"Checkpoint saved to {filepath}")
+    if config:
+        # To avoid circular dependencies or saving large objects,
+        # we can serialize the config to a dict.
+        if hasattr(config, 'to_dict'):
+             checkpoint['config'] = config.to_dict()
+        else:
+             checkpoint['config'] = vars(config)
+    
+    try:
+        # Ensure the directory exists
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        torch.save(checkpoint, save_path)
+        print(f"✅ Checkpoint saved successfully")
+    except Exception as e:
+        print(f"❌ Failed to save checkpoint: {e}")
 
 
 def load_model_checkpoint(model, optimizer, filepath):

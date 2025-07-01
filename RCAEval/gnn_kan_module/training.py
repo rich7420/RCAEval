@@ -12,73 +12,11 @@ from torch.optim import lr_scheduler
 import numpy as np
 from torch_geometric.utils import negative_sampling
 
-# 修復導入問題 - 使用模組化的結構
-try:
-    from .kan_components import GradientStabilizer
-except ImportError:
-    print("⚠️ 創建臨時梯度穩定器...")
-    
-    class GradientStabilizer:
-        def __init__(self, l1_lambda=1e-5, entropy_lambda=1e-5, grad_clip_value=1.0, 
-                     pruning_threshold=1e-2, enable_dynamic_scaling=True, stability_check_freq=10):
-            self.l1_lambda = l1_lambda
-            self.entropy_lambda = entropy_lambda
-            self.grad_clip_value = grad_clip_value
-            self.pruning_threshold = pruning_threshold
-            self.enable_dynamic_scaling = enable_dynamic_scaling
-            self.stability_check_freq = stability_check_freq
-            self.loss_history = []
-            
-        def stabilize_gradients(self, model):
-            """臨時梯度穩定器"""
-            pass
-            
-        def compute_total_regularization_loss(self, model, base_loss):
-            """計算總正則化損失"""
-            return base_loss
-            
-        def apply_gradient_clipping(self, model, clip_type='norm'):
-            """應用梯度裁剪"""
-            return torch.nn.utils.clip_grad_norm_(model.parameters(), self.grad_clip_value)
-            
-        def adaptive_clipping(self, model, current_loss):
-            """自適應梯度裁剪"""
-            self.loss_history.append(current_loss)
-            if len(self.loss_history) > 10:
-                loss_std = np.std(self.loss_history[-10:])
-                clip_norm = max(0.5, min(2.0, 1.0 / (loss_std + 1e-8)))
-            else:
-                clip_norm = 1.0
-            return torch.nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
-            
-        def check_numerical_stability(self, model):
-            """檢查數值穩定性"""
-            return {'gradient_nan_count': 0, 'gradient_inf_count': 0}
-            
-        def adaptive_regularization_scaling(self, current_loss, loss_history):
-            """自適應正則化縮放"""
-            pass
-            
-        def apply_dynamic_pruning(self, model):
-            """應用動態剪枝"""
-            return 0.0
-            
-        def get_stability_report(self):
-            """獲取穩定性報告"""
-            return {
-                'gradient_statistics': {
-                    'mean_grad_norm': 0.0,
-                    'max_grad_norm': 0.0,
-                    'gradient_clips': 0
-                },
-                'stability_violations': 0,
-                'regularization_config': {
-                    'l1_lambda': self.l1_lambda,
-                    'entropy_lambda': self.entropy_lambda
-                }
-            }
-
+# Use the centralized, full implementation of GradientStabilizer
+from .kan_components.gradient_stabilizer import GradientStabilizer
 from .config import SimplifiedGNNKANConfig
+# Import the model from the models module, not a local copy
+from .models import SimplifiedGNNKAN, GNNKANModel, TemporalAttention
 
 # 修復模型導入
 try:
@@ -215,40 +153,6 @@ def _infer_model_from_state_dict(state_dict):
     return model
 
 
-def save_model_checkpoint(model, optimizer, epoch, loss, metrics, save_path, config=None):
-    """
-    💾 保存模型檢查點
-    
-    Args:
-        model: 要保存的模型
-        optimizer: 優化器
-        epoch: 當前epoch
-        loss: 當前損失
-        metrics: 評估指標
-        save_path: 保存路徑
-        config: 配置對象
-    """
-    print(f"💾 Saving checkpoint to {save_path}")
-    
-    checkpoint = {
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict() if optimizer else None,
-        'epoch': epoch,
-        'loss': loss,
-        'metrics': metrics,
-        'timestamp': time.time()
-    }
-    
-    if config:
-        checkpoint['config'] = config
-    
-    try:
-        torch.save(checkpoint, save_path)
-        print(f"✅ Checkpoint saved successfully")
-    except Exception as e:
-        print(f"❌ Failed to save checkpoint: {e}")
-
-
 class ModelManager:
     """🎯 模型管理器 - 統一管理模型創建、訓練、保存"""
     
@@ -293,40 +197,15 @@ class ModelManager:
     
     def save_checkpoint(self, epoch, loss, metrics, save_path):
         """保存檢查點"""
-        save_model_checkpoint(
-            self.model, self.optimizer, epoch, loss, metrics, save_path, self.config
-        )
+        # This function is being consolidated into utils.py
+        # save_model_checkpoint(
+        #     self.model, self.optimizer, epoch, loss, metrics, save_path, self.config
+        # )
     
     def load_checkpoint(self, checkpoint_path):
         """加載檢查點"""
         self.model, metadata = create_model_from_checkpoint(checkpoint_path, self.config)
         return metadata
-
-
-class TemporalAttention(nn.Module):
-    """時序注意力機制"""
-    
-    def __init__(self, hidden_dim):
-        super(TemporalAttention, self).__init__()
-        self.hidden_dim = hidden_dim
-        self.attention = nn.MultiheadAttention(hidden_dim, num_heads=4, batch_first=True)
-        self.layer_norm = nn.LayerNorm(hidden_dim)
-        
-    def forward(self, x):
-        """
-        Args:
-            x: [batch_size, seq_len, hidden_dim] 或 [seq_len, hidden_dim]
-        """
-        if x.dim() == 2:
-            x = x.unsqueeze(0)  # 添加batch維度
-        
-        attended, _ = self.attention(x, x, x)
-        output = self.layer_norm(attended + x)
-        
-        if output.size(0) == 1:
-            output = output.squeeze(0)  # 移除batch維度
-            
-        return output
 
 
 class GNNKANLoss(nn.Module):
@@ -473,17 +352,23 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
         # 監控與調試: 定期打印鄰接矩陣統計信息
         if (epoch + 1) % 10 == 0:
             with torch.no_grad():
-                adj_stats = pred_adj.sigmoid() # 查看經過 sigmoid 後的概率值
-                adj_min = adj_stats.min().item()
-                adj_max = adj_stats.max().item()
-                adj_mean = adj_stats.mean().item()
+                # 使用 sigmoid 將輸出轉換為 (0, 1) 區間的概率值
+                adj_probs = torch.sigmoid(pred_adj)
+                adj_min = adj_probs.min().item()
+                adj_max = adj_probs.max().item()
+                adj_mean = adj_probs.mean().item()
+                
+                # 計算稀疏度指標：值低於0.1的元素比例
+                sparsity_ratio = (adj_probs < 0.1).sum().item() / adj_probs.numel()
+                
                 training_history['adj_min'].append(adj_min)
                 training_history['adj_max'].append(adj_max)
                 training_history['adj_mean'].append(adj_mean)
                 
                 print(f"Epoch [{epoch+1}/{config.num_epochs}], Loss: {loss.item():.6f}, "
-                      f"Recon: {recon_loss.item():.6f}, KAN: {kan_reg_loss:.6f}, Sparsity: {sparsity_loss.item():.6f}, "
-                      f"Adj(min/max/mean): {adj_min:.4f}/{adj_max:.4f}/{adj_mean:.4f}")
+                      f"Recon: {recon_loss.item():.4f}, Sparsity: {sparsity_loss.item():.6f} | "
+                      f"Adj Probs(min/max/mean): {adj_min:.4f}/{adj_max:.4f}/{adj_mean:.4f} | "
+                      f"Graph Sparsity: {sparsity_ratio:.4f}")
 
     print("✅ Training finished.")
     return model, training_history
