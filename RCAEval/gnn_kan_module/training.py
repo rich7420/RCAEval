@@ -395,170 +395,98 @@ class GNNKANLoss(nn.Module):
         return total_loss
 
 
-def train_gnn_kan_model(model, node_features, edge_index, config):
+def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambda=1e-5):
     """
-    訓練GNN-KAN模型
+    通用GNN-KAN模型訓練函數
     
     Args:
-        model: GNN-KAN模型
-        node_features: 節點特徵
-        edge_index: 邊索引
-        config: 配置對象
+        model (nn.Module): GNN-KAN模型
+        node_features (torch.Tensor): 節點特徵
+        edge_index (torch.Tensor): 邊索引
+        config (SimplifiedGNNKANConfig): 配置對象
+        sparsity_lambda (float): 稀疏性正則化強度
         
     Returns:
-        model: 訓練後的模型
-        final_adj: 最終的鄰接矩陣
+        model: 訓練好的模型
+        training_history: 訓練歷史記錄
     """
-    print(f"Training GNN-KAN model with {node_features.size(0)} nodes...")
-    
-    # 設備管理
-    device = next(model.parameters()).device
+    device = torch.device("cuda" if torch.cuda.is_available() and config.use_cuda else "cpu")
+    model.to(device)
     node_features = node_features.to(device)
     edge_index = edge_index.to(device)
     
-    # 創建目標鄰接矩陣（基於邊索引）- 修復邊索引越界問題
-    num_nodes = node_features.size(0)
-    target_adj = torch.zeros(num_nodes, num_nodes, device=device)
+    optimizer = optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
+    scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=config.patience, factor=0.5)
     
-    if edge_index.size(1) > 0:
-        # 🔧 安全邊索引檢查 - 避免越界
-        valid_edges_mask = (edge_index[0] < num_nodes) & (edge_index[1] < num_nodes)
-        valid_edge_index = edge_index[:, valid_edges_mask]
-        
-        if valid_edge_index.size(1) > 0:
-            target_adj[valid_edge_index[0], valid_edge_index[1]] = 1.0
-            # 確保對稱性
-            target_adj = (target_adj + target_adj.t()) / 2.0
-        else:
-            print(f"⚠️ 所有邊索引都超出範圍，使用單位矩陣作為目標")
-            target_adj = torch.eye(num_nodes, device=device) * 0.1
+    print(f"🚀 Starting GNN-KAN training on {device}...")
+    print(f"   Config: lr={config.learning_rate}, epochs={config.num_epochs}, batch_size={config.batch_size}, sparsity_lambda={sparsity_lambda}")
     
-    # 優化器和調度器
-    optimizer = optim.AdamW(
-        model.parameters(),
-        lr=config.learning_rate,
-        weight_decay=config.weight_decay
-    )
+    training_history = {'loss': [], 'adj_min': [], 'adj_max': [], 'adj_mean': []}
     
-    scheduler = lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', factor=0.8, patience=10
-    )
-    
-    # 損失函數
-    criterion = GNNKANLoss(config)
-    
-    # 梯度穩定器
-    grad_stabilizer = GradientStabilizer()
-    
-    # 訓練循環
-    model.train()
-    best_loss = float('inf')
-    patience_counter = 0
-    
+    # 創建目標鄰接矩陣（用於監督學習）
+    # 在真實場景中，這應該基於先驗知識或日誌/追蹤數據生成
+    # 這裡我們使用一個簡化的自監督目標
+    with torch.no_grad():
+        true_adj = torch.zeros(node_features.size(0), node_features.size(0), device=device)
+        true_adj[edge_index[0], edge_index[1]] = 1
+        true_adj[edge_index[1], edge_index[0]] = 1 # 無向圖
+
     for epoch in range(config.num_epochs):
-        epoch_start = time.time()
-        
+        model.train()
         optimizer.zero_grad()
         
-        try:
-            # 🔧 修復內存位置衝突 - 確保張量獨立性
-            node_features_safe = node_features.clone().detach()
-            edge_index_safe = edge_index.clone().detach()
-            target_adj_safe = target_adj.clone().detach()
-            
-            # 前向傳播
-            node_embeddings, pred_adj = model(node_features_safe, edge_index_safe)
-            
-            # 計算損失
-            loss = criterion(pred_adj, target_adj_safe, node_embeddings)
-            
-            # 檢查損失是否有效 - 詳細診斷
-            loss_value = loss.item() if hasattr(loss, 'item') else float(loss)
-            if torch.isnan(loss) or torch.isinf(loss) or not np.isfinite(loss_value):
-                print(f"❌ Invalid loss at epoch {epoch}: {loss_value}")
-                print(f"  pred_adj stats: shape={pred_adj.shape}, min={pred_adj.min().item():.6f}, max={pred_adj.max().item():.6f}")
-                print(f"  target_adj stats: shape={target_adj_safe.shape}, min={target_adj_safe.min().item():.6f}, max={target_adj_safe.max().item():.6f}")
-                print(f"  node_embeddings stats: shape={node_embeddings.shape}, min={node_embeddings.min().item():.6f}, max={node_embeddings.max().item():.6f}")
-                
-                # 檢查模型參數狀態
-                nan_params = 0
-                inf_params = 0
-                for name, param in model.named_parameters():
-                    if torch.isnan(param).any():
-                        nan_params += 1
-                        print(f"  NaN in parameter: {name}")
-                    if torch.isinf(param).any():
-                        inf_params += 1
-                        print(f"  Inf in parameter: {name}")
-                
-                print(f"  Total parameters with NaN: {nan_params}, with Inf: {inf_params}")
-                
-                # 重置有問題的參數
-                reset_count = 0
-                for name, param in model.named_parameters():
-                    if torch.isnan(param).any() or torch.isinf(param).any():
-                        param.data = torch.randn_like(param.data) * 0.01
-                        reset_count += 1
-                        print(f"  Reset parameter: {name}")
-                
-                print(f"  Reset {reset_count} parameters")
-                continue
-            
-            # 反向傳播
-            loss.backward()
-            
-            # 梯度穩定化（使用梯度裁剪替代）
+        # 前向傳播
+        node_embedding, pred_adj = model(node_features, edge_index)
+        
+        # 損失計算
+        # 1. 重建損失 (Reconstruction Loss) - 確保圖結構合理
+        pos_weight = torch.tensor([float(true_adj.shape[0] * true_adj.shape[0] - true_adj.sum()) / true_adj.sum()])
+        recon_loss = F.binary_cross_entropy_with_logits(pred_adj, true_adj, pos_weight=pos_weight.to(device))
+        
+        # 2. 節點嵌入損失 (Embedding Loss) - 可選，使相連節點更接近
+        # 這裡簡化，不計算嵌入損失
+        
+        # 3. KAN 正則化損失
+        kan_reg_loss = 0
+        if hasattr(model, 'get_reg_loss'):
+            kan_reg_loss = model.get_reg_loss()
+
+        # 4. 稀疏性損失 (Sparsity Loss) - 鼓勵稀疏圖
+        sparsity_loss = sparsity_lambda * torch.norm(pred_adj, 1)
+
+        # 總損失
+        loss = recon_loss + kan_reg_loss + sparsity_loss
+        
+        loss.backward()
+        
+        # 梯度裁剪
+        if config.gradient_clip_norm > 0:
             torch.nn.utils.clip_grad_norm_(model.parameters(), config.gradient_clip_norm)
             
-            optimizer.step()
-            
-            # 學習率調度
-            scheduler.step(loss.item())
-            
-            # 記錄最佳模型
-            if loss.item() < best_loss:
-                best_loss = loss.item()
-                patience_counter = 0
-            else:
-                patience_counter += 1
-            
-            # 早停
-            if patience_counter >= config.patience:
-                print(f"Early stopping at epoch {epoch}")
-                break
-            
-            # 定期輸出
-            if epoch % 20 == 0 or epoch == config.num_epochs - 1:
-                epoch_time = time.time() - epoch_start
-                current_lr = optimizer.param_groups[0]['lr']
-                print(f"Epoch {epoch:3d}: Loss={loss.item():.6f}, "
-                      f"LR={current_lr:.6f}, Time={epoch_time:.2f}s")
+        optimizer.step()
+        
+        # 更新學習率
+        scheduler.step(loss)
+        
+        training_history['loss'].append(loss.item())
+
+        # 監控與調試: 定期打印鄰接矩陣統計信息
+        if (epoch + 1) % 10 == 0:
+            with torch.no_grad():
+                adj_stats = pred_adj.sigmoid() # 查看經過 sigmoid 後的概率值
+                adj_min = adj_stats.min().item()
+                adj_max = adj_stats.max().item()
+                adj_mean = adj_stats.mean().item()
+                training_history['adj_min'].append(adj_min)
+                training_history['adj_max'].append(adj_max)
+                training_history['adj_mean'].append(adj_mean)
                 
-        except RuntimeError as e:
-            if "CUDA" in str(e) or "device" in str(e).lower():
-                print(f"CUDA error at epoch {epoch}: {e}")
-                # 嘗試清理GPU內存
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                break
-            else:
-                print(f"Training error at epoch {epoch}: {e}")
-                break
-        except KeyboardInterrupt:
-            print("Training interrupted by user")
-            break
-    
-    # 獲取最終結果
-    model.eval()
-    with torch.no_grad():
-        try:
-            _, final_adj = model(node_features, edge_index)
-        except Exception as e:
-            print(f"Error getting final adjacency: {e}")
-            final_adj = target_adj
-    
-    print(f"Training completed. Best loss: {best_loss:.6f}")
-    return model, final_adj
+                print(f"Epoch [{epoch+1}/{config.num_epochs}], Loss: {loss.item():.6f}, "
+                      f"Recon: {recon_loss.item():.6f}, KAN: {kan_reg_loss:.6f}, Sparsity: {sparsity_loss.item():.6f}, "
+                      f"Adj(min/max/mean): {adj_min:.4f}/{adj_max:.4f}/{adj_mean:.4f}")
+
+    print("✅ Training finished.")
+    return model, training_history
 
 
 class AdvancedGNNKANTrainer:

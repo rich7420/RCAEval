@@ -16,9 +16,9 @@ class SimplifiedGNNKANConfig:
     
     def __init__(self):
         # 🎯 核心KAN配置 - 確保純粹性
-        self.kan_grid_size = 8              # 增強B-spline基函數密度
+        self.kan_grid_size = 5              # KAN B-spline 網格大小
         self.kan_spline_order = 3           # 樣條階數
-        self.kan_num_basis = 8              # 基函數數量（從5→8）
+        self.kan_num_basis = 5              # 基函數數量
         self.adaptive_spline_order = True   # 自適應樣條階數
         self.learnable_activation = True    # 可學習激活函數（KAN vs MLP關鍵）
         self.minimize_linear_component = True  # 最小化MLP特性
@@ -29,31 +29,31 @@ class SimplifiedGNNKANConfig:
         self.use_kll_processing = False     # 移除複雜KLL處理
         self.use_ica = True                 # 啟用ICA特徵提取
         self.use_kpca = False               # 可選的kPCA
-        self.ica_components = 16            # ICA成分數量
+        self.ica_components = 12            # ICA成分數量
         self.kpca_kernel = 'rbf'           # kPCA核函數
         
-        # 🎯 GNN-KAN架構配置 - 純粹KAN實現
-        self.input_dim = 64
-        self.target_feature_dim = 64       # 目標特徵維度
-        self.hidden_dims = [128, 96, 64]   # 3層KAN結構
-        self.output_dim = 32
-        self.num_gnn_layers = 2
-        self.dropout = 0.1
+        # 🎯 GNN-KAN架構配置 - 純粹KAN實現 (大幅簡化)
+        self.input_dim = 32
+        self.target_feature_dim = 32       # 目標特徵維度
+        self.hidden_dims = [64, 32]        # 2層KAN結構，大幅降低維度
+        self.output_dim = 16
+        self.num_gnn_layers = 1
+        self.dropout = 0.2
         self.learnable_graph = True        # 動態圖結構學習
         
         # 🚀 訓練配置 - 針對KAN優化
-        self.learning_rate = 0.001
-        self.base_learning_rate = 0.001  # 兼容性別名
-        self.weight_decay = 1e-4
-        self.num_epochs = 100
-        self.epochs = 100  # 兼容性別名
+        self.learning_rate = 1e-6          # 降低預設學習率
+        self.base_learning_rate = 1e-6     # 兼容性別名
+        self.weight_decay = 1e-6
+        self.num_epochs = 150              # 增加預設週期
+        self.epochs = 150                  # 兼容性別名
         self.batch_size = 32
-        self.patience = 15
-        self.min_delta = 1e-4
-        self.warmup_epochs = 10  # 預熱階段
+        self.patience = 20
+        self.min_delta = 1e-6
+        self.warmup_epochs = 10            # 預熱階段
         
         # 🔧 穩定性配置 - 簡化但有效
-        self.gradient_clip_norm = 0.5      # 更嚴格的梯度裁剪
+        self.gradient_clip_norm = 1.0      # 放寬梯度裁剪以適應低學習率
         self.stability_check_freq = 10     # 更頻繁的檢查
         self.use_layer_norm = True         # 使用LayerNorm
         self.use_batch_norm = False        # 不使用BatchNorm（避免MLP特性）
@@ -435,7 +435,7 @@ class FastGNNKANConfig(SimplifiedGNNKANConfig):
         if self.feature_method == 'simplified':
             self.feature_method = 'kpca'  # 快速版本使用kPCA
         
-        # �� 適度深化網絡架構 - 平衡速度與準確率
+        # 適度深化網絡架構 - 平衡速度與準確率
         if hasattr(self, 'hidden_dims'):
             # 適度擴展網絡 - 快速版本
             self.hidden_dims = [256, 192, 128, 96, 64]

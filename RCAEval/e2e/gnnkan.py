@@ -87,7 +87,7 @@ class PageRank:
 
 def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False, 
                 config_type='simplified', feature_method='simplified', 
-                use_optimized_input=True, **kwargs):
+                use_optimized_input=True, sparsity_lambda=1e-5, **kwargs):
     """
     GNN-KAN 根因分析主函數（純粹KAN架構）
     🎯 目標：證明用KAN取代MLP的有效性（高準確率）
@@ -100,6 +100,7 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
         config_type: 配置類型 ('simplified', 'high_capacity', 'fast')
         feature_method: 特徵處理方法 ('ica', 'kpca', 'simplified')
         use_optimized_input: 是否使用優化輸入處理器
+        sparsity_lambda: 稀疏性正則化強度
         **kwargs: 額外參數
     """
     print("🔥 使用純粹KAN模組化架構進行RCA分析")
@@ -138,7 +139,7 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
         cuda_available = False
     
     # 1. 創建配置並強制啟用GPU
-    config = ConfigFactory.create_config(config_type, **kwargs)
+    config = ConfigFactory.create_config('simplified', **kwargs)
     config.feature_method = feature_method
     config.use_cuda = use_gpu  # 強制設定GPU使用
     
@@ -249,8 +250,17 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
                 )
                 node_features = torch.cat([node_features, padding], dim=1)
 
-    # 4. KAN模型推理 - 加強根因檢測
-    print("🔥 開始KAN模型推理（純粹KAN架構）...")
+    # 4. 訓練純粹KAN模型
+    print("💪 開始訓練純粹KAN模型...")
+    model, training_history = train_gnn_kan_model(
+        model, 
+        node_features, 
+        edge_index, 
+        config,
+        sparsity_lambda=sparsity_lambda  # 傳遞稀疏性參數
+    )
+    
+    # 5. 獲取最終的鄰接矩陣
     model.eval()
     
     with torch.no_grad():

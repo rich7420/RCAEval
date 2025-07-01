@@ -283,166 +283,18 @@ class GNNKANvsBAROComparator:
         
         try:
             if method_name == "gnn_kan":
-                # 🚀 智能配置選擇系統 - 針對不同數據集特性優化
-                print(f"    🧠 執行智能根因分析...")
-                
-                # 🎯 根據數據集特性選擇最優配置組合
-                if dataset_name in ['train-ticket', 're2-ob', 're3-ob']:
-                    # 複雜微服務系統 - 使用高表達能力配置
-                    config_types = ['high_capacity', 'simplified', 'fast']
-                    feature_methods = ['ica', 'kpca']  # 強特徵處理
-                elif dataset_name in ['online-boutique', 'sock-shop-1', 'sock-shop-2']:
-                    # 中等複雜度系統 - 平衡性能和速度
-                    config_types = ['simplified', 'high_capacity']
-                    feature_methods = ['ica', 'simplified']
-                else:
-                    # 默認配置
-                    config_types = kwargs.get('config_types', ['high_capacity', 'simplified'])
-                    feature_methods = kwargs.get('feature_methods', ['ica', 'kpca'])
-                
-                # 檢測CUDA可用性
-                cuda_available = torch.cuda.is_available()
-                device_info = {
-                    'cuda_available': cuda_available,
-                    'device_count': torch.cuda.device_count() if cuda_available else 0,
-                    'current_device': torch.cuda.current_device() if cuda_available else None
-                }
-                
-                print(f"    🔧 GPU狀態: CUDA可用={cuda_available}, 設備數={device_info['device_count']}")
-                
-                best_result = None
-                best_score = -1
-                config_results = []
-                
-                for config_type in config_types:
-                    for feature_method in feature_methods:
-                        try:
-                            print(f"    🧪 測試GNN-KAN配置: {config_type} + {feature_method}")
-                            
-                            # 🎯 智能參數調整 - 基於數據集和配置類型
-                            if config_type == 'high_capacity':
-                                extra_kwargs = {
-                                    'use_cuda': cuda_available,
-                                    'gpu_memory_fraction': 0.8,
-                                    'cpu_fallback': True,
-                                    'max_nodes': 1500,  # 高容量支持更多節點
-                                    'batch_size': 32 if cuda_available else 16,  # 較小batch避免記憶體問題
-                                    'num_epochs': 100 if cuda_available else 60,  # 更多訓練輪數
-                                    'learning_rate': 0.0003,  # 更小學習率
-                                    'gradient_clip_norm': 0.5  # 嚴格梯度控制
-                                }
-                            elif config_type == 'simplified':
-                                extra_kwargs = {
-                                    'use_cuda': cuda_available,
-                                    'gpu_memory_fraction': 0.6,
-                                    'cpu_fallback': True,
-                                    'max_nodes': 1000,
-                                    'batch_size': 64 if cuda_available else 32,
-                                    'num_epochs': 80 if cuda_available else 50,
-                                    'learning_rate': 0.0005,
-                                    'gradient_clip_norm': 0.8
-                                }
-                            else:  # fast
-                                extra_kwargs = {
-                                    'use_cuda': cuda_available,
-                                    'gpu_memory_fraction': 0.5,
-                                    'cpu_fallback': True,
-                                    'max_nodes': 500,
-                                    'batch_size': 128 if cuda_available else 64,
-                                    'num_epochs': 40 if cuda_available else 25,
-                                    'learning_rate': 0.001,
-                                    'gradient_clip_norm': 1.0
-                                }
-                            
-                            # 🎯 特徵方法特化參數
-                            if feature_method == 'ica':
-                                extra_kwargs['ica_components'] = 48 if config_type == 'high_capacity' else 32
-                                extra_kwargs['ica_max_iter'] = 1000
-                            elif feature_method == 'kpca':
-                                extra_kwargs['kpca_components'] = 36 if config_type == 'high_capacity' else 24
-                                extra_kwargs['kpca_kernel'] = 'rbf'
-                            
-                            start_time = time.time()
-                            result = gnn_kan_rca(
-                                data=data,
-                                inject_time=inject_time,
-                                dataset=dataset_name,
-                                config_type=config_type,
-                                feature_method=feature_method,
-                                **extra_kwargs
-                            )
-                            execution_time = time.time() - start_time
-                            
-                            # 🎯 智能評分系統 - 綜合考慮準確性、效率和穩定性
-                            ranks = result.get('ranks', [])
-                            adj_matrix = result.get('adj', np.array([]))
-                            
-                            # 準確性評分 (最重要)
-                            accuracy_score = 0
-                            if len(ranks) > 0:
-                                # 根據排名質量給分
-                                top_ranks = min(len(ranks), 5)
-                                accuracy_score = top_ranks * 2.0  # 每個排名2分
-                                
-                                # 獎勵有效的圖結構
-                                if adj_matrix.size > 0 and adj_matrix.shape[0] > 1:
-                                    graph_quality = min(adj_matrix.shape[0] / 20.0, 1.0)
-                                    accuracy_score += graph_quality * 3.0
-                            
-                            # 效率評分
-                            time_efficiency = max(0, 1.0 - execution_time / 300.0)  # 5分鐘基準
-                            efficiency_score = time_efficiency * 2.0
-                            
-                            # 穩定性評分（是否成功完成）
-                            stability_score = 3.0 if result.get('success', True) else 0.0
-                            
-                            # 綜合評分
-                            total_score = accuracy_score * 0.6 + efficiency_score * 0.2 + stability_score * 0.2
-                            
-                            config_results.append({
-                                'config_type': config_type,
-                                'feature_method': feature_method,
-                                'score': total_score,
-                                'accuracy_score': accuracy_score,
-                                'execution_time': execution_time,
-                                'result': result,
-                                'extra_kwargs': extra_kwargs
-                            })
-                            
-                            print(f"    📊 配置評分: 總分={total_score:.2f} (準確性={accuracy_score:.2f}, 效率={efficiency_score:.2f}, 穩定性={stability_score:.2f})")
-                            
-                            if total_score > best_score:
-                                best_score = total_score
-                                best_result = result
-                                best_result['config_used'] = {
-                                    'config_type': config_type,
-                                    'feature_method': feature_method,
-                                    'device_info': device_info,
-                                    'extra_kwargs': extra_kwargs,
-                                    'score_breakdown': {
-                                        'total_score': total_score,
-                                        'accuracy_score': accuracy_score,
-                                        'efficiency_score': efficiency_score,
-                                        'stability_score': stability_score
-                                    }
-                                }
-                                print(f"    🏆 新最佳配置: {config_type} + {feature_method} (分數={total_score:.2f})")
-                                
-                        except Exception as e:
-                            print(f"    ⚠️ GNN-KAN配置失敗 ({config_type}, {feature_method}): {e}")
-                            continue
-                
-                if best_result is None:
-                    raise Exception("所有GNN-KAN配置都失敗")
-                    
-                result = best_result
-                print(f"    ✅ GNN-KAN完成 - 時間: {result['config_used']['extra_kwargs'].get('execution_time', 0):.2f}s, 最佳評分: {best_score:.2f}")
-                print(f"    🎯 最佳配置: {result['config_used']}")
-                print(f"    📊 高級指標 - 參數效率: {result.get('model_info', {}).get('efficiency_ratio', 'N/A')}, 可解釋性: {result.get('model_info', {}).get('interpretability_score', 'N/A')}")
-                
-                # 🔬 保存詳細的配置比較結果
-                result['all_config_results'] = config_results
-                
+                # 🚀 直接使用傳入的優化配置運行 GNN-KAN
+                print(f"    🚀 執行 GNN-KAN (優化配置)...")
+                print(f"    - learning_rate: {kwargs.get('learning_rate')}")
+                print(f"    - sparsity_lambda: {kwargs.get('sparsity_lambda')}")
+
+                result = gnn_kan_rca(
+                    data=data,
+                    inject_time=inject_time,
+                    dataset=dataset_name,
+                    **kwargs
+                )
+
             elif method_name == "baro":
                 result = baro(
                     data=data,
@@ -1085,77 +937,50 @@ class GNNKANvsBAROComparator:
                     else:
                         print(f"      ❌ BARO失敗: {baro_result['error']}")
                     
-                    # 🚀 測試 GNN-KAN - 智能配置選擇策略
-                    print("    🤖 運行 GNN-KAN (智能配置選擇)...")
+                    # 🚀 測試 GNN-KAN - 使用我們定義的優化配置
+                    print("    🤖 運行 GNN-KAN (輕量優化版)...")
                     
-                    # 定義優化的配置組合，針對準確率優化
-                    gnn_kan_configs_list = [
-                        # 🎯 準確率優先配置
-                        {'config_type': 'high_capacity', 'feature_method': 'ica', 'use_cuda': True, 'gpu_memory_fraction': 0.8, 'cpu_fallback': True, 'max_nodes': 1000, 'batch_size': 64, 'num_epochs': 150, 'learning_rate': 0.0005, 'gradient_clip_norm': 0.3},
-                        # 🔥 高準確率增強配置  
-                        {'config_type': 'simplified', 'feature_method': 'ica', 'use_cuda': True, 'gpu_memory_fraction': 0.8, 'cpu_fallback': True, 'max_nodes': 1000, 'batch_size': 64, 'num_epochs': 150, 'learning_rate': 0.0005, 'gradient_clip_norm': 0.3, 'kan_grid_size': 12, 'kan_num_basis': 16},
-                        # ⚡ 快速但高質量配置
-                        {'config_type': 'fast', 'feature_method': 'kpca', 'use_cuda': True, 'gpu_memory_fraction': 0.8, 'cpu_fallback': True, 'max_nodes': 500, 'batch_size': 32, 'num_epochs': 100, 'learning_rate': 0.001, 'gradient_clip_norm': 0.5}
-                    ]
+                    # 定義唯一的、優化的配置
+                    # 這個配置將會使用我們在 config.py 中簡化的模型
+                    # 和在 training.py 中加入的稀疏損失
+                    optimized_config = {
+                        'config_type': 'simplified', # 強制使用簡化配置
+                        'feature_method': 'ica',
+                        'use_cuda': True,
+                        'cpu_fallback': True,
+                        'learning_rate': 1e-6,       # 顯著降低學習率
+                        'num_epochs': 200,           # 增加訓練週期
+                        'sparsity_lambda': 2e-5      # 應用稀疏正則化
+                    }
                     
-                    best_gnn_kan_result = None
-                    best_gnn_kan_metrics = None
-                    best_avg5_score = -1
-                    best_config = None
-                    
-                    # 逐一測試配置，選擇最佳結果
-                    for config_idx, config in enumerate(gnn_kan_configs_list):
-                        print(f"      🔧 測試配置 {config_idx+1}/{len(gnn_kan_configs_list)}: {config['config_type']} + {config['feature_method']}")
+                    try:
+                        gnn_kan_result = self.run_method("gnn_kan", data, inject_time, dataset_name, **optimized_config)
                         
-                        try:
-                            gnn_kan_result = self.run_method("gnn_kan", data, inject_time, dataset_name, **config)
+                        if gnn_kan_result["success"]:
+                            gnn_kan_ranks = gnn_kan_result["result"].get("ranks", [])
+                            gnn_kan_metrics = self.calculate_metrics(gnn_kan_ranks, ground_truth)
                             
-                            if gnn_kan_result["success"]:
-                                gnn_kan_ranks = gnn_kan_result["result"].get("ranks", [])
-                                gnn_kan_metrics = self.calculate_metrics(gnn_kan_ranks, ground_truth)
-                                
-                                current_avg5 = gnn_kan_metrics.get('avg@5', 0)
-                                print(f"        📊 Avg@5: {current_avg5:.3f}, 時間: {gnn_kan_result['execution_time']:.2f}s")
-                                
-                                # 更新最佳結果
-                                if current_avg5 > best_avg5_score:
-                                    best_avg5_score = current_avg5
-                                    best_gnn_kan_result = gnn_kan_result
-                                    best_gnn_kan_metrics = gnn_kan_metrics
-                                    best_config = config.copy()
-                                    print(f"        🏆 新的最佳配置! Avg@5: {current_avg5:.3f}")
-                            else:
-                                print(f"        ❌ 配置失敗: {gnn_kan_result.get('error', 'Unknown error')}")
-                                
-                        except Exception as config_error:
-                            print(f"        💥 配置測試異常: {config_error}")
-                            continue
-                    
-                    # 使用最佳結果
-                    if best_gnn_kan_result is not None:
-                        case_result["methods"]["gnn_kan"] = best_gnn_kan_result
-                        case_result["methods"]["gnn_kan"]["metrics"] = best_gnn_kan_metrics
-                        
-                        # 計算高級指標
-                        gnn_kan_advanced = self.calculate_advanced_metrics("gnn_kan", best_gnn_kan_result["result"], best_gnn_kan_result["execution_time"])
-                        case_result["methods"]["gnn_kan"]["advanced_metrics"] = gnn_kan_advanced
-                        
-                        # 記錄最佳配置信息
-                        best_gnn_kan_result["result"]["config_used"] = best_config
-                        
-                        print(f"      🏆 最終選擇: {best_config['config_type']} + {best_config['feature_method']}")
-                        print(f"      ✅ GNN-KAN完成 - 時間: {best_gnn_kan_result['execution_time']:.2f}s, Avg@5: {best_gnn_kan_metrics['avg@5']:.3f}")
-                        print(f"      🎯 最佳配置: {best_config}")
-                        print(f"      📊 高級指標 - 參數效率: {gnn_kan_advanced['parameter_efficiency']['efficiency_ratio']:.2f}, 可解釋性: {gnn_kan_advanced['interpretability']['interpretability_score']:.3f}")
-                    else:
-                        # 所有配置都失敗
+                            case_result["methods"]["gnn_kan"] = gnn_kan_result
+                            case_result["methods"]["gnn_kan"]["metrics"] = gnn_kan_metrics
+                            
+                            # 計算高級指標
+                            gnn_kan_advanced = self.calculate_advanced_metrics("gnn_kan", gnn_kan_result["result"], gnn_kan_result["execution_time"])
+                            case_result["methods"]["gnn_kan"]["advanced_metrics"] = gnn_kan_advanced
+                            
+                            print(f"      ✅ GNN-KAN完成 - 時間: {gnn_kan_result['execution_time']:.2f}s, Avg@5: {gnn_kan_metrics['avg@5']:.3f}")
+                            print(f"      📊 高級指標 - 參數效率: {gnn_kan_advanced['parameter_efficiency']['efficiency_ratio']:.2f}, 可解釋性: {gnn_kan_advanced['interpretability']['interpretability_score']:.3f}")
+
+                        else:
+                            raise Exception(f"GNN-KAN failed: {gnn_kan_result.get('error', 'Unknown error')}")
+
+                    except Exception as e:
+                        print(f"    💥 GNN-KAN 案例處理失敗: {e}")
                         case_result["methods"]["gnn_kan"] = {
                             "success": False,
-                            "error": "所有GNN-KAN配置都失敗",
+                            "error": str(e),
                             "execution_time": 0,
                             "result": {}
                         }
-                        print(f"      ❌ 所有GNN-KAN配置都失敗")
                     
                     dataset_results["cases"].append(case_result)
                     
