@@ -407,71 +407,82 @@ class SimplifiedKANLayer(nn.Module):
     
     def forward(self, x):
         if self.verbose:
-            print(f"🔍 執行KAN層{self.layer_idx}: {self.__class__.__name__}")
-            print(f"  輸入形狀: {x.shape}")
+            # print(f"🔍 執行KAN層{self.layer_idx}: {self.__class__.__name__}")
+            #print(f"  輸入形狀: {x.shape}")
             if not torch.all(torch.isfinite(x)):
-                print("  ⚠️ 輸入包含NaN/Inf")
-            else:
-                print(f"  輸入範圍: [{x.min().item():.6f}, {x.max().item():.6f}]")
-
-        # 1. 多項式基函數 (KAN的核心)
-        poly_basis = self.polynomial_basis_functions(x)
-
-        base_output = F.silu(self.base_transform(x))
-
-        # 3. 可學習激活函數部分 (KAN的核心)
-        activation_output = torch.tanh(self.activation_linear(x))
-
-        # --- 診斷 ---
-        if self.verbose:
-            print(f"🔍 KAN組合診斷:")
-            if torch.all(torch.isfinite(poly_output)):
-                print(f"  poly_output: min={poly_output.min().item():.6f}, max={poly_output.max().item():.6f}, nan={torch.isnan(poly_output).sum().item()}")
-            if torch.all(torch.isfinite(activation_output)):
-                print(f"  activation_output: min={activation_output.min().item():.6f}, max={activation_output.max().item():.6f}, nan={torch.isnan(activation_output).sum().item()}")
-            if torch.all(torch.isfinite(base_output)):
-                print(f"  base_output: min={base_output.min().item():.6f}, max={base_output.max().item():.6f}, nan={torch.isnan(base_output).sum().item()}")
-        
-        # --- 組合輸出 ---
-        final_output = torch.zeros_like(base_output)
-        use_base = torch.all(torch.isfinite(base_output))
-        use_poly = torch.all(torch.isfinite(poly_output))
-        use_activation = torch.all(torch.isfinite(activation_output))
-
-        if use_base:
-            final_output += base_output
-            if self.verbose: print("  ✓ 添加base_output")
-        if use_poly:
-            final_output += poly_output
-            if self.verbose: print("  ✓ 添加poly_output")
-        if use_activation:
-            final_output += activation_output
-            if self.verbose: print("  ✓ 添加activation_output")
-
-        if not (use_base or use_poly or use_activation):
-            if self.verbose: print("  ❌ 所有輸出均無效，返回零張量")
-            return final_output
-
-        final_output = self.ln(final_output)
-
-        if self.verbose:
-            print(f"  最終輸出: min={final_output.min().item():.6f}, max={final_output.max().item():.6f}, nan={torch.isnan(final_output).sum().item()}")
-        
-        # KAN論文中的可選步驟：符號單位的正規化 (確保穩定性)
-        # kan_output = final_output
-        # --- 安全回退機制 ---
-        if not torch.all(torch.isfinite(kan_output)):
-            if self.verbose: print("  ⚠️ KAN輸出包含NaN/Inf，使用穩定的基礎輸出")
-            # return base_output
-            return torch.nan_to_num(kan_output, nan=0.0, posinf=1.0, neginf=-1.0)
-        else:
-            if self.verbose:
-                # print(f"  KAN輸出形狀: {kan_output.shape}")
-                # print(f"  KAN輸出範圍: [{kan_output.min().item():.6f}, {kan_output.max().item():.6f}]")
-                # print(f"  NaN數量: {torch.isnan(kan_output).sum().item()}")
-                # print(f"  ✅ KAN層{self.layer_idx}輸出正常，繼續使用KAN結果")
+                # print("  ⚠️ 輸入包含NaN/Inf") 
                 pass
-            return kan_output
+            else:
+                # print(f"  輸入範圍: [{x.min().item():.6f}, {x.max().item():.6f}]")
+                pass
+
+        try:
+            # 1. 多項式基函數 (KAN的核心)
+            poly_basis = self.polynomial_basis_functions(x)
+            poly_output = torch.einsum('bid,oid->bo', poly_basis, self.poly_coeffs)
+
+            # 2. 基礎線性變換 (最小化MLP特性)
+            base_output = self.base_transform(x)
+
+            # 3. 可學習激活函數部分 (KAN的核心)
+            activation_output = self.kan_learnable_activation(x)
+
+            # --- 診斷 ---
+            if self.verbose:
+                print(f"🔍 KAN組合診斷:")
+                if torch.all(torch.isfinite(poly_output)):
+                    print(f"  poly_output: min={poly_output.min().item():.6f}, max={poly_output.max().item():.6f}, nan={torch.isnan(poly_output).sum().item()}")
+                if torch.all(torch.isfinite(activation_output)):
+                    print(f"  activation_output: min={activation_output.min().item():.6f}, max={activation_output.max().item():.6f}, nan={torch.isnan(activation_output).sum().item()}")
+                if torch.all(torch.isfinite(base_output)):
+                    print(f"  base_output: min={base_output.min().item():.6f}, max={base_output.max().item():.6f}, nan={torch.isnan(base_output).sum().item()}")
+            
+            # --- 組合輸出 ---
+            final_output = torch.zeros_like(base_output)
+            use_base = torch.all(torch.isfinite(base_output))
+            use_poly = torch.all(torch.isfinite(poly_output))
+            use_activation = torch.all(torch.isfinite(activation_output))
+
+            if use_base:
+                final_output += base_output * 0.3
+                if self.verbose: print("  ✓ 添加base_output")
+            if use_poly:
+                final_output += poly_output * 0.5
+                if self.verbose: print("  ✓ 添加poly_output")
+            if use_activation:
+                final_output += activation_output * 0.2
+                if self.verbose: print("  ✓ 添加activation_output")
+
+            if not (use_base or use_poly or use_activation):
+                if self.verbose: print("  ❌ 所有輸出均無效，返回零張量")
+                return torch.zeros_like(base_output)
+
+            # 應用層歸一化
+            kan_output = self.ln(final_output)
+
+            if self.verbose:
+                print(f"  最終輸出: min={kan_output.min().item():.6f}, max={kan_output.max().item():.6f}, nan={torch.isnan(kan_output).sum().item()}")
+            
+            # 安全回退機制
+            if not torch.all(torch.isfinite(kan_output)):
+                if self.verbose: print("  ⚠️ KAN輸出包含NaN/Inf，使用穩定的基礎輸出")
+                return torch.nan_to_num(kan_output, nan=0.0, posinf=1.0, neginf=-1.0)
+            else:
+                if self.verbose:
+                    pass
+                return kan_output
+                
+        except Exception as e:
+            if self.verbose: print(f"⚠️ KAN層{self.layer_idx}處理失敗: {e}，使用前一層輸出")
+            # 回退到輸入（身份映射）
+            if x.shape[1] == self.output_dim:
+                return x
+            else:
+                # 維度調整
+                if x.shape[1] > self.output_dim:
+                    return x[:, :self.output_dim]
+                else:
+                    return F.pad(x, (0, self.output_dim - x.shape[1]))
 
 
 class OptimizedGNNKANEncoder(nn.Module):
