@@ -42,14 +42,14 @@ class SimplifiedGNNKANConfig:
         self.learnable_graph = True        # 動態圖結構學習
         
         # 🚀 訓練配置 - 針對KAN優化
-        self.learning_rate = 1e-6          # 降低預設學習率
-        self.base_learning_rate = 1e-6     # 兼容性別名
-        self.weight_decay = 1e-6
+        self.learning_rate = 1e-5      # 降低預設學習率
+        self.base_learning_rate = 1e-5     # 兼容性別名
+        self.weight_decay = 1e-5
         self.num_epochs = 150              # 增加預設週期
         self.epochs = 150                  # 兼容性別名
         self.batch_size = 32
         self.patience = 20
-        self.min_delta = 1e-6
+        self.min_delta = 1e-5
         self.warmup_epochs = 10            # 預熱階段
         
         # 🔧 穩定性配置 - 簡化但有效
