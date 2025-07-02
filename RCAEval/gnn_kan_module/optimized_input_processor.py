@@ -166,6 +166,46 @@ class FastServiceExtractor:
             services[node_name] = [col]
         
         print(f"✓ 強制擴展完成：{len(columns)} 列 -> {len(services)} 節點")
+        
+        # 最小節點保證：確保至少3個節點以支持圖神經網絡
+        min_nodes = max(3, min(5, len(columns)))
+        if len(services) < min_nodes and len(columns) >= 1:
+            print(f"⚠️ 節點數不足({len(services)})，擴展到最少{min_nodes}個節點")
+            
+            # 通過拆分現有節點來增加節點數
+            expanded_services = {}
+            original_keys = list(services.keys())
+            
+            for i, (service_name, cols) in enumerate(list(services.items())):
+                if len(cols) > 1 and len(services) < min_nodes:
+                    # 拆分多列節點
+                    for j, col in enumerate(cols):
+                        sub_node_name = f"{service_name}_part{j+1}"
+                        expanded_services[sub_node_name] = [col]
+                        if len(expanded_services) >= min_nodes:
+                            break
+                    # 移除原節點
+                    if service_name in services:
+                        del services[service_name]
+                else:
+                    expanded_services[service_name] = cols
+                
+                if len(expanded_services) >= min_nodes:
+                    break
+            
+            # 如果還是不夠，創建合成節點
+            if len(expanded_services) < min_nodes:
+                for i in range(len(expanded_services), min_nodes):
+                    synthetic_name = f"synthetic_metric_{i+1}"
+                    # 複製第一個節點的列
+                    if expanded_services:
+                        first_cols = list(expanded_services.values())[0]
+                        expanded_services[synthetic_name] = first_cols.copy()
+                    else:
+                        expanded_services[synthetic_name] = columns[:1] if columns else ["placeholder"]
+            
+            services = expanded_services
+            print(f"✓ 節點擴展完成：{len(columns)} 列 -> {len(services)} 節點（保證最少{min_nodes}個）")
         return services
     
     def _extract_metric_type(self, col: str) -> str:

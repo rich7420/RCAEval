@@ -77,8 +77,10 @@ try:
             download_sock_shop_1_dataset, 
             download_sock_shop_2_dataset,
             download_train_ticket_dataset,
+            download_re1_dataset,
             download_re2_dataset,
             download_re3_dataset,
+            download_multi_source_sample,
             load_json,
             dump_json
         )
@@ -131,8 +133,9 @@ class GNNKANvsBAROComparator:
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
         
-        # 支持的數據集 - 包含大型數據集和RTT相關數據
+        # 支持的數據集 - 擴展版本，包含所有可用數據集
         self.datasets = {
+            # 基礎數據集
             "online-boutique": {
                 "path": "data/online-boutique",
                 "download_func": download_online_boutique_dataset,
@@ -161,41 +164,91 @@ class GNNKANvsBAROComparator:
                 "scale": "large",
                 "has_rtt": True
             },
+            
+            # RE1系列數據集 (已下載完成)
+            "re1-ob": {
+                "path": "data/RE1/RE1-OB",
+                "download_func": download_re1_dataset,
+                "description": "RE1 Online Boutique數據集 (高質量標準數據)",
+                "scale": "large",
+                "has_rtt": True,
+                "series": "RE1"
+            },
+            "re1-ss": {
+                "path": "data/RE1/RE1-SS",
+                "download_func": download_re1_dataset,
+                "description": "RE1 Sock Shop數據集 (標準微服務數據)",
+                "scale": "medium",
+                "has_rtt": True,
+                "series": "RE1"
+            },
+            "re1-tt": {
+                "path": "data/RE1/RE1-TT",
+                "download_func": download_re1_dataset,
+                "description": "RE1 Train Ticket數據集 (複雜系統數據)",
+                "scale": "large",
+                "has_rtt": True,
+                "series": "RE1"
+            },
+            
+            # RE2系列數據集
             "re2-ob": {
                 "path": "data/RE2/RE2-OB",
                 "download_func": download_re2_dataset,
                 "description": "RE2 Online Boutique數據集 (大型RTT數據集)",
                 "scale": "very_large",
-                "has_rtt": True
+                "has_rtt": True,
+                "series": "RE2"
+            },
+            "re2-ss": {
+                "path": "data/RE2/RE2-SS",
+                "download_func": download_re2_dataset,
+                "description": "RE2 Sock Shop數據集 (擴展微服務數據)",
+                "scale": "large",
+                "has_rtt": True,
+                "series": "RE2"
             },
             "re2-tt": {
                 "path": "data/RE2/RE2-TT", 
                 "download_func": download_re2_dataset,
                 "description": "RE2 Train Ticket數據集 (超大規模延遲數據)",
                 "scale": "very_large", 
-                "has_rtt": True
+                "has_rtt": True,
+                "series": "RE2"
             },
-            "re3-large": {
-                "path": "data/RE3",
+            
+            # RE3系列數據集 (如果可用)
+            "re3-ob": {
+                "path": "data/RE3/RE3-OB",
                 "download_func": download_re3_dataset,
-                "description": "RE3 超大規模數據集 (包含詳細RTT指標)",
+                "description": "RE3 Online Boutique數據集 (最新大規模數據)",
                 "scale": "massive",
-                "has_rtt": True
+                "has_rtt": True,
+                "series": "RE3"
             },
-            # 添加多模態大數據集
-            "mm-ob": {
-                "path": "data/mm-ob",
-                "download_func": download_online_boutique_dataset,
-                "description": "多模態 Online Boutique (Metrics+Logs+Traces+RTT)",
+            "re3-ss": {
+                "path": "data/RE3/RE3-SS",
+                "download_func": download_re3_dataset,
+                "description": "RE3 Sock Shop數據集 (最新微服務數據)",
                 "scale": "very_large",
                 "has_rtt": True,
-                "multimodal": True
+                "series": "RE3"
             },
-            "mm-tt": {
-                "path": "data/mm-tt", 
-                "download_func": download_train_ticket_dataset,
-                "description": "多模態 Train Ticket (包含完整RTT時序數據)",
+            "re3-tt": {
+                "path": "data/RE3/RE3-TT",
+                "download_func": download_re3_dataset,
+                "description": "RE3 Train Ticket數據集 (最新超大規模數據)",
                 "scale": "massive",
+                "has_rtt": True,
+                "series": "RE3"
+            },
+            
+            # 多模態數據集 (基於現有數據集的擴展)
+            "multi-source": {
+                "path": "data/multi-source-data",
+                "download_func": download_multi_source_sample,
+                "description": "多源遙測數據樣本 (Metrics+Logs+Traces)",
+                "scale": "medium",
                 "has_rtt": True,
                 "multimodal": True
             }
@@ -233,39 +286,80 @@ class GNNKANvsBAROComparator:
                 print(f"  ⚠️ 未知數據集: {dataset_name}")
     
     def get_data_paths(self, dataset_name: str, limit: int = None) -> List[str]:
-        """獲取數據集中的所有數據文件路徑"""
+        """獲取數據集中的所有數據文件路徑 - 支持RE系列數據集結構"""
         import glob
         
         dataset_path = self.datasets[dataset_name]["path"]
-        data_paths = list(glob.glob(os.path.join(dataset_path, "**/data.csv"), recursive=True))
         
+        # 檢查數據集是否存在
+        if not os.path.exists(dataset_path):
+            print(f"⚠️ 數據集路徑不存在: {dataset_path}")
+            return []
+        
+        # 根據數據集類型使用不同的搜索模式
+        data_paths = []
+        
+        # RE系列數據集有特定的結構：service_fault/case_id/data.csv
+        if dataset_name.startswith("re") and "series" in self.datasets[dataset_name]:
+            # RE系列：service_fault/case_id/data.csv
+            data_paths = list(glob.glob(os.path.join(dataset_path, "*/*/data.csv")))
+        else:
+            # 其他數據集：遞歸搜索所有data.csv
+            data_paths = list(glob.glob(os.path.join(dataset_path, "**/data.csv"), recursive=True))
+        
+        # 如果沒找到data.csv，嘗試其他常見文件名
         if not data_paths:
-            data_paths = list(glob.glob(os.path.join(dataset_path, "**/simple_metrics.csv"), recursive=True))
+            patterns = ["**/simple_metrics.csv", "**/metrics.csv", "**/telemetry.csv"]
+            for pattern in patterns:
+                data_paths = list(glob.glob(os.path.join(dataset_path, pattern), recursive=True))
+                if data_paths:
+                    break
         
-        if limit:
-            data_paths = data_paths[:limit]
+        # 過濾和限制
+        if data_paths:
+            data_paths = sorted(data_paths)
+            if limit:
+                data_paths = data_paths[:limit]
+        else:
+            print(f"⚠️ 在數據集 {dataset_name} 中沒有找到數據文件")
             
-        return sorted(data_paths)
+        return data_paths
     
     def extract_case_info(self, data_path: str) -> Dict[str, str]:
-        """從數據路徑中提取案例信息"""
+        """從數據路徑中提取案例信息 - 支持RE系列數據集格式"""
         path_parts = data_path.split(os.sep)
         
         # 提取服務名和故障類型
         service = "unknown"
         fault_type = "unknown"
         case_id = "unknown"
+        dataset_type = "unknown"
         
         try:
-            # 通常格式: .../service_faulttype/case_id/data.csv
+            # RE系列格式: .../RE1-OB/service_faulttype/case_id/data.csv
+            # 或基礎格式: .../service_faulttype/case_id/data.csv
             if len(path_parts) >= 3:
-                folder_name = path_parts[-2]  # case folder
-                parent_folder = path_parts[-3]  # service_fault folder
+                case_folder = path_parts[-2]  # case folder (e.g., "1", "2", "3")
+                service_fault_folder = path_parts[-3]  # service_fault folder (e.g., "adservice_cpu")
                 
-                if "_" in parent_folder:
-                    service, fault_type = parent_folder.split("_", 1)
+                # 檢查是否是RE系列數據集
+                if len(path_parts) >= 4 and any(part.startswith("RE") for part in path_parts):
+                    # 找到RE系列標識符
+                    for part in path_parts:
+                        if part.startswith("RE") and "-" in part:
+                            dataset_type = part
+                            break
                 
-                case_id = folder_name
+                # 解析服務名和故障類型
+                if "_" in service_fault_folder:
+                    parts = service_fault_folder.split("_")
+                    service = parts[0]
+                    fault_type = "_".join(parts[1:])  # 處理複合故障類型
+                else:
+                    service = service_fault_folder
+                
+                case_id = case_folder
+                
         except Exception as e:
             print(f"⚠️ 無法解析路徑信息: {data_path}, 錯誤: {e}")
         
@@ -273,7 +367,8 @@ class GNNKANvsBAROComparator:
             "service": service,
             "fault_type": fault_type, 
             "case_id": case_id,
-            "path": data_path
+            "path": data_path,
+            "dataset_type": dataset_type
         }
     
     def run_method(self, method_name: str, data: pd.DataFrame, inject_time: int, 
@@ -284,9 +379,9 @@ class GNNKANvsBAROComparator:
         try:
             if method_name == "gnn_kan":
                 # 🚀 直接使用傳入的優化配置運行 GNN-KAN
-                print(f"    🚀 執行 GNN-KAN (優化配置)...")
-                print(f"    - learning_rate: {kwargs.get('learning_rate')}")
-                print(f"    - sparsity_lambda: {kwargs.get('sparsity_lambda')}")
+                # print(f"    🚀 執行 GNN-KAN (優化配置)...")
+                # print(f"    - learning_rate: {kwargs.get('learning_rate')}")
+                # print(f"    - sparsity_lambda: {kwargs.get('sparsity_lambda')}")
 
                 result = gnn_kan_rca(
                     data=data,
@@ -850,14 +945,13 @@ class GNNKANvsBAROComparator:
         """運行完整比較測試"""
         
         if dataset_names is None:
-            # 🚀 擴展數據集列表 - 增加更多測試案例
+            # 🚀 使用確實存在且已下載的數據集 - 包含RE1系列
             dataset_names = [
-                "online-boutique",      # 電商微服務
-                "sock-shop-1",          # 襪子商店v1
-                "sock-shop-2",          # 襪子商店v2 
-                "train-ticket",         # 火車票系統
-                "re2-ob",              # RE2在線精品店
-                "re3-ob"               # RE3在線精品店
+                "online-boutique",      # 電商微服務 - 確認存在
+                "train-ticket",         # 火車票系統 - 確認存在
+                "re1-ob",              # RE1 Online Boutique - 已下載
+                "re1-tt",              # RE1 Train Ticket - 已下載
+                "sock-shop-1",         # Sock Shop v1 - 確認存在
             ]
         
         if gnn_kan_configs is None:
@@ -901,11 +995,28 @@ class GNNKANvsBAROComparator:
                     # 讀取數據
                     data = pd.read_csv(data_path)
                     
-                    # 確定注入時間
-                    if 'time' in data.columns:
-                        inject_time = int(data['time'].median())
-                    else:
-                        inject_time = len(data) // 2
+                    # 確定注入時間 - 支持RE系列數據集的inject_time.txt文件
+                    inject_time = None
+                    
+                    # 1. 嘗試讀取inject_time.txt文件（RE系列數據集格式）
+                    inject_time_file = os.path.join(os.path.dirname(data_path), "inject_time.txt")
+                    if os.path.exists(inject_time_file):
+                        try:
+                            with open(inject_time_file, 'r') as f:
+                                inject_time_str = f.read().strip()
+                                inject_time = int(inject_time_str)
+                                print(f"      📅 從inject_time.txt讀取注入時間: {inject_time}")
+                        except Exception as e:
+                            print(f"      ⚠️ 讀取inject_time.txt失敗: {e}")
+                    
+                    # 2. 如果沒有inject_time.txt，使用傳統方法
+                    if inject_time is None:
+                        if 'time' in data.columns:
+                            inject_time = int(data['time'].median())
+                            print(f"      📅 使用時間列中位數作為注入時間: {inject_time}")
+                        else:
+                            inject_time = len(data) // 2
+                            print(f"      📅 使用數據中點作為注入時間: {inject_time}")
                     
                     # 獲取真實根因
                     ground_truth = self.get_ground_truth(case_info)
@@ -1684,9 +1795,10 @@ def main():
     parser = argparse.ArgumentParser(description="GNN-KAN vs BARO 比較測試 (修正版)")
     parser.add_argument("--datasets", nargs="+", 
                        choices=["online-boutique", "sock-shop-1", "sock-shop-2", "train-ticket", 
-                               "re2-ob", "re2-tt", "re3-large", "mm-ob", "mm-tt"],
-                       default=["re2-ob", "train-ticket"],  # 默認使用大數據集，減少數量
-                       help="要測試的數據集 (包含RTT/延遲數據的大型數據集)")
+                               "re1-ob", "re1-ss", "re1-tt", "re2-ob", "re2-ss", "re2-tt", 
+                               "re3-ob", "re3-ss", "re3-tt", "multi-source"],
+                       default=["online-boutique", "train-ticket", "re1-ob", "re1-tt"],  # 默認使用已確認存在的數據集
+                       help="要測試的數據集 (包含基礎、RE1、RE2、RE3系列和多模態數據集)")
     parser.add_argument("--limit", type=int, default=5, help="每個數據集的測試案例數量限制")
     parser.add_argument("--output-dir", default="comparison_results", help="結果輸出目錄")
     parser.add_argument("--config-types", nargs="+", 

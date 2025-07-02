@@ -179,6 +179,8 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
         max_edges_per_node = kwargs.get('max_edges_per_node', 5)
         force_node_expansion = kwargs.get('force_node_expansion', False)
         
+
+        
         processor = GNNKANInputOptimizer(
             feature_method=feature_method,
             target_dim=config.target_feature_dim,
