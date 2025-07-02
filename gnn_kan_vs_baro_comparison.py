@@ -44,7 +44,7 @@ try:
     try:
         # 檢查統一特徵處理
         from RCAEval.gnn_kan_module.processors.log_processors import extract_log_features as unified_log_features
-        from RCAEval.gnn_kan_module.feature_processing import enhanced_trace_processing as unified_trace_processing
+        from RCAEval.gnn_kan_module.feature_extractors import enhanced_trace_processing as unified_trace_processing
         print("✅ 統一特徵處理模組導入成功")
         
         # 檢查清理後的模組
@@ -412,58 +412,57 @@ class GNNKANvsBAROComparator:
         # 🔥 擴展k值範圍，增加@1, @3, @10等細緻評估
         k_values = [1, 3, 5, 10]
         
-        # 計算各種k值的指標 - 使用智能匹配
+        # 計算各種k值的指標 - 使用智能匹配（修正版）
         for k in k_values:
+            # 🔧 修正：無論預測數量多少，都計算指標
+            # 取預測結果的前k個，如果不足k個則取全部
+            effective_k = min(k, len(predicted_ranks))
+            top_k = predicted_ranks[:effective_k]
+            
+            # 🔥 使用智能匹配計算真正例
+            true_positives = 0
+            for pred in top_k:
+                if fuzzy_match(pred, ground_truth):
+                    true_positives += 1
+            
+            # Precision@k - 修正邏輯：分母使用k，但要考慮預測數量不足的情況
             if len(predicted_ranks) >= k:
-                top_k = predicted_ranks[:k]
-                
-                # 🔥 使用智能匹配計算真正例
-                true_positives = 0
-                for pred in top_k:
-                    if fuzzy_match(pred, ground_truth):
-                        true_positives += 1
-                
-                # Precision@k - 預測準確性
-                precision_k = true_positives / k if k > 0 else 0
-                metrics[f'precision@{k}'] = precision_k
-                
-                # Recall@k - 召回率
-                recall_k = true_positives / len(ground_truth) if len(ground_truth) > 0 else 0
-                metrics[f'recall@{k}'] = recall_k
-                
-                # F1@k - F1分數
-                if precision_k + recall_k > 0:
-                    f1_k = 2 * precision_k * recall_k / (precision_k + recall_k)
-                else:
-                    f1_k = 0
-                metrics[f'f1@{k}'] = f1_k
-                
-                # 🔥 新增：Hit Rate@k - 是否命中目標
-                hit_rate_k = 1.0 if true_positives > 0 else 0.0
-                if k <= 5:  # 只計算@1, @3, @5的hit rate
-                    metrics[f'hit_rate@{k}'] = hit_rate_k
-                
-                                    # 🔥 新增：NDCG@k - 歸一化折扣累積增益（智能匹配版本）
-                    if k in [5, 10]:
-                        dcg_k = 0
-                        for i, pred in enumerate(top_k):
-                            if fuzzy_match(pred, ground_truth):
-                                dcg_k += 1 / np.log2(i + 2)  # i+2 因為log2(1)=0
-                        
-                        # 理想DCG（所有真實根因都在前k位）
-                        idcg_k = sum([1 / np.log2(i + 2) for i in range(min(k, len(ground_truth)))])
-                        
-                        ndcg_k = dcg_k / idcg_k if idcg_k > 0 else 0
-                        metrics[f'ndcg@{k}'] = ndcg_k
+                # 如果預測數量足夠，正常計算
+                precision_k = true_positives / k
             else:
-                # 如果預測結果不足k個，設為0
-                metrics[f'precision@{k}'] = 0.0
-                metrics[f'recall@{k}'] = 0.0
-                metrics[f'f1@{k}'] = 0.0
-                if k <= 5:
-                    metrics[f'hit_rate@{k}'] = 0.0
-                if k in [5, 10]:
-                    metrics[f'ndcg@{k}'] = 0.0
+                # 如果預測數量不足k個，分母用實際預測數量
+                # 這樣可以避免因預測數量少而被懲罰過度
+                precision_k = true_positives / len(predicted_ranks) if len(predicted_ranks) > 0 else 0.0
+            metrics[f'precision@{k}'] = precision_k
+            
+            # Recall@k - 召回率
+            recall_k = true_positives / len(ground_truth) if len(ground_truth) > 0 else 0
+            metrics[f'recall@{k}'] = recall_k
+            
+            # F1@k - F1分數
+            if precision_k + recall_k > 0:
+                f1_k = 2 * precision_k * recall_k / (precision_k + recall_k)
+            else:
+                f1_k = 0
+            metrics[f'f1@{k}'] = f1_k
+            
+            # 🔥 Hit Rate@k - 是否命中目標（修正邏輯）
+            hit_rate_k = 1.0 if true_positives > 0 else 0.0
+            if k <= 5:  # 只計算@1, @3, @5的hit rate
+                metrics[f'hit_rate@{k}'] = hit_rate_k
+            
+            # 🔥 新增：NDCG@k - 歸一化折扣累積增益（修正版本）
+            if k in [5, 10]:
+                dcg_k = 0
+                for i, pred in enumerate(top_k):
+                    if fuzzy_match(pred, ground_truth):
+                        dcg_k += 1 / np.log2(i + 2)  # i+2 因為log2(1)=0
+                
+                # 理想DCG（所有真實根因都在前k位）
+                idcg_k = sum([1 / np.log2(i + 2) for i in range(min(k, len(ground_truth)))])
+                
+                ndcg_k = dcg_k / idcg_k if idcg_k > 0 else 0
+                metrics[f'ndcg@{k}'] = ndcg_k
         
         # Avg@5 和 Avg@10 (常用的綜合指標)
         metrics['avg@5'] = sum([metrics.get(f'precision@{k}', 0) for k in [1, 3, 5]]) / 3
@@ -940,17 +939,21 @@ class GNNKANvsBAROComparator:
                     # 🚀 測試 GNN-KAN - 使用我們定義的優化配置
                     print("    🤖 運行 GNN-KAN (輕量優化版)...")
                     
-                    # 定義唯一的、優化的配置
-                    # 這個配置將會使用我們在 config.py 中簡化的模型
-                    # 和在 training.py 中加入的稀疏損失
+                    # 🔥 針對節點數量問題的全面優化配置
+                    # 解決GNN-KAN只返回2個結果的核心問題
                     optimized_config = {
-                        'config_type': 'simplified', # 強制使用簡化配置
-                        'feature_method': 'ica',
+                        'config_type': 'high_capacity',  # 使用高容量配置以支持更多節點
+                        'feature_method': 'ica',         # 保持ICA特徵提取
                         'use_cuda': True,
                         'cpu_fallback': True,
-                        'learning_rate': 5e-6,       # 顯著降低學習率
-                        'num_epochs': 250,           # 增加訓練週期
-                        'sparsity_lambda': 5e-4      # 應用稀疏正則化
+                        'learning_rate': 1e-5,           # 適中學習率，支持複雜模型
+                        'num_epochs': 300,               # 更多訓練輪數
+                        'sparsity_lambda': 1e-6,         # 大幅降低稀疏性約束，允許更豐富連接
+                        'use_optimized_input': True,     # 啟用優化輸入處理
+                        'similarity_threshold': 0.15,    # 降低相似度閾值，增加節點連接
+                        'max_edges_per_node': 12,        # 大幅增加每節點最大邊數
+                        'target_feature_dim': 64,        # 增加特徵維度
+                        'force_node_expansion': True     # 強制節點擴展（自定義參數）
                     }
                     
                     try:

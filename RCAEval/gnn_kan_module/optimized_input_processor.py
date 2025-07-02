@@ -92,33 +92,100 @@ class FastServiceExtractor:
             'availability': ['up', 'down', 'available', 'health']
         }
         
-    def extract_services_batch(self, columns: List[str]) -> Dict[str, List[str]]:
-        """批量提取微服務對應的列 - 多層策略"""
+    def extract_services_batch(self, columns: List[str], force_expansion=False) -> Dict[str, List[str]]:
+        """批量提取微服務對應的列 - 多層策略 + 強制擴展"""
         service_columns = {}
         
-        # 🎯 策略1：精確匹配已知微服務
-        service_columns = self._extract_known_services(columns)
-        
-        # 🎯 策略2：如果精確匹配結果不足，使用模式匹配
-        if len(service_columns) <= 1:
-            service_columns.update(self._extract_pattern_services(columns))
-        
-        # 🎯 策略3：如果仍然不足，使用前綴分組
-        if len(service_columns) <= 1:
-            service_columns.update(self._extract_prefix_services(columns))
-        
-        # 🎯 策略4：如果還是不足，按指標類型分組
-        if len(service_columns) <= 1:
-            service_columns = self._extract_metric_services(columns)
-        
-        # 🚀 策略5：最後手段，智能分割確保多節點
-        if len(service_columns) <= 1 and len(columns) > 1:
-            service_columns = self._create_multiple_services(columns)
+        # 🔥 如果啟用強制擴展，使用更激進的分組策略
+        if force_expansion:
+            print("✓ 啟用強制節點擴展模式")
+            service_columns = self._create_individual_metric_nodes(columns)
+        else:
+            # 🎯 策略1：精確匹配已知微服務
+            service_columns = self._extract_known_services(columns)
+            
+            # 🎯 策略2：如果精確匹配結果不足，使用模式匹配
+            if len(service_columns) <= 1:
+                service_columns.update(self._extract_pattern_services(columns))
+            
+            # 🎯 策略3：如果仍然不足，使用前綴分組
+            if len(service_columns) <= 1:
+                service_columns.update(self._extract_prefix_services(columns))
+            
+            # 🎯 策略4：如果還是不足，按指標類型分組
+            if len(service_columns) <= 1:
+                service_columns = self._extract_metric_services(columns)
+            
+            # 🚀 策略5：最後手段，智能分割確保多節點
+            if len(service_columns) <= 1 and len(columns) > 1:
+                service_columns = self._create_multiple_services(columns)
         
         # 📊 優化：清理空分組並限制分組數量
         service_columns = self._optimize_service_groups(service_columns, columns)
         
         return service_columns
+    
+    def _create_individual_metric_nodes(self, columns: List[str]) -> Dict[str, List[str]]:
+        """創建單指標節點 - 最大化節點數量以提高準確度"""
+        services = {}
+        
+        for i, col in enumerate(columns):
+            # 基於列名的智能命名
+            col_lower = col.lower()
+            
+            # 嘗試提取服務名和指標類型
+            if any(svc in col_lower for svc in self.known_services):
+                service_name = next(svc for svc in self.known_services if svc in col_lower)
+                metric_type = self._extract_metric_type(col)
+                node_name = f"{service_name}_{metric_type}" if metric_type != "metric" else service_name
+            else:
+                # 使用列名的前綴作為節點名
+                if '_' in col:
+                    parts = col.split('_')
+                    if len(parts) >= 2:
+                        prefix = parts[0]
+                        suffix = parts[1] if len(parts[1]) <= 8 else parts[1][:8]
+                        node_name = f"{prefix}_{suffix}"
+                    else:
+                        node_name = f"metric_{col[:12]}"
+                elif '-' in col:
+                    parts = col.split('-')
+                    if len(parts) >= 2:
+                        prefix = parts[0]
+                        suffix = parts[1] if len(parts[1]) <= 8 else parts[1][:8]
+                        node_name = f"{prefix}_{suffix}"
+                    else:
+                        node_name = f"metric_{col[:12]}"
+                else:
+                    node_name = f"metric_{col[:12]}" if len(col) <= 12 else f"node_{i+1}"
+            
+            # 確保節點名唯一
+            if node_name in services:
+                node_name = f"{node_name}_{i}"
+                
+            services[node_name] = [col]
+        
+        print(f"✓ 強制擴展完成：{len(columns)} 列 -> {len(services)} 節點")
+        return services
+    
+    def _extract_metric_type(self, col: str) -> str:
+        """提取指標類型"""
+        col_lower = col.lower()
+        
+        for metric_type, patterns in self.metric_patterns.items():
+            for pattern in patterns:
+                if pattern in col_lower:
+                    return metric_type
+        
+        # 如果沒有匹配到已知模式，嘗試從列名推斷
+        if any(word in col_lower for word in ['cpu', 'memory', 'mem']):
+            return 'resource'
+        elif any(word in col_lower for word in ['latency', 'response', 'time']):
+            return 'performance'
+        elif any(word in col_lower for word in ['error', 'fail']):
+            return 'error'
+        
+        return "metric"
     
     def _extract_known_services(self, columns: List[str]) -> Dict[str, List[str]]:
         """精確匹配已知微服務"""
@@ -234,18 +301,19 @@ class FastServiceExtractor:
         return service_columns
     
     def _create_multiple_services(self, columns: List[str]) -> Dict[str, List[str]]:
-        """強制創建多個服務節點（最後手段）"""
+        """強制創建多個服務節點（最後手段）- 增強細粒度"""
         services = {}
         
-        # 根據列數量動態決定服務數
+        # 🔥 調整：增加更細粒度的服務劃分
         num_cols = len(columns)
         if num_cols <= 4:
-            target_services = 2
+            target_services = min(num_cols, 3)  # 從2增加到3
         elif num_cols <= 12:
-            target_services = min(4, num_cols // 2)
+            target_services = min(8, num_cols // 1.5)  # 從4增加到8，分母從2減少到1.5
         else:
-            target_services = min(8, num_cols // 3)
+            target_services = min(15, num_cols // 2)  # 從8增加到15，分母從3增加到2
         
+        # 🔥 支持單列服務：避免過度合並
         cols_per_service = max(1, num_cols // target_services)
         
         for i in range(target_services):
@@ -254,26 +322,39 @@ class FastServiceExtractor:
             
             if start_idx < num_cols:
                 service_cols = columns[start_idx:end_idx]
-                services[f"auto_service_{i+1}"] = service_cols
+                
+                # 🔥 更智能的命名：基於列名內容
+                if len(service_cols) == 1:
+                    col_name = service_cols[0]
+                    if any(svc in col_name.lower() for svc in ['frontend', 'backend', 'database', 'cache', 'queue']):
+                        service_name = next((svc for svc in ['frontend', 'backend', 'database', 'cache', 'queue'] 
+                                          if svc in col_name.lower()), f"metric_{i+1}")
+                    else:
+                        service_name = f"metric_{col_name.split('_')[0] if '_' in col_name else f'node_{i+1}'}"
+                else:
+                    service_name = f"group_{i+1}"
+                    
+                services[service_name] = service_cols
         
         return services
     
     def _optimize_service_groups(self, service_columns: Dict[str, List[str]], 
                                 columns: List[str]) -> Dict[str, List[str]]:
-        """優化服務分組"""
+        """優化服務分組 - 增加節點數量以提高準確度"""
         # 移除空分組
         service_columns = {k: v for k, v in service_columns.items() if v}
         
-        # 限制分組數量（避免過度分割）
-        max_services = min(15, max(2, len(columns) // 2))
+        # 🔥 調整：大幅增加分組數量以提高根因定位精度
+        max_services = min(25, max(8, len(columns) // 1.5))  # 從15增加到25，從2增加到8
         if len(service_columns) > max_services:
             # 保留最大的分組
             sorted_services = sorted(service_columns.items(), 
                                    key=lambda x: len(x[1]), reverse=True)
             service_columns = dict(sorted_services[:max_services])
         
-        # 確保至少有2個分組
-        if len(service_columns) < 2 and len(columns) > 1:
+        # 🔥 確保更多分組：提高最低分組數量
+        min_services = min(8, max(3, len(columns) // 3))  # 從2增加到8，新增3的最小值
+        if len(service_columns) < min_services and len(columns) > 1:
             service_columns = self._create_multiple_services(columns)
         
         return service_columns
@@ -287,9 +368,9 @@ class KANFeatureProcessor:
         self.target_dim = target_dim
         self.service_extractor = FastServiceExtractor()
         
-    def process_features_optimized(self, data: pd.DataFrame) -> Tuple[np.ndarray, List[str]]:
-        """優化的特徵處理"""
-        service_columns = self.service_extractor.extract_services_batch(data.columns.tolist())
+    def process_features_optimized(self, data: pd.DataFrame, force_expansion=False) -> Tuple[np.ndarray, List[str]]:
+        """優化的特徵處理 + 強制擴展支持"""
+        service_columns = self.service_extractor.extract_services_batch(data.columns.tolist(), force_expansion)
         
         if not service_columns:
             return self._global_feature_processing(data)
@@ -462,17 +543,19 @@ class GNNKANInputOptimizer:
                  feature_method='ica',
                  target_dim=64,
                  similarity_threshold=0.3,
-                 max_edges_per_node=5):
+                 max_edges_per_node=5,
+                 force_node_expansion=False):
         
         self.feature_processor = KANFeatureProcessor(feature_method, target_dim)
         self.graph_builder = OptimizedGraphBuilder(similarity_threshold, max_edges_per_node)
+        self.force_node_expansion = force_node_expansion
     
     def optimize_input(self, data: Any, inject_time: Optional[float] = None) -> KANOptimizedData:
-        """優化輸入處理"""
+        """優化輸入處理 + 強制節點擴展支持"""
         start_time = time.time()
         
         df = self._fast_data_standardization(data)
-        node_features, node_names = self.feature_processor.process_features_optimized(df)
+        node_features, node_names = self.feature_processor.process_features_optimized(df, self.force_node_expansion)
         edge_index, edge_weights = self.graph_builder.build_graph_fast(node_features, node_names)
         
         node_features_tensor = torch.tensor(node_features, dtype=torch.float32)
