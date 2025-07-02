@@ -309,7 +309,7 @@ class FastServiceExtractor:
         if num_cols <= 4:
             target_services = min(num_cols, 3)  # 從2增加到3
         elif num_cols <= 12:
-            target_services = min(8, num_cols // 1.5)  # 從4增加到8，分母從2減少到1.5
+            target_services = min(8, int(num_cols // 1.5))  # 從4增加到8，分母從2減少到1.5，確保整數
         else:
             target_services = min(15, num_cols // 2)  # 從8增加到15，分母從3增加到2
         
@@ -345,7 +345,7 @@ class FastServiceExtractor:
         service_columns = {k: v for k, v in service_columns.items() if v}
         
         # 🔥 調整：大幅增加分組數量以提高根因定位精度
-        max_services = min(25, max(8, len(columns) // 1.5))  # 從15增加到25，從2增加到8
+        max_services = min(25, max(8, int(len(columns) // 1.5)))  # 從15增加到25，從2增加到8，確保整數
         if len(service_columns) > max_services:
             # 保留最大的分組
             sorted_services = sorted(service_columns.items(), 

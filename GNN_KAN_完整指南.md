@@ -506,12 +506,12 @@ def calculate_parameter_efficiency(self, method_name: str, model_info: Dict):
 def calculate_interpretability_metrics(self, method_name: str, model_info: Dict):
     """計算KAN特有的可解釋性指標"""
     if method_name == "gnn_kan":
-        return {
+    return {
             'sparsity_ratio': model_info.get('sparsity_ratio', 0.0),
             'learnable_activation_ratio': 1.0,  # KAN全部激活可學習
             'kan_resolution_score': model_info.get('grid_size', 3) / 10.0,
             'interpretability_score': 0.8  # KAN固有高可解釋性
-        }
+    }
 ```
 
 ---

@@ -15,7 +15,7 @@ class UnifiedTraceProcessor(BaseFeatureProcessor):
     
     def __init__(self, target_dim: int = 64, method: str = 'tracer_ca', **kwargs):
         super().__init__(target_dim, method, **kwargs)
-
+    
     def fit(self, data: Union[StandardizedData, Any], **kwargs) -> 'UnifiedTraceProcessor':
         self.is_fitted = True
         return self

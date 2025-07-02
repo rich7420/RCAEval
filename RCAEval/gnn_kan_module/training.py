@@ -278,14 +278,14 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
         true_adj = torch.zeros(node_features.size(0), node_features.size(0), device=device)
         true_adj[edge_index[0], edge_index[1]] = 1
         true_adj[edge_index[1], edge_index[0]] = 1 # 無向圖
-
+    
     for epoch in range(config.num_epochs):
         model.train()
         optimizer.zero_grad()
-        
-        # 前向傳播
+            
+            # 前向傳播
         node_embedding, pred_adj = model(node_features, edge_index)
-        
+            
         # 損失計算
         # 1. 重建損失 (Reconstruction Loss) - 確保圖結構合理
         pos_weight = torch.tensor([float(true_adj.shape[0] * true_adj.shape[0] - true_adj.sum()) / true_adj.sum()])
@@ -300,7 +300,10 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
             kan_reg_loss = model.get_reg_loss()
 
         # 4. 稀疏性損失 (Sparsity Loss) - 鼓勵稀疏圖
-        sparsity_loss = sparsity_lambda * torch.norm(pred_adj, 1)
+        if sparsity_lambda is not None and sparsity_lambda > 0:
+            sparsity_loss = sparsity_lambda * torch.norm(pred_adj, 1)
+        else:
+            sparsity_loss = torch.tensor(0.0, device=device, requires_grad=True)
 
         # 總損失
         loss = recon_loss + kan_reg_loss + sparsity_loss

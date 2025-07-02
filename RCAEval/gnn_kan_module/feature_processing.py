@@ -532,7 +532,7 @@ def _compute_sample_entropy(series, m=2, r=None):
     from .advanced_processors import _compute_sample_entropy as _entropy_impl
     return _entropy_impl(series, m, r)
 
-
+    
 def _maxdist(xi, xj, m):
     """重定向到 advanced_processors 中的統一實現 - 避免重複定義"""
     from .advanced_processors import _maxdist as _maxdist_impl
