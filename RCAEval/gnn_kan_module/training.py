@@ -22,25 +22,12 @@ from .models import SimplifiedGNNKAN, GNNKANModel, TemporalAttention
 try:
     from .models import SimplifiedGNNKAN
 except ImportError:
-    print("⚠️ 無法導入 SimplifiedGNNKAN，使用臨時實現...")
-    
-    import torch.nn as nn
-    
-    class SimplifiedGNNKAN(nn.Module):
-        def __init__(self, input_dim, hidden_dim=64, output_dim=None, num_layers=2, 
-                     dropout=0.1, use_batch_norm=True, use_residual=True, kan_config=None):
-            super().__init__()
-            self.linear = nn.Linear(input_dim, output_dim or hidden_dim)
-            
-        def forward(self, node_features, edge_index):
-            x = self.linear(node_features)
-            adj = torch.mm(x, x.t())
-            return x, torch.sigmoid(adj)
+    print("⚠️ 使用models.py中的統一實現...")
 
 
 def create_model_with_config(config):
     """
-    根據配置創建模型
+    根據配置創建模型 - 重定向到models.py的統一實現
     
     Args:
         config: SimplifiedGNNKANConfig 配置對象
@@ -48,26 +35,8 @@ def create_model_with_config(config):
     Returns:
         model: 創建的模型實例
     """
-    try:
-        from .models import SimplifiedGNNKAN
-        
-        model = SimplifiedGNNKAN(
-            input_dim=config.input_dim,
-            hidden_dim=config.hidden_dim,
-            output_dim=config.output_dim,
-            num_layers=config.num_layers,
-            dropout=config.dropout,
-            use_batch_norm=config.use_batch_norm,
-            use_residual=config.use_residual,
-            kan_config=config.kan_config
-        )
-        
-        print(f"✓ Created model with config: {config}")
-        return model
-        
-    except Exception as e:
-        print(f"❌ Failed to create model with config: {e}")
-        raise
+    from .models import create_model_with_config as _create_model
+    return _create_model(config)
 
 
 def create_model_from_checkpoint(checkpoint_path, config=None):

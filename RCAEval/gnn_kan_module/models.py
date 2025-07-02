@@ -641,15 +641,58 @@ class SimplifiedGNNKAN(nn.Module):
         trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
         
         return {
+            'model_name': self.__class__.__name__,
             'total_parameters': total_params,
-            'trainable_parameters': trainable_params,
             'input_dim': self.input_dim,
-            'hidden_dim': self.hidden_dim,
             'output_dim': self.output_dim,
             'num_layers': self.num_layers,
+            'dropout': self.dropout,
             'use_batch_norm': self.use_batch_norm,
             'use_residual': self.use_residual
         }
+
+
+def create_model_with_config(config):
+    """
+    根據配置創建模型
+    
+    Args:
+        config: SimplifiedGNNKANConfig 配置對象
+        
+    Returns:
+        model: 創建的模型實例
+    """
+    try:
+        model = SimplifiedGNNKAN(
+            input_dim=config.input_dim,
+            hidden_dim=getattr(config, 'hidden_dim', 64),
+            output_dim=config.output_dim,
+            num_layers=getattr(config, 'num_layers', 2),
+            dropout=getattr(config, 'dropout', 0.1),
+            use_batch_norm=getattr(config, 'use_batch_norm', True),
+            use_residual=getattr(config, 'use_residual', True),
+            kan_config=getattr(config, 'kan_config', None)
+        )
+        
+        print(f"✓ Created model with config: {type(config).__name__}")
+        return model
+        
+    except Exception as e:
+        print(f"❌ Failed to create model with config: {e}")
+        # 創建最小回退模型
+        try:
+            model = SimplifiedGNNKAN(
+                input_dim=getattr(config, 'input_dim', 32),
+                hidden_dim=64,
+                output_dim=getattr(config, 'output_dim', 16),
+                num_layers=2,
+                dropout=0.1
+            )
+            print("✓ Created fallback model")
+            return model
+        except Exception as fallback_error:
+            print(f"❌ Fallback model creation failed: {fallback_error}")
+            raise e
 
 # 將SimplifiedGNNKAN添加到可用的模型中
 __all__ = ['GNNKANModel', 'SimplifiedGNNKAN', 'TemporalAttention', 'create_fallback_model', 

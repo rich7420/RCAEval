@@ -498,216 +498,60 @@ def extract_service_names_from_columns(columns: list) -> list:
 
 
 def psm_metric_processing(metrics_data, target_dim=64):
-    """
-    PSM（相空間方法）指標處理 - 替代簡化的指標處理
-    專注於捕捉複雜系統動態特徵
-    
-    Args:
-        metrics_data: 指標數據
-        target_dim: 目標維度
-    
-    Returns:
-        processed_features: 處理後的特徵
-        feature_names: 特徵名稱
-    """
-    print("🔧 Using PSM (Phase Space Method) for metric processing...")
-    
-    if isinstance(metrics_data, pd.DataFrame):
-        data = metrics_data.select_dtypes(include=[np.number])
-    elif isinstance(metrics_data, np.ndarray):
-        data = pd.DataFrame(metrics_data) if metrics_data.ndim == 2 else pd.DataFrame({'metric': metrics_data})
-    else:
-        try:
-            data = pd.DataFrame(metrics_data)
-        except:
-            return np.array([[0]]), ['default_feature']
-
-    all_features = []
-    feature_names = []
-    
-    for col in data.columns:
-        series = data[col].dropna()
-        col_name = str(col)
-        
-        if len(series) < 5:
-            # 數據太少，使用基本統計
-            basic_stats = [series.mean() if len(series) > 0 else 0, 
-                          series.std() if len(series) > 1 else 0, 
-                          series.min() if len(series) > 0 else 0, 
-                          series.max() if len(series) > 0 else 0]
-            all_features.extend(basic_stats)
-            feature_names.extend([f'{col_name}_mean', f'{col_name}_std', f'{col_name}_min', f'{col_name}_max'])
-            continue
-        
-        # 🎯 PSM核心特徵：相空間重構
-        # 1. 時間延遲嵌入（相空間重構的關鍵）
-        embedded_features = _phase_space_embedding(series.values)
-        
-        # 2. 動力學不變量
-        dynamics_features = _compute_dynamics_invariants(series.values)
-        
-        # 3. 穩定性指標
-        stability_features = _compute_stability_metrics(series.values)
-        
-        # 4. 頻域特徵
-        frequency_features = _compute_frequency_features(series.values)
-        
-        # 組合PSM特徵
-        col_features = embedded_features + dynamics_features + stability_features + frequency_features
-        all_features.extend(col_features)
-        
-        # 生成特徵名稱
-        names = [
-            f'{col_name}_embed_dim1', f'{col_name}_embed_dim2', f'{col_name}_embed_corr',
-            f'{col_name}_lyapunov', f'{col_name}_entropy', f'{col_name}_complexity',
-            f'{col_name}_variance_ratio', f'{col_name}_stability_index', f'{col_name}_prediction_error',
-            f'{col_name}_dominant_freq', f'{col_name}_spectral_entropy', f'{col_name}_freq_stability'
-        ]
-        feature_names.extend(names)
-    
-    # 轉換為矩陣格式
-    if all_features:
-        feature_matrix = np.array(all_features).reshape(1, -1)
-        
-        # 🎯 安全的PCA降維 - 使用統一安全函數
-        from .utils import safe_pca_transform
-        feature_matrix = safe_pca_transform(feature_matrix, target_dim)
-        feature_names = [f'psm_component_{i}' for i in range(target_dim)]
-    else:
-        feature_matrix = np.array([[0]])
-        feature_names = ['default_feature']
-    
-    print(f"✓ PSM processing: {feature_matrix.shape[1]} features extracted")
-    return feature_matrix, feature_names
+    """重定向到 advanced_processors 中的統一實現 - 避免重複定義"""
+    from .advanced_processors import psm_metric_processing as _psm_impl
+    return _psm_impl(metrics_data, target_dim)
 
 
 def _phase_space_embedding(series, embedding_dim=3, delay=1):
-    """時間延遲嵌入進行相空間重構"""
-    if len(series) < embedding_dim * delay:
-        return [0.0, 0.0, 0.0]
-    
-    # 構建延遲向量
-    embedded_matrix = []
-    for i in range(len(series) - (embedding_dim - 1) * delay):
-        vector = [series[i + j * delay] for j in range(embedding_dim)]
-        embedded_matrix.append(vector)
-    
-    embedded_matrix = np.array(embedded_matrix)
-    
-    # 相空間特徵
-    features = []
-    if embedded_matrix.size > 0:
-        # 主要方向的方差
-        features.append(np.var(embedded_matrix[:, 0]))
-        features.append(np.var(embedded_matrix[:, 1]) if embedded_matrix.shape[1] > 1 else 0)
-        # 維度間相關性
-        if embedded_matrix.shape[1] > 1:
-            corr = np.corrcoef(embedded_matrix[:, 0], embedded_matrix[:, 1])[0, 1]
-            features.append(corr if not np.isnan(corr) else 0)
-        else:
-            features.append(0)
-    else:
-        features = [0.0, 0.0, 0.0]
-    
-    return features
+    """重定向到 advanced_processors 中的統一實現 - 避免重複定義"""
+    from .advanced_processors import _phase_space_embedding as _phase_impl
+    return _phase_impl(series, embedding_dim, delay)
 
 
 def _compute_dynamics_invariants(series):
-    """計算動力學不變量"""
-    if len(series) < 10:
-        return [0.0, 0.0, 0.0]
-    
-    # 近似Lyapunov指數
-    diffs = np.diff(series)
-    lyapunov_approx = np.mean(np.log(np.abs(diffs) + 1e-10))
-    
-    # 樣本熵
-    sample_entropy = _compute_sample_entropy(series)
-    
-    # 複雜度度量
-    complexity = np.std(diffs) / (np.mean(np.abs(series)) + 1e-10)
-    
-    return [lyapunov_approx, sample_entropy, complexity]
+    """重定向到 advanced_processors 中的統一實現 - 避免重複定義"""
+    from .advanced_processors import _compute_dynamics_invariants as _dynamics_impl
+    return _dynamics_impl(series)
 
 
 def _compute_stability_metrics(series):
-    """計算穩定性指標"""
-    if len(series) < 5:
-        return [0.0, 0.0, 0.0]
-    
-    # 方差比率（短期vs長期）
-    mid = len(series) // 2
-    var_ratio = np.var(series[:mid]) / (np.var(series[mid:]) + 1e-10)
-    
-    # 穩定性指數
-    mean_abs_dev = np.mean(np.abs(series - np.mean(series)))
-    stability_index = 1.0 / (1.0 + mean_abs_dev)
-    
-    # 預測誤差（簡單線性預測）
-    if len(series) > 10:
-        x = np.arange(len(series))
-        trend = np.polyfit(x, series, 1)
-        predicted = np.polyval(trend, x)
-        prediction_error = np.mean((series - predicted) ** 2)
-    else:
-        prediction_error = 0.0
-    
-    return [var_ratio, stability_index, prediction_error]
+    """重定向到 advanced_processors 中的統一實現 - 避免重複定義"""
+    from .advanced_processors import _compute_stability_metrics as _stability_impl
+    return _stability_impl(series)
 
 
 def _compute_frequency_features(series):
-    """計算頻域特徵"""
-    if len(series) < 8:
-        return [0.0, 0.0, 0.0]
-    
-    # FFT
-    fft = np.fft.fft(series)
-    power_spectrum = np.abs(fft) ** 2
-    
-    # 主導頻率
-    dominant_freq = np.argmax(power_spectrum[1:len(power_spectrum)//2]) + 1
-    
-    # 譜熵
-    power_norm = power_spectrum / (np.sum(power_spectrum) + 1e-10)
-    spectral_entropy = -np.sum(power_norm * np.log(power_norm + 1e-10))
-    
-    # 頻率穩定性
-    freq_stability = 1.0 / (1.0 + np.std(power_spectrum))
-    
-    return [float(dominant_freq), spectral_entropy, freq_stability]
+    """重定向到 advanced_processors 中的統一實現 - 避免重複定義"""
+    from .advanced_processors import _compute_frequency_features as _freq_impl
+    return _freq_impl(series)
 
 
 def _compute_sample_entropy(series, m=2, r=None):
-    """計算樣本熵"""
-    if r is None:
-        r = 0.2 * np.std(series)
-    
-    def _maxdist(xi, xj, m):
-        return max([abs(ua - va) for ua, va in zip(xi, xj)])
-    
-    def _phi(m):
-        N = len(series)
-        patterns = np.array([series[i:i + m] for i in range(N - m + 1)])
-        C = np.zeros(N - m + 1)
-        
-        for i in range(N - m + 1):
-            template_i = patterns[i]
-            for j in range(N - m + 1):
-                if _maxdist(template_i, patterns[j], m) <= r:
-                    C[i] += 1.0
-        
-        phi = (N - m + 1.0) ** (-1) * np.sum(np.log(C / (N - m + 1.0)))
-        return phi
-    
-    try:
-        return _phi(m) - _phi(m + 1)
-    except:
-        return 0.0
+    """重定向到 advanced_processors 中的統一實現 - 避免重複定義"""
+    from .advanced_processors import _compute_sample_entropy as _entropy_impl
+    return _entropy_impl(series, m, r)
+
+
+def _maxdist(xi, xj, m):
+    """重定向到 advanced_processors 中的統一實現 - 避免重複定義"""
+    from .advanced_processors import _maxdist as _maxdist_impl
+    return _maxdist_impl(xi, xj, m)
+
+
+def _phi(m):
+    """重定向到 advanced_processors 中的統一實現 - 避免重複定義"""
+    from .advanced_processors import _phi as _phi_impl
+    return _phi_impl(m)
+
 
 # 注意：gnn_kan_rca 主實現已移至 e2e/gnnkan.py
 # 此檔案專注於特徵處理功能，不包含主要的 RCA 函數
 
 __all__ = [
+    'ica_metric_processing',
+    'kpca_metric_processing', 
     'simplified_metric_processing',
-    'psm_metric_processing'
+    'psm_metric_processing',
+    'enhanced_trace_processing'
 ]

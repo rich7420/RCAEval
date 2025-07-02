@@ -603,43 +603,4 @@ class IntelligentServiceGraphConstructor:
         
         return sparsified_adj
     
-    def _adjacency_to_edges(self, adj_matrix):
-        """將鄰接矩陣轉換為邊列表 - 修復邊索引問題"""
-        # 🔧 安全檢查：確保鄰接矩陣有效
-        if adj_matrix.size == 0:
-            return torch.empty((2, 0), dtype=torch.long), torch.empty(0, dtype=torch.float)
-        
-        # 獲取非零元素的索引
-        edge_indices = np.transpose(np.nonzero(adj_matrix))
-        
-        if edge_indices.size == 0:
-            # 如果沒有邊，創建最小連接（避免完全斷開的圖）
-            num_nodes = adj_matrix.shape[0]
-            if num_nodes > 1:
-                # 創建環形連接
-                edge_list = [(i, (i + 1) % num_nodes) for i in range(num_nodes)]
-                edge_indices = np.array(edge_list)
-                edge_weights = np.ones(len(edge_list)) * 0.1
-            else:
-                # 單節點情況：自環
-                edge_indices = np.array([[0, 0]])
-                edge_weights = np.array([1.0])
-        else:
-            edge_weights = adj_matrix[edge_indices[:, 0], edge_indices[:, 1]]
-        
-        # 🔧 確保邊索引在有效範圍內
-        num_nodes = adj_matrix.shape[0]
-        valid_mask = (edge_indices[:, 0] < num_nodes) & (edge_indices[:, 1] < num_nodes)
-        edge_indices = edge_indices[valid_mask]
-        edge_weights = edge_weights[valid_mask]
-        
-        if len(edge_indices) == 0:
-            print(f"⚠️ 所有邊都無效，創建最小圖結構")
-            if num_nodes > 1:
-                edge_indices = np.array([[0, 1], [1, 0]])
-                edge_weights = np.array([0.1, 0.1])
-            else:
-                edge_indices = np.array([[0, 0]])
-                edge_weights = np.array([1.0])
-        
-        return torch.tensor(edge_indices, dtype=torch.long).t().contiguous(), torch.tensor(edge_weights, dtype=torch.float)
+# _adjacency_to_edges method already defined above at line 173 - removed duplicate

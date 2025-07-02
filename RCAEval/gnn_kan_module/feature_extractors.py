@@ -61,17 +61,20 @@ from .processors.trace_processors import UnifiedTraceProcessor
 from .processors.metric_processors import UnifiedMetricProcessor
 
 def extract_log_features(log_data, **kwargs):
-    """重定向到 UnifiedLogProcessor"""
+    """重定向到 UnifiedLogProcessor - 避免重複定義"""
+    from .processors.log_processors import UnifiedLogProcessor
     processor = UnifiedLogProcessor(**kwargs)
     return processor.process(log_data)
 
 def extract_trace_features(trace_data, **kwargs):
-    """重定向到 UnifiedTraceProcessor"""
+    """重定向到 UnifiedTraceProcessor - 避免重複定義"""
+    from .processors.trace_processors import UnifiedTraceProcessor
     processor = UnifiedTraceProcessor(**kwargs)
     return processor.process(trace_data, **kwargs)
 
 def extract_metric_features(metric_data, **kwargs):
-    """重定向到 UnifiedMetricProcessor"""
+    """重定向到 UnifiedMetricProcessor - 避免重複定義"""
+    from .processors.metric_processors import UnifiedMetricProcessor
     processor = UnifiedMetricProcessor(**kwargs)
     return processor.process(metric_data)
 
@@ -205,54 +208,10 @@ class MultiModalFeatureExtractor:
 
 
 def enhanced_trace_processing(trace_data, inject_time=None):
-    """
-    🔧 重定向到統一的trace處理器
-    避免重複實現，保持向後兼容性
-    """
-    try:
-        from .feature_processing import enhanced_trace_processing as unified_enhanced_trace_processing
-        return unified_enhanced_trace_processing(trace_data, inject_time)
-    except ImportError:
-        # 基本回退實現
-        print("⚠️ 使用簡化trace處理回退實現")
-        if trace_data is None or (isinstance(trace_data, pd.DataFrame) and trace_data.empty):
-            return np.array([]), [], None
-        
-        try:
-            if not isinstance(trace_data, pd.DataFrame):
-                trace_data = pd.DataFrame(trace_data)
-            
-            # 基本特徵提取
-            if 'serviceName' not in trace_data.columns:
-                trace_data['serviceName'] = 'default_service'
-            if 'duration' not in trace_data.columns:
-                trace_data['duration'] = np.random.lognormal(2, 1, len(trace_data))
-            
-            services = trace_data['serviceName'].unique()
-            service_features = []
-            
-            for service in services:
-                service_data = trace_data[trace_data['serviceName'] == service]
-                features = [
-                    len(service_data),
-                    service_data['duration'].mean() if 'duration' in service_data.columns else 0,
-                    service_data['duration'].std() if 'duration' in service_data.columns else 0,
-                ]
-                service_features.append(features)
-            
-            if service_features:
-                trace_features = np.array(service_features)
-            else:
-                trace_features = np.array([])
-            
-            return trace_features, list(services), None
-            
-        except Exception as e:
-            print(f"⚠️ trace處理回退實現失敗: {e}")
-            return np.array([]), [], None
-    except Exception as e:
-        print(f"⚠️ trace處理重定向失敗: {e}")
-        return np.array([]), [], None
+    """重定向到統一的trace處理器 - 避免重複定義"""
+    from .processors.trace_processors import UnifiedTraceProcessor
+    processor = UnifiedTraceProcessor()
+    return processor.enhanced_process(trace_data, inject_time=inject_time)
 
 
 # _build_enhanced_service_graph 函數已移至 feature_processing.py

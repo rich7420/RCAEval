@@ -13,6 +13,15 @@ import time
 from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.decomposition import FastICA, PCA
 import warnings
+import os
+from RCAEval.io.time_series import (
+    drop_constant,
+    drop_near_constant,
+    convert_mem_mb,
+    drop_extra,
+    drop_time,
+    select_useful_cols,
+)
 
 warnings.filterwarnings("ignore")
 
@@ -343,26 +352,39 @@ class KANFeatureProcessor:
     
     def _fast_statistical_processing(self, service_data: pd.DataFrame) -> np.ndarray:
         """快速統計處理"""
-        features = [
-            service_data.values.mean(),
-            service_data.values.std(),
-            service_data.values.min(),
-            service_data.values.max(),
-            np.median(service_data.values),
-        ]
+        # 檢查空數據
+        if service_data.empty or service_data.shape[0] == 0 or service_data.shape[1] == 0:
+            return np.zeros(self.target_dim)
         
-        if service_data.shape[1] <= 10:
-            col_means = service_data.mean().values
-            col_stds = service_data.std().values
-            features.extend(col_means.tolist()[:5])
-            features.extend(col_stds.tolist()[:5])
-        
-        current_len = len(features)
-        if current_len >= self.target_dim:
-            return np.array(features[:self.target_dim])
-        else:
-            padding = np.zeros(self.target_dim - current_len)
-            return np.concatenate([features, padding])
+        try:
+            features = [
+                service_data.values.mean(),
+                service_data.values.std(),
+                service_data.values.min(),
+                service_data.values.max(),
+                np.median(service_data.values),
+            ]
+            
+            if service_data.shape[1] <= 10:
+                col_means = service_data.mean().values
+                col_stds = service_data.std().values
+                features.extend(col_means.tolist()[:5])
+                features.extend(col_stds.tolist()[:5])
+            
+            # 處理NaN值
+            features = [f if not np.isnan(f) else 0.0 for f in features]
+            
+            current_len = len(features)
+            if current_len >= self.target_dim:
+                return np.array(features[:self.target_dim])
+            else:
+                padding = np.zeros(self.target_dim - current_len)
+                return np.concatenate([features, padding])
+        except Exception as e:
+            # 如果統計處理失敗，返回零向量
+            if os.environ.get('GNN_KAN_DEBUG') == '1':
+                print(f"[WARN] 統計處理失敗: {e}，返回零向量")
+            return np.zeros(self.target_dim)
     
     def _global_feature_processing(self, data: pd.DataFrame) -> Tuple[np.ndarray, List[str]]:
         """全局特徵處理"""
@@ -472,7 +494,8 @@ class GNNKANInputOptimizer:
         )
     
     def _fast_data_standardization(self, data: Any) -> pd.DataFrame:
-        """快速數據標準化"""
+        """快速數據標準化 + BARO 時間序列清理邏輯"""
+        # === 1) 先將輸入統一轉成 DataFrame ===
         if isinstance(data, pd.DataFrame):
             df = data.select_dtypes(include=[np.number])
         elif isinstance(data, dict):
@@ -489,13 +512,97 @@ class GNNKANInputOptimizer:
             df = pd.DataFrame(data)
         else:
             df = pd.DataFrame({'metric': [float(data)] if np.isscalar(data) else [0.0]})
-        
+
+        # === 2) 基本缺失值 / 無限值處理 ===
         df = df.fillna(0).replace([np.inf, -np.inf], 0)
         
+        # 保存原始備份以防清理過度
+        original_df = df.copy()
+        original_col_count = len(df.columns)
+        
+        if os.environ.get('GNN_KAN_DEBUG') == '1':
+            print(f"[DEBUG] 開始時間序列預處理: {original_col_count} 列")
+
+        # === 3) 套用 BARO 的時間序列預處理 ===
+        try:
+            # 移除時間欄位（如果仍存在）
+            df_before = len(df.columns)
+            df = drop_time(df)
+            if os.environ.get('GNN_KAN_DEBUG') == '1' and len(df.columns) != df_before:
+                print(f"[DEBUG] drop_time: {df_before} → {len(df.columns)} 列")
+            
+            # 檢查是否還有列
+            if len(df.columns) == 0:
+                if os.environ.get('GNN_KAN_DEBUG') == '1':
+                    print(f"[WARN] drop_time移除了所有列，恢復原始數據")
+                df = original_df.copy()
+                # 手動移除時間列
+                time_cols = [col for col in df.columns if 'time' in str(col).lower()]
+                if time_cols:
+                    df = df.drop(columns=time_cols)
+            
+            # 移除常數列
+            if len(df.columns) > 0:
+                df_before = len(df.columns)
+                df = drop_constant(df)
+                if os.environ.get('GNN_KAN_DEBUG') == '1' and len(df.columns) != df_before:
+                    print(f"[DEBUG] drop_constant: {df_before} → {len(df.columns)} 列")
+            
+            # 移除近似常數列 (變異度過低) - 更寬鬆的閾值
+            if len(df.columns) > 0:
+                df_before = len(df.columns)
+                df = drop_near_constant(df, threshold=0.01)  # 更寬鬆閾值
+                if os.environ.get('GNN_KAN_DEBUG') == '1' and len(df.columns) != df_before:
+                    print(f"[DEBUG] drop_near_constant: {df_before} → {len(df.columns)} 列")
+            
+            # 轉換記憶體單位為 MB，保持量級一致
+            if len(df.columns) > 0:
+                df = convert_mem_mb(df)
+                if os.environ.get('GNN_KAN_DEBUG') == '1':
+                    print(f"[DEBUG] convert_mem_mb: 記憶體單位轉換完成")
+            
+            # 移除一些無用或雜訊列（如 queue / redis / istio 等）
+            if len(df.columns) > 0:
+                df_before = len(df.columns)
+                df = drop_extra(df)
+                if os.environ.get('GNN_KAN_DEBUG') == '1' and len(df.columns) != df_before:
+                    print(f"[DEBUG] drop_extra: {df_before} → {len(df.columns)} 列")
+            
+            # 可選：挑選訊息量較高的列以降低維度 - 只在列數很多時使用
+            if len(df.columns) > 20:  # 只在列數超過20時才挑選
+                useful_cols = select_useful_cols(df)
+                if len(useful_cols) > 0 and len(useful_cols) < len(df.columns):
+                    if os.environ.get('GNN_KAN_DEBUG') == '1':
+                        print(f"[DEBUG] select_useful_cols: {len(df.columns)} → {len(useful_cols)} 列")
+                    df = df[useful_cols]
+            
+        except Exception as e:
+            # 若任何步驟失敗，保留原 df，並在 debug 模式下輸出警告
+            if os.environ.get('GNN_KAN_DEBUG') == '1':
+                print(f"[WARN] 時間序列預處理失敗: {e}")
+            df = original_df.copy()
+
+        # === 4) 最終檢查與保護 ===
+        # 如果清理後沒有列了，恢復到基本清理版本
+        if len(df.columns) == 0:
+            if os.environ.get('GNN_KAN_DEBUG') == '1':
+                print(f"[WARN] 清理後無列，恢復到基本版本")
+            df = original_df.copy()
+            # 只移除明顯的時間列
+            time_cols = [col for col in df.columns if col.lower() in ['time', 'timestamp', 'datetime']]
+            if time_cols:
+                df = df.drop(columns=time_cols)
+        
+        # 最終保險：再次移除時間欄位
         time_cols = [col for col in df.columns if 'time' in str(col).lower()]
-        if time_cols:
+        if time_cols and len(df.columns) > len(time_cols):  # 確保不會清空
             df = df.drop(columns=time_cols)
         
+        if os.environ.get('GNN_KAN_DEBUG') == '1':
+            print(f"[DEBUG] 時間序列預處理完成: {original_col_count} → {len(df.columns)} 列")
+            if len(df.columns) > 0:
+                print(f"[DEBUG] 最終列名: {df.columns.tolist()}")
+
         return df
 
 

@@ -73,8 +73,12 @@ from .feature_processing import (
     ica_metric_processing,
     kpca_metric_processing,
     simplified_metric_processing,
-    enhanced_trace_processing,
     psm_metric_processing
+)
+
+# 特徵提取函數 - 從正確的模組導入
+from .feature_extractors import (
+    enhanced_trace_processing
 )
 
 # 純粹KAN組件 - 只保留有效的KAN層
