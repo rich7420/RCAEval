@@ -301,9 +301,11 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
 
         # 4. 稀疏性損失 (Sparsity Loss) - 鼓勵稀疏圖
         if sparsity_lambda is not None and sparsity_lambda > 0:
-            sparsity_loss = sparsity_lambda * torch.norm(pred_adj, 1)
+            # 🔧 修復：使用clone()避免潛在的in-place問題
+            sparsity_loss = sparsity_lambda * torch.norm(pred_adj.clone(), 1)
         else:
-            sparsity_loss = torch.tensor(0.0, device=device, requires_grad=True)
+            # 🔧 修復：不需要梯度，避免記憶體共享問題
+            sparsity_loss = torch.tensor(0.0, device=device)
 
         # 總損失
         loss = recon_loss + kan_reg_loss + sparsity_loss

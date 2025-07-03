@@ -49,42 +49,6 @@ from RCAEval.gnn_kan_module.feature_processing import (
 # 導入正確的page_rank函數
 from RCAEval.graph_heads.page_rank import page_rank
 
-# 簡化的PageRank實現 - 避免外部依賴
-class PageRank:
-    def __init__(self, alpha=0.85, max_iter=100, tol=1e-6):
-        self.alpha = alpha
-        self.max_iter = max_iter
-        self.tol = tol
-    
-    def fit_transform(self, adj):
-        """簡化但有效的 PageRank 實現"""
-        try:
-            n = adj.shape[0]
-            if n == 0:
-                return np.array([])
-            
-            # 歸一化鄰接矩陣
-            row_sums = np.sum(adj, axis=1)
-            row_sums[row_sums == 0] = 1  # 避免除零
-            adj_norm = adj / row_sums[:, np.newaxis]
-            
-            # 初始化PageRank值
-            pr = np.ones(n) / n
-            
-            # 迭代計算
-            for _ in range(self.max_iter):
-                pr_new = (1 - self.alpha) / n + self.alpha * np.dot(adj_norm.T, pr)
-                if np.linalg.norm(pr_new - pr, 1) < self.tol:
-                    break
-                pr = pr_new
-            
-            return pr
-        except Exception as e:
-            print(f"PageRank計算失敗: {e}，使用度中心性")
-            degrees = np.sum(adj, axis=1)
-            return degrees / (np.sum(degrees) + 1e-8)
-
-
 def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False, 
                 config_type='simplified', feature_method='simplified', 
                 use_optimized_input=True, sparsity_lambda=None, **kwargs):
