@@ -150,7 +150,7 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
         cuda_available = False
     
     # 1. 創建配置並強制啟用GPU
-    config = ConfigFactory.create_config('simplified', **kwargs)
+    config = ConfigFactory.create_config(config_type, **kwargs)
     config.feature_method = feature_method
     config.use_cuda = use_gpu  # 強制設定GPU使用
     

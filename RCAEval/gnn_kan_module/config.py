@@ -475,6 +475,7 @@ class FastGNNKANConfig(SimplifiedGNNKANConfig):
         print("✓ Config updated for KAN purity with enhanced accuracy features")
 
 
+
 class ConfigFactory:
     """配置工廠類 - 根據需求創建適當的配置"""
     
@@ -499,6 +500,21 @@ class ConfigFactory:
                 setattr(config, key, value)
         
         return config
+    
+    @staticmethod
+    def get_supported_types():
+        """獲取支持的配置類型列表"""
+        return ['simplified', 'high_capacity', 'fast']
+    
+    @staticmethod
+    def get_config_description(config_type: str):
+        """獲取配置類型的描述"""
+        descriptions = {
+            'simplified': '簡化配置 - 專注KAN核心特性，證明KAN取代MLP的有效性',
+            'high_capacity': '高容量配置 - 最大化KAN表達能力，追求極致準確率',
+            'fast': '快速配置 - 優化KAN執行速度，保持核心特性'
+        }
+        return descriptions.get(config_type, '未知配置類型')
 
 
 # 向後兼容性
