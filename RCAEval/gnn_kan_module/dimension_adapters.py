@@ -271,11 +271,11 @@ class MessagePassingAdapter(nn.Module):
             
             # 按目標節點聚合
             aggregated = torch.zeros_like(node_features)
-            aggregated.index_add_(0, col, messages)
+            aggregated.scatter_add_(0, col.unsqueeze(1).expand_as(messages), messages)
             
             # 度數歸一化
             degree = torch.zeros(num_nodes, device=node_features.device)
-            degree.index_add_(0, col, torch.ones(len(col), device=node_features.device))
+            degree.scatter_add_(0, col, torch.ones_like(col, dtype=node_features.dtype))
             degree = torch.clamp(degree, min=1.0)
             
             aggregated = aggregated / degree.unsqueeze(1)
