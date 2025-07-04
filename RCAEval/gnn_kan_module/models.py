@@ -102,7 +102,7 @@ class GNNKANModel(nn.Module):
                 
                 if actual_dim > expected_dim:
                     # 截斷多餘維度
-                    node_features_adjusted = node_features[:, :expected_dim]
+                    node_features_adjusted = node_features[:, :expected_dim].clone()
                 elif actual_dim < expected_dim:
                     # 填充不足維度
                     padding = torch.zeros(node_features.shape[0], expected_dim - actual_dim, 
