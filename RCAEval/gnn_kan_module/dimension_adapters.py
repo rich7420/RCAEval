@@ -260,9 +260,8 @@ class MessagePassingAdapter(nn.Module):
             # 安全性檢查
             valid_mask = (row >= 0) & (row < num_nodes) & (col >= 0) & (col < num_nodes)
             if not valid_mask.all():
-                row = row[valid_mask]
-                col = col[valid_mask]
-            
+                row, col = row[valid_mask], col[valid_mask]
+
             if len(row) == 0:
                 return node_features
             
@@ -271,8 +270,8 @@ class MessagePassingAdapter(nn.Module):
             
             # 按目標節點聚合
             aggregated = torch.zeros_like(node_features)
-            aggregated.scatter_add_(0, col.unsqueeze(1).expand_as(messages), messages)
-            
+            aggregated = aggregated.scatter_add(0, col.unsqueeze(1).expand_as(messages), messages)
+ 
             # 度數歸一化
             degree = torch.zeros(num_nodes, device=node_features.device)
             degree.scatter_add_(0, col, torch.ones_like(col, dtype=node_features.dtype))
@@ -286,7 +285,8 @@ class MessagePassingAdapter(nn.Module):
             return processed_messages
             
         except Exception as e:
-            print(f"⚠️ 消息傳遞適配失敗: {e}，返回原始特徵")
+            # 發生任何錯誤時，返回原始特徵以確保穩定性
+            print(f"⚠️ GNN消息傳遞失敗: {e}，返回原始特徵")
             return node_features
 
 

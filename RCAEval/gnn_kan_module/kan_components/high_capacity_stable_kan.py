@@ -486,8 +486,8 @@ class HighCapacityGNNKANEncoder(nn.Module):
             
             # 按目標節點聚合
             aggregated = torch.zeros_like(x)
-            aggregated.scatter_add_(0, col.unsqueeze(1).expand_as(neighbor_features), neighbor_features)
-            
+            aggregated = aggregated.scatter_add(0, col.unsqueeze(1).expand_as(neighbor_features), neighbor_features)
+
             # 度數歸一化
             degree = torch.zeros(num_nodes, device=x.device)
             degree.scatter_add_(0, col, torch.ones_like(col, dtype=x.dtype))
