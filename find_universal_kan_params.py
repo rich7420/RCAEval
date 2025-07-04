@@ -17,600 +17,387 @@ import os
 import sys
 import time
 import json
+import warnings
+import traceback
 from datetime import datetime
-from typing import Dict, List, Any
+from typing import Dict, List, Tuple, Any, Optional
 
 import numpy as np
 import pandas as pd
 import glob
+from tqdm import tqdm
 
 # 添加項目路徑
 sys.path.insert(0, '.')
 
-# === 自動下載資料集支持 ===
+# --- 統一模組導入 ---
 try:
+    from RCAEval.e2e.gnnkan import gnn_kan_rca
+    from RCAEval.e2e.baro import baro
+    from RCAEval.benchmark.evaluation import Evaluator
     from RCAEval.utility import (
         download_re1_dataset,
         download_re2_dataset,
-        download_re3_dataset
+        download_re3_dataset,
+        load_json,
+        dump_json
     )
-except Exception:
-    # 若無法導入，定義兼容佔位函數
-    def download_re1_dataset():
-        print("⚠️ download_re1_dataset 不可用，請手動確保 data/RE1 存在")
-    def download_re2_dataset():
-        print("⚠️ download_re2_dataset 不可用，請手動確保 data/RE2 存在")
-    def download_re3_dataset():
-        print("⚠️ download_re3_dataset 不可用，請手動確保 data/RE3 存在")
+    print("✅ 核心模組與工具導入成功")
+except ImportError as e:
+    print(f"❌ 關鍵模組導入錯誤: {e}")
+    sys.exit(1)
 
-# 導入核心模組
-from RCAEval.e2e.gnnkan import gnn_kan_rca
+warnings.filterwarnings("ignore")
 
 
-class UniversalKANParamFinder:
-    """通用KAN參數尋找器"""
+# --- 全域配置 ---
+OUTPUT_DIR = "universal_kan_results"
+
+DATASETS = {
+    "RE1-OB": {"path": "data/RE1/RE1-OB", "download_func": download_re1_dataset, "series": "RE1"},
+    "RE1-SS": {"path": "data/RE1/RE1-SS", "download_func": download_re1_dataset, "series": "RE1"},
+    "RE1-TT": {"path": "data/RE1/RE1-TT", "download_func": download_re1_dataset, "series": "RE1"},
+    "RE2-OB": {"path": "data/RE2/RE2-OB", "download_func": download_re2_dataset, "series": "RE2"},
+    "RE2-SS": {"path": "data/RE2/RE2-SS", "download_func": download_re2_dataset, "series": "RE2"},
+    "RE2-TT": {"path": "data/RE2/RE2-TT", "download_func": download_re2_dataset, "series": "RE2"},
+    "RE3-OB": {"path": "data/RE3/RE3-OB", "download_func": download_re3_dataset, "series": "RE3"},
+    "RE3-SS": {"path": "data/RE3/RE3-SS", "download_func": download_re3_dataset, "series": "RE3"},
+    "RE3-TT": {"path": "data/RE3/RE3-TT", "download_func": download_re3_dataset, "series": "RE3"},
+}
+
+TEST_PARAMS = {
+    "baseline": {
+        "config_type": "simplified", "feature_method": "ica", "learning_rate": 1e-4, 
+        "num_epochs": 150, "sparsity_lambda": 1e-4, "description": "基礎配置 - 參考基準"
+    },
+    "high_accuracy": {
+        "config_type": "high_capacity", "feature_method": "ica", "learning_rate": 5e-5,
+        "num_epochs": 300, "sparsity_lambda": 1e-5, "kan_grid_size": 15,
+        "target_feature_dim": 128, "description": "高準確率配置 - 深度KAN網絡"
+    },
+    "max_capacity": {
+        "config_type": "high_capacity", "feature_method": "ica", "learning_rate": 8e-5,
+        "num_epochs": 250, "sparsity_lambda": 5e-6, "kan_grid_size": 20,
+        "max_edges_per_node": 10, "target_feature_dim": 256,
+        "force_node_expansion": True, "description": "最大表達能力配置"
+    },
+    "low_sparsity": {
+        "config_type": "high_capacity", "feature_method": "ica", "learning_rate": 5e-5,
+        "num_epochs": 250, "sparsity_lambda": 1e-7, "description": "低稀疏性約束 - 豐富連接"
+    },
+    "kpca_focused": {
+        "config_type": "simplified", "feature_method": "kpca", "kpca_kernel": "rbf", 
+        "learning_rate": 9e-5, "num_epochs": 200, "sparsity_lambda": 1e-4, 
+        "description": "特徵提取測試 - kPCA(rbf)"
+    },
+    "stable_convergence": {
+        "config_type": "high_capacity", "feature_method": "ica", "learning_rate": 1e-6,
+        "num_epochs": 500, "sparsity_lambda": 1e-5,
+        "description": "學習率測試 - 超低學習率穩定收斂"
+    },
+    "deep_network": {
+        "config_type": "high_capacity", "feature_method": "ica", "learning_rate": 4e-5,
+        "num_epochs": 350, "sparsity_lambda": 5e-6, "num_gnn_layers": 4,
+        "hidden_dims": [256, 128, 64, 32], "description": "網絡結構測試 - 更深的GNN網絡"
+    },
+    "dense_graph": {
+        "config_type": "high_capacity", "feature_method": "ica", "learning_rate": 8e-5,
+        "num_epochs": 250, "sparsity_lambda": 1e-6, "similarity_threshold": 0.1,
+        "max_edges_per_node": 15, "description": "圖構建測試 - 更稠密的圖"
+    }
+}
+
+# --- 核心功能函式 ---
+
+def check_and_download_datasets(dataset_names: List[str]):
+    """檢查數據集是否存在，如果不存在則下載"""
+    print("📥 檢查並下載數據集...")
+    for name in dataset_names:
+        if name in DATASETS:
+            dataset_info = DATASETS[name]
+            # 檢查頂層目錄，例如 data/RE1
+            top_level_path = os.path.join("data", dataset_info["series"])
+            if not os.path.exists(top_level_path):
+                print(f"  ⚠️ 數據集系列 {dataset_info['series']} 不存在，開始下載...")
+                try:
+                    dataset_info["download_func"]()
+                    print(f"  ✅ {dataset_info['series']} 下載完成")
+                except Exception as e:
+                    print(f"  ❌ {dataset_info['series']} 下載失敗: {e}")
+            else:
+                 # 即使頂層目錄存在，還是檢查具體路徑
+                 if not os.path.exists(dataset_info["path"]):
+                     print(f"  ⚠️ 數據集 {name} 路徑不完整，嘗試重新下載...")
+                     try:
+                         dataset_info["download_func"]()
+                         print(f"  ✅ {name} 下載完成")
+                     except Exception as e:
+                         print(f"  ❌ {name} 下載失敗: {e}")
+                 else:
+                     print(f"  ✅ 數據集 {name} 已存在")
+        else:
+            print(f"  ⚠️ 未知的數據集定義: {name}")
+
+
+def get_all_case_paths(dataset_names: List[str], limit_per_dataset: int) -> List[Tuple[str, str]]:
+    """
+    獲取所有指定數據集的案例路徑（強健版本）
+    返回一個元組列表 (案例路徑, 數據集名稱)
+    """
+    print(f"🔍 正在從 {dataset_names} 收集最多 {limit_per_dataset} 個案例...")
+    all_paths = []
     
-    def __init__(self, output_dir="universal_kan_results"):
-        self.output_dir = output_dir
-        os.makedirs(output_dir, exist_ok=True)
+    for name in dataset_names:
+        if name not in DATASETS:
+            print(f"  ⚠️ 跳過未知數據集: {name}")
+            continue
         
-        # 🚀 自動下載資料集（如尚未存在）
-        if not os.path.exists("data/RE1"):
-            print("📥 下載 RE1 資料集...")
-            download_re1_dataset()
-        if not os.path.exists("data/RE2"):
-            print("📥 下載 RE2 資料集...")
-            download_re2_dataset()
-        if not os.path.exists("data/RE3"):
-            print("📥 下載 RE3 資料集...")
-            download_re3_dataset()
-        
-        # 🎯 全面的KAN參數搜索 - 包含所有可調整參數
-        self.test_params = {
-            # === 基礎配置組 ===
-            "baseline_config": {
-                "config_type": "simplified",
-                "feature_method": "ica",
-                "learning_rate": 1e-4,
-                "num_epochs": 150,
-                "sparsity_lambda": 1e-4,
-                "description": "基礎配置 - 參考基準"
-            },
-            
-            # === 高準確率配置組 ===
-            "high_accuracy_1": {
-                "config_type": "high_capacity",
-                "feature_method": "ica",
-                "learning_rate": 5e-5,
-                "num_epochs": 300,
-                "sparsity_lambda": 1e-5,
-                "kan_grid_size": 15,
-                "kan_num_basis": 20,
-                "kan_spline_order": 4,
-                "similarity_threshold": 0.2,
-                "max_edges_per_node": 8,
-                "target_feature_dim": 128,
-                "description": "高準確率配置1 - 深度KAN網絡"
-            },
-            
-            "high_accuracy_2": {
-                "config_type": "high_capacity", 
-                "feature_method": "ica",
-                "learning_rate": 8e-5,
-                "num_epochs": 250,
-                "sparsity_lambda": 5e-6,
-                "kan_grid_size": 20,
-                "kan_num_basis": 24,
-                "kan_spline_order": 5,
-                "similarity_threshold": 0.15,
-                "max_edges_per_node": 10,
-                "target_feature_dim": 256,
-                "force_node_expansion": True,
-                "description": "高準確率配置2 - 最大表達能力"
-            },
-            
-            "optimized_capacity": {
-                "config_type": "high_capacity",
-                "feature_method": "ica", 
-                "learning_rate": 3e-5,
-                "num_epochs": 400,
-                "sparsity_lambda": 2e-6,
-                "kan_grid_size": 25,
-                "kan_num_basis": 30,
-                "kan_spline_order": 6,
-                "similarity_threshold": 0.1,
-                "max_edges_per_node": 12,
-                "target_feature_dim": 512,
-                "force_node_expansion": True,
-                "description": "極致容量配置 - 追求最高準確率"
-            },
-            
-            # === 特徵方法測試組 ===
-            "ica_optimized": {
-                "config_type": "simplified",
-                "feature_method": "ica",
-                "learning_rate": 6e-5,
-                "num_epochs": 200,
-                "sparsity_lambda": 3e-5,
-                "kan_grid_size": 12,
-                "kan_num_basis": 18,
-                "ica_components": 64,
-                "description": "ICA特徵優化"
-            },
-            
-            "kpca_enhanced": {
-                "config_type": "simplified",
-                "feature_method": "kpca",
-                "learning_rate": 7e-5,
-                "num_epochs": 180,
-                "sparsity_lambda": 4e-5,
-                "kan_grid_size": 10,
-                "kan_num_basis": 16,
-                "kpca_kernel": "rbf",
-                "description": "kPCA特徵增強"
-            },
-            
-            # === 學習率敏感性測試 ===
-            "ultra_low_lr": {
-                "config_type": "high_capacity",
-                "feature_method": "ica",
-                "learning_rate": 1e-6,
-                "num_epochs": 500,
-                "sparsity_lambda": 1e-5,
-                "kan_grid_size": 18,
-                "kan_num_basis": 22,
-                "description": "超低學習率 - 穩定收斂"
-            },
-            
-            "adaptive_lr": {
-                "config_type": "high_capacity",
-                "feature_method": "ica", 
-                "learning_rate": 1e-4,
-                "num_epochs": 200,
-                "sparsity_lambda": 2e-5,
-                "kan_grid_size": 14,
-                "kan_num_basis": 18,
-                "learning_rate_decay": 0.9,
-                "min_learning_rate": 1e-7,
-                "description": "自適應學習率"
-            },
-            
-            # === 正則化強度測試 ===
-            "low_sparsity": {
-                "config_type": "high_capacity",
-                "feature_method": "ica",
-                "learning_rate": 5e-5,
-                "num_epochs": 250,
-                "sparsity_lambda": 1e-7,  # 極低稀疏性
-                "kan_grid_size": 16,
-                "kan_num_basis": 20,
-                "description": "低稀疏性約束 - 豐富連接"
-            },
-            
-            "balanced_regularization": {
-                "config_type": "simplified",
-                "feature_method": "ica",
-                "learning_rate": 4e-5,
-                "num_epochs": 220,
-                "sparsity_lambda": 8e-6,
-                "l2_lambda": 1e-4,
-                "kan_l1_lambda": 2e-3,
-                "description": "平衡正則化"
-            },
-            
-            # === 網絡結構測試 ===
-            "deep_network": {
-                "config_type": "high_capacity",
-                "feature_method": "ica",
-                "learning_rate": 3e-5,
-                "num_epochs": 350,
-                "sparsity_lambda": 5e-6,
-                "kan_grid_size": 12,
-                "kan_num_basis": 16,
-                "num_gnn_layers": 4,  # 更深的網絡
-                "hidden_dims": [512, 384, 256, 128, 64],
-                "description": "深度網絡結構"
-            },
-            
-            "wide_network": {
-                "config_type": "high_capacity",
-                "feature_method": "ica",
-                "learning_rate": 4e-5,
-                "num_epochs": 300,
-                "sparsity_lambda": 3e-6,
-                "kan_grid_size": 16,
-                "kan_num_basis": 24,
-                "target_feature_dim": 1024,  # 更寬的網絡
-                "hidden_dims": [1024, 768, 512, 256],
-                "description": "寬度網絡結構"
-            }
-        }
-        
-        # 📊 可用數據集列表
-        self.datasets = [
-            {"path": "data/RE1/RE1-OB", "name": "RE1-OB"},
-            {"path": "data/RE1/RE1-SS", "name": "RE1-SS"},
-            {"path": "data/RE1/RE1-TT", "name": "RE1-TT"}
-        ]
-        
-        # 檢查RE2是否可用
-        if os.path.exists("data/RE2"):
-            for dataset in ["RE2-OB", "RE2-SS", "RE2-TT"]:
-                path = f"data/RE2/{dataset}"
-                if os.path.exists(path):
-                    self.datasets.append({"path": path, "name": dataset})
-        
-        # 檢查RE3是否可用 
-        if os.path.exists("data/RE3"):
-            for dataset in ["RE3-OB", "RE3-SS", "RE3-TT"]:
-                path = f"data/RE3/{dataset}"
-                if os.path.exists(path):
-                    self.datasets.append({"path": path, "name": dataset})
-    
-    def load_dataset_cases(self, dataset_path, max_cases=2):
-        """載入數據集中的測試案例"""
-        case_files = []
-        
+        dataset_path = DATASETS[name]["path"]
         if not os.path.exists(dataset_path):
-            return []
+            print(f"  ⚠️ 數據集路徑不存在: {dataset_path}，跳過")
+            continue
+            
+        # 使用 glob 遞歸搜索 data.csv 文件，能處理 RE 系列的巢狀結構
+        case_files = sorted(glob.glob(os.path.join(dataset_path, "**", "data.csv"), recursive=True))
         
-        try:
-            for item in os.listdir(dataset_path):
-                item_path = os.path.join(dataset_path, item)
-                if os.path.isdir(item_path):
-                    # 檢查子目錄中是否有編號目錄
-                    for subitem in os.listdir(item_path):
-                        sub_path = os.path.join(item_path, subitem)
-                        if os.path.isdir(sub_path) and subitem.isdigit():
-                            data_file = os.path.join(sub_path, "data.csv")
-                            inject_file = os.path.join(sub_path, "inject_time.txt")
-                            if os.path.exists(data_file) and os.path.exists(inject_file):
-                                case_files.append({
-                                    "path": sub_path,
-                                    "case_name": f"{item}_{subitem}"
-                                })
-                                break
-                
-                if len(case_files) >= max_cases:
-                    break
+        if not case_files:
+            print(f"  ⚠️ 在 {name} 中未找到任何 'data.csv' 案例文件")
+            continue
             
-            return case_files
-            
-        except Exception as e:
-            print(f"❌ 載入數據集失敗 {dataset_path}: {e}")
-            return []
-    
-    def run_single_test(self, case_info, dataset_name, param_name, params):
-        """執行單個測試案例"""
-        try:
-            case_path = case_info["path"]
-            case_name = case_info["case_name"]
-            
-            # 載入數據
-            data_file = os.path.join(case_path, "data.csv")
-            data = pd.read_csv(data_file)
-            
-            # 獲取注入時間
-            inject_time_file = os.path.join(case_path, "inject_time.txt")
+        # 限制每個數據集的案例數量
+        limited_cases = case_files[:limit_per_dataset]
+        all_paths.extend([(path, name) for path in limited_cases])
+        print(f"  ✅ 從 {name} 收集了 {len(limited_cases)} 個案例")
+
+    if not all_paths:
+        print("❌ 嚴重錯誤：未找到任何可用案例！請檢查 'data' 目錄結構或下載腳本。")
+        sys.exit(1)
+        
+    return all_paths
+
+
+def get_ground_truth_from_path(case_path: str) -> List[str]:
+    """從案例路徑中提取真實根因"""
+    try:
+        # 路徑格式: .../data/RE1/RE1-OB/adservice_cpu/1/data.csv
+        parts = case_path.split(os.sep)
+        service_fault = parts[-3] # 'adservice_cpu'
+        service = service_fault.split('_')[0]
+        return [service]
+    except Exception:
+        return []
+
+def run_single_test(case_path: str, dataset_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    """運行單一案例測試並返回結果"""
+    try:
+        data = pd.read_csv(case_path)
+        inject_time_file = os.path.join(os.path.dirname(case_path), "inject_time.txt")
+        if os.path.exists(inject_time_file):
             with open(inject_time_file, 'r') as f:
                 inject_time = int(f.read().strip())
-            
-            # 檢測數據集類型
-            if "RE1" in dataset_name:
-                if "OB" in dataset_name:
-                    dataset_type = "re1-ob"
-                elif "SS" in dataset_name:
-                    dataset_type = "re1-ss"
-                elif "TT" in dataset_name:
-                    dataset_type = "re1-tt"
-                else:
-                    dataset_type = "re1-ob"
-            elif "RE2" in dataset_name:
-                if "OB" in dataset_name:
-                    dataset_type = "re2-ob"
-                elif "SS" in dataset_name:
-                    dataset_type = "re2-ss"
-                elif "TT" in dataset_name:
-                    dataset_type = "re2-tt"
-                else:
-                    dataset_type = "re2-ob"
-            else:
-                dataset_type = "re1-ob"
-            
-            # 準備測試參數
-            test_params = params.copy()
-            test_params.pop('description', None)
-            test_params['use_optimized_input'] = True
-            test_params['use_cuda'] = True
-            test_params['cpu_fallback'] = True
-            
-            # 執行測試
-            start_time = time.time()
-            result = gnn_kan_rca(
-                data=data,
-                inject_time=inject_time,
-                dataset=dataset_type,
-                **test_params
-            )
-            execution_time = time.time() - start_time
-            
-            # 解析結果
-            ranks = result.get("ranks", [])
-            
-            # 簡單計算準確率指標
-            metrics = self.calculate_simple_metrics(ranks)
-            
-            return {
-                "success": True,
-                "dataset": dataset_name,
-                "case": case_name,
-                "param_config": param_name,
-                "execution_time": execution_time,
-                "num_results": len(ranks),
-                "ranks": ranks[:5],  # 只保存前5個結果
-                "metrics": metrics
-            }
-            
-        except Exception as e:
-            return {
-                "success": False,
-                "dataset": dataset_name,
-                "case": case_info.get("case_name", "unknown"),
-                "param_config": param_name,
-                "error": str(e),
-                "execution_time": 0
-            }
-    
-    def calculate_simple_metrics(self, ranks):
-        """計算簡單的準確率指標"""
-        if not ranks:
-            return {"precision@1": 0, "precision@3": 0, "precision@5": 0, "avg@5": 0}
-        
-        # 簡化計算：假設第一個結果為正確答案
-        metrics = {}
-        
-        # precision@k
-        for k in [1, 3, 5]:
-            if len(ranks) >= k:
-                # 簡單假設：如果有結果就算成功
-                metrics[f"precision@{k}"] = 1.0 / k
-            else:
-                metrics[f"precision@{k}"] = 0
-        
-        # avg@5
-        metrics["avg@5"] = (metrics["precision@1"] + metrics["precision@3"] + metrics["precision@5"]) / 3
-        
-        return metrics
-    
-    def run_comprehensive_test(self):
-        """運行全面測試"""
-        print("🔍 尋找通用KAN參數組")
-        print("=" * 80)
-        print("🎯 目標：找出在所有數據集上都能超過BARO的參數組")
-        print()
-        
-        all_results = {}
-        
-        # 測試每個參數配置
-        for param_name, params in self.test_params.items():
-            print(f"\n🧪 測試參數配置: {param_name}")
-            print(f"📝 描述: {params['description']}")
-            print("-" * 60)
-            
-            config_results = {}
-            
-            # 在每個數據集上測試
-            for dataset_info in self.datasets:
-                dataset_path = dataset_info["path"]
-                dataset_name = dataset_info["name"]
-                
-                print(f"📊 數據集: {dataset_name}")
-                
-                # 載入測試案例
-                cases = self.load_dataset_cases(dataset_path, max_cases=2)
-                if not cases:
-                    print(f"  ⚠️ 無可用案例")
-                    continue
-                
-                dataset_results = []
-                for case_info in cases:
-                    print(f"  📁 案例: {case_info['case_name']}")
-                    
-                    result = self.run_single_test(case_info, dataset_name, param_name, params)
-                    dataset_results.append(result)
-                    
-                    if result["success"]:
-                        print(f"    ✅ 成功 - 時間: {result['execution_time']:.2f}s, Avg@5: {result['metrics']['avg@5']:.3f}")
-                    else:
-                        print(f"    ❌ 失敗: {result['error']}")
-                
-                config_results[dataset_name] = dataset_results
-            
-            all_results[param_name] = config_results
-        
-        # 分析結果並找出最佳通用參數
-        best_universal_config = self.analyze_universal_performance(all_results)
-        
-        # 保存結果
-        self.save_results(all_results, best_universal_config)
-        
-        return best_universal_config
-    
-    def analyze_universal_performance(self, all_results):
-        """分析通用性能，找出最佳參數組"""
-        print("\n📊 通用性能分析")
-        print("=" * 80)
-        
-        config_scores = {}
-        
-        for param_name, datasets_results in all_results.items():
-            print(f"\n🧪 {param_name}:")
-            
-            # 計算每個數據集的平均性能
-            dataset_avg_scores = []
-            all_success = True
-            
-            for dataset_name, cases_results in datasets_results.items():
-                successful_cases = [r for r in cases_results if r["success"]]
-                
-                if not successful_cases:
-                    print(f"  📊 {dataset_name}: ❌ 無成功案例")
-                    all_success = False
-                    continue
-                
-                avg_score = np.mean([r["metrics"]["avg@5"] for r in successful_cases])
-                avg_time = np.mean([r["execution_time"] for r in successful_cases])
-                success_rate = len(successful_cases) / len(cases_results) * 100
-                
-                dataset_avg_scores.append(avg_score)
-                print(f"  📊 {dataset_name}: Avg@5={avg_score:.3f}, 時間={avg_time:.2f}s, 成功率={success_rate:.1f}%")
-            
-            # 計算總體評分
-            if dataset_avg_scores and all_success:
-                # 通用性評分：所有數據集平均分數 + 穩定性加分
-                universal_score = np.mean(dataset_avg_scores)
-                stability_bonus = 1.0 - np.std(dataset_avg_scores)  # 穩定性加分
-                total_score = universal_score + stability_bonus * 0.1
-                
-                config_scores[param_name] = {
-                    "universal_score": universal_score,
-                    "stability": stability_bonus,
-                    "total_score": total_score,
-                    "all_datasets_success": True
-                }
-                
-                print(f"  🎯 通用評分: {universal_score:.3f}")
-                print(f"  📊 穩定性: {stability_bonus:.3f}")
-                print(f"  🏆 總評分: {total_score:.3f}")
-            else:
-                config_scores[param_name] = {
-                    "universal_score": 0,
-                    "stability": 0,
-                    "total_score": 0,
-                    "all_datasets_success": False
-                }
-                print(f"  ❌ 無法在所有數據集上成功")
-        
-        # 找出最佳配置
-        valid_configs = {k: v for k, v in config_scores.items() if v["all_datasets_success"]}
-        
-        if valid_configs:
-            best_config = max(valid_configs.items(), key=lambda x: x[1]["total_score"])
-            
-            print(f"\n🏆 推薦通用參數組: {best_config[0]}")
-            print(f"📊 通用評分: {best_config[1]['universal_score']:.3f}")
-            print(f"📈 穩定性: {best_config[1]['stability']:.3f}")
-            print(f"🎯 總評分: {best_config[1]['total_score']:.3f}")
-            
-            # 輸出推薦參數
-            recommended_params = self.test_params[best_config[0]].copy()
-            recommended_params.pop('description', None)
-            
-            print(f"\n🔧 推薦參數配置:")
-            for key, value in recommended_params.items():
-                print(f"  {key}: {value}")
-            
-            return {
-                "best_config_name": best_config[0],
-                "best_params": recommended_params,
-                "performance": best_config[1]
-            }
         else:
-            print("\n❌ 未找到在所有數據集上都成功的參數組")
-            return None
-    
-    def save_results(self, all_results, best_config):
-        """保存測試結果"""
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            inject_time = len(data) // 2
+            
+        # 運行 GNN-KAN
+        gnn_kan_result = gnn_kan_rca(
+            data=data,
+            inject_time=inject_time,
+            dataset=dataset_name,
+            use_cuda=True,
+            cpu_fallback=True,
+            **params
+        )
         
-        # 保存詳細結果
-        results_file = os.path.join(self.output_dir, f"universal_kan_test_{timestamp}.json")
-        with open(results_file, 'w', encoding='utf-8') as f:
-            json.dump({
-                "timestamp": timestamp,
-                "all_results": all_results,
-                "best_config": best_config
-            }, f, indent=2, ensure_ascii=False, default=str)
+        # 運行 BARO 作為基準
+        baro_result = baro(data, inject_time, dataset_name)
         
-        # 保存推薦配置
-        if best_config:
-            config_file = os.path.join(self.output_dir, "recommended_universal_config.json")
-            with open(config_file, 'w', encoding='utf-8') as f:
-                json.dump(best_config, f, indent=2, ensure_ascii=False)
+        # 計算分數
+        ground_truth = get_ground_truth_from_path(case_path)
+        evaluator = Evaluator(ground_truth)
         
-        print(f"\n💾 結果已保存: {results_file}")
-        if best_config:
-            print(f"💾 推薦配置已保存: {config_file}")
+        kan_score = evaluator.eval(gnn_kan_result.get("ranks", [])).get('avg@5', 0.0)
+        baro_score = evaluator.eval(baro_result.get("ranks", [])).get('avg@5', 0.0)
+        
+        return {
+            "success": True,
+            "kan_score": kan_score,
+            "baro_score": baro_score,
+            "kan_beats_baro": kan_score > baro_score,
+            "error": None
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "kan_score": 0.0,
+            "baro_score": 0.0,
+            "kan_beats_baro": False,
+            "error": str(e)
+        }
 
+def analyze_and_save_results(all_results: Dict, best_config: Dict):
+    """分析並保存最終結果"""
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # 1. 保存詳細結果
+    detailed_file = os.path.join(OUTPUT_DIR, f"detailed_results_{timestamp}.json")
+    try:
+        with open(detailed_file, 'w') as f:
+            json.dump(all_results, f, indent=2)
+        print(f"\n📄 詳細結果已保存至: {detailed_file}")
+    except Exception as e:
+        print(f"❌ 保存詳細結果失敗: {e}")
 
-def get_data_paths(dataset_name: str, base_path: str = "data", limit: int = None) -> List[str]:
-    """獲取數據集中的所有數據文件路徑 - 支持RE系列數據集結構"""
-    dataset_path = os.path.join(base_path, dataset_name.replace('-', '/'))
+    # 2. 生成並保存總結報告
+    report = []
+    report.append("="*80)
+    report.append("🏆 通用KAN參數尋找報告 🏆")
+    report.append("="*80)
+    report.append(f"📅 日期: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
-    # 檢查數據集是否存在
-    if not os.path.exists(dataset_path):
-        print(f"⚠️ 數據集路徑不存在: {dataset_path}")
-        return []
-    
-    # 根據數據集類型使用不同的搜索模式
-    data_paths = []
-    
-    # RE系列數據集有特定的結構：<base_path>/RE1/RE1-OB/service_fault/case_id/data.csv
-    if dataset_name.startswith("re"):
-        # RE系列：service_fault/case_id/data.csv
-        search_pattern = os.path.join(dataset_path, "*", "*", "data.csv")
-        data_paths = list(glob.glob(search_pattern))
+    if best_config:
+        report.append("\n🎉 找到最佳通用參數組! 🎉")
+        report.append(f"配置名稱: {best_config['name']}")
+        report.append(f"平均分數 (Avg@5): {best_config['avg_score']:.3f}")
+        report.append(f"擊敗BARO的比例: {best_config['win_rate']:.1%}")
+        report.append("\n--- 參數詳情 ---")
+        best_params = best_config['params'].copy()
+        description = best_params.pop('description', 'N/A')
+        report.append(f"描述: {description}")
+        report.append(json.dumps(best_params, indent=2))
+        report.append("---")
     else:
-        # 其他數據集：遞歸搜索所有data.csv
-        search_pattern = os.path.join(dataset_path, "**", "data.csv")
-        data_paths = list(glob.glob(search_pattern, recursive=True))
+        report.append("\n❌ 未能找到在所有數據集上都表現優於BARO的通用參數組。")
+        report.append("建議調整 TEST_PARAMS 中的參數範圍或增加測試案例數量。")
 
-    # 如果沒找到data.csv，嘗試其他常見文件名
-    if not data_paths:
-        # 添加其他常見文件名
-        common_file_names = ["data.csv", "data.csv.gz", "data.csv.bz2"]
-        for common_file in common_file_names:
-            search_pattern = os.path.join(dataset_path, "**", common_file)
-            data_paths = list(glob.glob(search_pattern, recursive=True))
+    report.append("\n--- 各配置詳細表現 ---")
+    for name, data in all_results.items():
+        report.append(f"\n🔧 配置: {name}")
+        report.append(f"  - 平均分數 (Avg@5): {data['avg_score']:.3f}")
+        report.append(f"  - 擊敗BARO比例: {data['win_rate']:.1%}")
+        report.append(f"  - 總案例數: {data['total_cases']}, 成功案例數: {data['successful_cases']}")
+        report.append(f"  - 描述: {TEST_PARAMS.get(name, {}).get('description')}")
 
-    # 限制數量
-    if limit and len(data_paths) > limit:
-        data_paths = data_paths[:limit]
-
-    return data_paths
-
+    report.append("\n" + "="*80)
+    
+    report_text = "\n".join(report)
+    print("\n" + report_text)
+    
+    report_file = os.path.join(OUTPUT_DIR, f"summary_report_{timestamp}.txt")
+    with open(report_file, 'w') as f:
+        f.write(report_text)
+    print(f"📄 總結報告已保存至: {report_file}")
+    
+    # 3. 保存最佳參數到獨立文件
+    if best_config:
+        best_params_file = os.path.join(OUTPUT_DIR, "best_universal_params.json")
+        with open(best_params_file, 'w') as f:
+            dump_json(best_config['params'], best_params_file, indent=2)
+        print(f"✅ 最佳參數已保存至: {best_params_file}")
 
 def main():
-    """主函數"""
+    """主執行函式"""
+    # --- 動態添加額外的測試參數 ---
+    # 這樣做可以避免直接修改複雜的字典結構，提高修改成功率
+    additional_params = {
+        "kpca_focused": {
+            "config_type": "simplified", "feature_method": "kpca", "kpca_kernel": "rbf",
+            "learning_rate": 9e-5, "num_epochs": 200, "sparsity_lambda": 1e-4,
+            "description": "特徵提取測試 - kPCA(rbf)"
+        },
+        "stable_convergence": {
+            "config_type": "high_capacity", "feature_method": "ica", "learning_rate": 1e-6,
+            "num_epochs": 500, "sparsity_lambda": 1e-5,
+            "description": "學習率測試 - 超低學習率穩定收斂"
+        },
+        "deep_network": {
+            "config_type": "high_capacity", "feature_method": "ica", "learning_rate": 4e-5,
+            "num_epochs": 350, "sparsity_lambda": 5e-6, "num_gnn_layers": 4,
+            "hidden_dims": [256, 128, 64, 32], "description": "網絡結構測試 - 更深的GNN網絡"
+        },
+        "dense_graph": {
+            "config_type": "high_capacity", "feature_method": "ica", "learning_rate": 8e-5,
+            "num_epochs": 250, "sparsity_lambda": 1e-6, "similarity_threshold": 0.1,
+            "max_edges_per_node": 15, "description": "圖構建測試 - 更稠密的圖"
+        }
+    }
+    TEST_PARAMS.update(additional_params)
+    # --- 參數添加完成 ---
+
+    parser = argparse.ArgumentParser(description="尋找通用GNN-KAN參數")
+    parser.add_argument(
+        "--datasets", nargs="+", default=["RE1-OB", "RE2-OB", "RE3-OB", "RE1-SS", "RE2-SS"],
+        choices=list(DATASETS.keys()), help="要測試的數據集列表"
+    )
+    parser.add_argument("--limit", type=int, default=10, help="每個數據集使用的案例數量上限")
+    args = parser.parse_args()
+    
+    print("="*50)
     print("🔍 尋找通用KAN參數組")
-    print("目標：在RE1, RE2, RE3所有資料集中準確率都高於BARO")
-    print("=" * 80)
+    print("="*50)
+    print(f"🎯 目標：在 {args.datasets} 中找到最佳通用參數")
+    print(f"⏱️  日期：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
-    finder = UniversalKANParamFinder()
+    # 1. 準備數據：檢查並下載數據集，然後收集所有案例路徑
+    check_and_download_datasets(args.datasets)
+    all_case_paths = get_all_case_paths(args.datasets, args.limit)
     
-    try:
-        best_config = finder.run_comprehensive_test()
+    # 2. 遍歷所有參數配置進行測試
+    all_results = {}
+    
+    for param_name, params in TEST_PARAMS.items():
+        print(f"\n--- 測試配置: {param_name} ---")
+        print(f"    描述: {params.get('description', 'N/A')}")
         
-        if best_config:
-            print("\n✅ 通用參數組尋找完成！")
-            print(f"🏆 推薦配置: {best_config['best_config_name']}")
-            print(f"📁 結果保存在: {finder.output_dir}")
-            print()
-            print("🔄 下一步流程:")
-            print("  1. 使用推薦參數組運行完整比較測試")
-            print("  2. python gnn_kan_vs_baro_comparison.py --config recommended")
-        else:
-            print("\n❌ 未找到合適的通用參數組")
-            print("建議：調整參數範圍或測試更多配置")
+        case_results = []
         
-    except Exception as e:
-        print(f"❌ 測試失敗: {e}")
-        import traceback
-        traceback.print_exc()
-        return 1
+        progress_bar = tqdm(all_case_paths, desc=f"測試 {param_name}")
+        for case_path, dataset_name in progress_bar:
+            result = run_single_test(case_path, dataset_name, params)
+            if result["success"]:
+                case_results.append(result)
+            else:
+                print(f"⚠️ 案例 {os.path.basename(os.path.dirname(case_path))} 失敗: {result['error']}")
+
+        # 3. 統計當前參數配置的表現
+        total_cases = len(case_results)
+        if total_cases == 0:
+            print("  ❌ 此配置下沒有成功運行的案例，跳過。")
+            continue
+            
+        successful_cases = len([r for r in case_results if r['success']])
+        avg_kan_score = np.mean([r['kan_score'] for r in case_results])
+        win_count = sum(r['kan_beats_baro'] for r in case_results)
+        win_rate = win_count / total_cases
+        
+        all_results[param_name] = {
+            "avg_score": avg_kan_score,
+            "win_rate": win_rate,
+            "total_cases": len(all_case_paths),
+            "successful_cases": successful_cases,
+            "details": case_results
+        }
+        
+        print(f"  📊 結果: 平均分數={avg_kan_score:.3f}, 擊敗BARO比例={win_rate:.1%}")
+
+    # 4. 分析所有配置的結果，找出最佳通用參數
+    best_config = None
+    best_score = -1.0
     
-    return 0
+    for name, data in all_results.items():
+        # 標準：勝率超過60% 且 平均分最高
+        if data['win_rate'] > 0.6 and data['avg_score'] > best_score:
+            best_score = data['avg_score']
+            best_config = {
+                "name": name,
+                "params": TEST_PARAMS[name],
+                "avg_score": data['avg_score'],
+                "win_rate": data['win_rate']
+            }
+            
+    # 5. 保存報告和最佳參數
+    analyze_and_save_results(all_results, best_config)
 
 
 if __name__ == "__main__":
-    sys.exit(main()) 
+    main() 

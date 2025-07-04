@@ -20,45 +20,6 @@ echo "🔍 檢查Python環境..."
 python3 --version
 echo ""
 
-# 檢查數據集
-echo "🔍 檢查可用數據集..."
-datasets_found=0
-
-if [ -d "data/RE1" ]; then
-    echo "✅ 找到RE1數據集"
-    datasets_found=$((datasets_found+1))
-    for subdir in RE1-OB RE1-SS RE1-TT; do
-        if [ -d "data/RE1/$subdir" ]; then
-            case_count=$(find "data/RE1/$subdir" -maxdepth 2 -type d -name "[0-9]*" | wc -l)
-            echo "  📁 $subdir: $case_count 案例"
-        fi
-    done
-fi
-
-if [ -d "data/RE2" ]; then
-    echo "✅ 找到RE2數據集"
-    datasets_found=$((datasets_found+1))
-    for subdir in RE2-OB RE2-SS RE2-TT; do
-        if [ -d "data/RE2/$subdir" ]; then
-            case_count=$(find "data/RE2/$subdir" -maxdepth 2 -type d -name "[0-9]*" | wc -l)
-            echo "  📁 $subdir: $case_count 案例"
-        fi
-    done
-fi
-
-if [ -d "data/RE3" ]; then
-    echo "✅ 找到RE3數據集"
-    datasets_found=$((datasets_found+1))
-fi
-
-if [ $datasets_found -eq 0 ]; then
-    echo "❌ 未找到任何數據集"
-    exit 1
-fi
-
-echo "📊 總共找到 $datasets_found 個數據集群組"
-echo ""
-
 # 創建結果目錄
 mkdir -p universal_kan_results
 echo "📁 結果將保存到: universal_kan_results/"
