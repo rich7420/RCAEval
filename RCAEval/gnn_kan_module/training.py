@@ -271,8 +271,6 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
     
     training_history = {'loss': [], 'adj_min': [], 'adj_max': [], 'adj_mean': []}
     
-    # 創建目標鄰接矩陣（用於監督學習）
-    # 在真實場景中，這應該基於先驗知識或日誌/追蹤數據生成
     # 這裡我們使用一個簡化的自監督目標
     with torch.no_grad():
         true_adj = torch.zeros(node_features.size(0), node_features.size(0), device=device)
@@ -440,8 +438,11 @@ class AdvancedGNNKANTrainer:
             valid_edge_index = edge_index[:, valid_edges_mask]
             
             if valid_edge_index.size(1) > 0:
-                target_adj[valid_edge_index[0], valid_edge_index[1]] = 1.0
-                target_adj = (target_adj + target_adj.t()) / 2.0
+                src = valid_edge_index[0]
+                dst = valid_edge_index[1]
+                ones = torch.ones_like(src, dtype=target_adj.dtype)
+                target_adj.index_put_((src, dst), ones, accumulate=True)
+                target_adj.index_put_((dst, src), ones, accumulate=True)
             else:
                 print(f"⚠️ {phase_name}: 所有邊索引都超出範圍，使用單位矩陣")
                 target_adj = torch.eye(num_nodes, device=device) * 0.1
@@ -517,7 +518,10 @@ def create_adaptive_targets(node_features, edge_index, method='similarity'):
         # 默認：基於邊索引
         target_adj = torch.zeros(num_nodes, num_nodes, device=device)
         if edge_index.size(1) > 0:
-            target_adj[edge_index[0], edge_index[1]] = 1.0
-            target_adj = (target_adj + target_adj.t()) / 2.0
+            src = edge_index[0]
+            dst = edge_index[1]
+            ones = torch.ones_like(src, dtype=target_adj.dtype)
+            target_adj.index_put_((src, dst), ones, accumulate=True)
+            target_adj.index_put_((dst, src), ones, accumulate=True)
     
     return target_adj

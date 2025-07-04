@@ -22,6 +22,7 @@ from typing import Dict, List, Any
 
 import numpy as np
 import pandas as pd
+import glob
 
 # 添加項目路徑
 sys.path.insert(0, '.')
@@ -540,6 +541,43 @@ class UniversalKANParamFinder:
         print(f"\n💾 結果已保存: {results_file}")
         if best_config:
             print(f"💾 推薦配置已保存: {config_file}")
+
+
+def get_data_paths(dataset_name: str, base_path: str = "data", limit: int = None) -> List[str]:
+    """獲取數據集中的所有數據文件路徑 - 支持RE系列數據集結構"""
+    dataset_path = os.path.join(base_path, dataset_name.replace('-', '/'))
+    
+    # 檢查數據集是否存在
+    if not os.path.exists(dataset_path):
+        print(f"⚠️ 數據集路徑不存在: {dataset_path}")
+        return []
+    
+    # 根據數據集類型使用不同的搜索模式
+    data_paths = []
+    
+    # RE系列數據集有特定的結構：<base_path>/RE1/RE1-OB/service_fault/case_id/data.csv
+    if dataset_name.startswith("re"):
+        # RE系列：service_fault/case_id/data.csv
+        search_pattern = os.path.join(dataset_path, "*", "*", "data.csv")
+        data_paths = list(glob.glob(search_pattern))
+    else:
+        # 其他數據集：遞歸搜索所有data.csv
+        search_pattern = os.path.join(dataset_path, "**", "data.csv")
+        data_paths = list(glob.glob(search_pattern, recursive=True))
+
+    # 如果沒找到data.csv，嘗試其他常見文件名
+    if not data_paths:
+        # 添加其他常見文件名
+        common_file_names = ["data.csv", "data.csv.gz", "data.csv.bz2"]
+        for common_file in common_file_names:
+            search_pattern = os.path.join(dataset_path, "**", common_file)
+            data_paths = list(glob.glob(search_pattern, recursive=True))
+
+    # 限制數量
+    if limit and len(data_paths) > limit:
+        data_paths = data_paths[:limit]
+
+    return data_paths
 
 
 def main():
