@@ -269,7 +269,7 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
     print(f"🚀 Starting GNN-KAN training on {device}...")
     print(f"   Config: lr={config.learning_rate}, epochs={config.num_epochs}, batch_size={config.batch_size}, sparsity_lambda={sparsity_lambda}")
     
-    training_history = {'loss': [], 'adj_min': [], 'adj_max': [], 'adj_mean': []}
+    training_history = {'loss': [], 'adj_min': [], 'adj_max': [], 'adj_mean': [], 'sparsity_01': [], 'sparsity_03': [], 'sparsity_05': []}
     
     # 這裡我們使用一個簡化的自監督目標
     with torch.no_grad():
@@ -289,58 +289,56 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
         pos_weight = torch.tensor([float(true_adj.shape[0] * true_adj.shape[0] - true_adj.sum()) / true_adj.sum()])
         recon_loss = F.binary_cross_entropy_with_logits(pred_adj, true_adj, pos_weight=pos_weight.to(device))
         
-        # 2. 節點嵌入損失 (Embedding Loss) - 可選，使相連節點更接近
-        # 這裡簡化，不計算嵌入損失
-        
-        # 3. KAN 正則化損失
+        # 2. KAN 正則化損失 (應保留)
         kan_reg_loss = 0
         if hasattr(model, 'get_reg_loss'):
-            kan_reg_loss = model.get_reg_loss()
+            # 確保 kan_reg_loss 是一個純量
+            reg_loss = model.get_reg_loss()
+            if isinstance(reg_loss, torch.Tensor):
+                kan_reg_loss = reg_loss
+            else: # 假設它是一個列表或元組
+                kan_reg_loss = sum(reg_loss)
 
-        # 4. 稀疏性損失 (Sparsity Loss) - 鼓勵稀疏圖
-        if sparsity_lambda is not None and sparsity_lambda > 0:
-            # 🔧 修復：使用clone()避免潛在的in-place問題
-            sparsity_loss = sparsity_lambda * torch.norm(pred_adj.clone(), 1)
+        # 3. 稀疏性損失 (Sparsity Loss)
+        if sparsity_lambda > 0:
+            adj_probs_for_loss = torch.sigmoid(pred_adj)
+            sparsity_loss = torch.mean(adj_probs_for_loss)
         else:
-            # 🔧 修復：不需要梯度，避免記憶體共享問題
-            sparsity_loss = torch.tensor(0.0, device=device)
-
+            sparsity_loss = torch.tensor(0.0, device=device) # 如果 lambda 為 0，則不計算
+        
         # 總損失
-        loss = recon_loss + kan_reg_loss + sparsity_loss
+        loss = recon_loss + kan_reg_loss + (sparsity_lambda * sparsity_loss)
         
+        # 反向傳播
         loss.backward()
-        
-        # 梯度裁剪
-        if config.gradient_clip_norm > 0:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), config.gradient_clip_norm)
-            
         optimizer.step()
         
-        # 更新學習率
-        scheduler.step(loss)
-        
+        # 記錄和打印
         training_history['loss'].append(loss.item())
+        
+        # 計算鄰接矩陣統計
+        with torch.no_grad():
+            adj_probs = torch.sigmoid(pred_adj)
+            adj_min = adj_probs.min().item()
+            adj_max = adj_probs.max().item()
+            adj_mean = adj_probs.mean().item()
+            
+            sparsity_01 = (adj_probs < 0.1).float().mean().item()
+            sparsity_03 = (adj_probs < 0.3).float().mean().item()
+            sparsity_05 = (adj_probs < 0.5).float().mean().item()
+        
+        training_history['adj_min'].append(adj_min)
+        training_history['adj_max'].append(adj_max)
+        training_history['adj_mean'].append(adj_mean)
+        training_history['sparsity_01'].append(sparsity_01)
+        training_history['sparsity_03'].append(sparsity_03)
+        training_history['sparsity_05'].append(sparsity_05)
 
-        # 監控與調試: 定期打印鄰接矩陣統計信息
-        if (epoch + 1) % 10 == 0:
-            with torch.no_grad():
-                # 使用 sigmoid 將輸出轉換為 (0, 1) 區間的概率值
-                adj_probs = torch.sigmoid(pred_adj)
-                adj_min = adj_probs.min().item()
-                adj_max = adj_probs.max().item()
-                adj_mean = adj_probs.mean().item()
-                
-                # 計算稀疏度指標：值低於0.1的元素比例
-                sparsity_ratio = (adj_probs < 0.1).sum().item() / adj_probs.numel()
-                
-                training_history['adj_min'].append(adj_min)
-                training_history['adj_max'].append(adj_max)
-                training_history['adj_mean'].append(adj_mean)
-                
-                print(f"Epoch [{epoch+1}/{config.num_epochs}], Loss: {loss.item():.6f}, "
-                      f"Recon: {recon_loss.item():.4f}, Sparsity: {sparsity_loss.item():.6f} | "
-                      f"Adj Probs(min/max/mean): {adj_min:.4f}/{adj_max:.4f}/{adj_mean:.4f} | "
-                      f"Graph Sparsity: {sparsity_ratio:.4f}")
+        if (epoch + 1) % 10 == 0 or epoch == 0:
+            # 打印時，顯示未加權的 sparsity_loss，更能反映真實的平均概率
+            print(f"Epoch [{epoch+1}/{config.num_epochs}], Loss: {loss.item():.6f}, Recon: {recon_loss.item():.4f}, Sparsity: {sparsity_loss.item():.6f} | "
+                  f"Adj Probs(min/max/mean): {adj_min:.4f}/{adj_max:.4f}/{adj_mean:.4f} | "
+                  f"Graph Sparsity: {sparsity_03:.4f} (0.1:{sparsity_01:.3f}, 0.3:{sparsity_03:.3f}, 0.5:{sparsity_05:.3f})")
 
     print("✅ Training finished.")
     return model, training_history

@@ -71,7 +71,7 @@ class GNNKANModel(nn.Module):
         # KAN 解碼器 - 用於計算鄰接矩陣
         self.graph_decoder = nn.Sequential(
             nn.Linear(config.output_dim * 2, config.output_dim),
-            nn.ReLU(),
+            # nn.LeakyReLU(negative_slope=0.01),
             nn.Dropout(config.dropout),
             nn.Linear(config.output_dim, 1)
         )
@@ -146,8 +146,8 @@ class GNNKANModel(nn.Module):
             embeddings[j_indices]
         ], dim=1)
         
-        # 批量通過 KAN 解碼器
-        scores = torch.sigmoid(self.graph_decoder(edge_features))
+        # 批量通過 KAN 解碼器，直接返回 logits
+        scores = self.graph_decoder(edge_features)
         
         # 重塑為鄰接矩陣
         adj_scores = scores.view(num_nodes, num_nodes)
@@ -511,7 +511,7 @@ class SimplifiedGNNKAN(nn.Module):
         # 圖解碼器
         self.graph_decoder = nn.Sequential(
             nn.Linear(output_dim * 2, output_dim),
-            nn.ReLU(),
+            # nn.LeakyReLU(negative_slope=0.01),
             nn.Dropout(dropout),
             nn.Linear(output_dim, 1)
         )
@@ -630,7 +630,7 @@ class SimplifiedGNNKAN(nn.Module):
             # 計算節點i與所有其他節點的連接分數
             i_embedding = embeddings[i].unsqueeze(0).expand(num_nodes, -1)
             edge_features = torch.cat([i_embedding, embeddings], dim=1)
-            scores = torch.sigmoid(self.graph_decoder(edge_features)).squeeze()
+            scores = self.graph_decoder(edge_features).squeeze()
             adj_scores[i] = scores
         
         return adj_scores

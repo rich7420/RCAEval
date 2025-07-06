@@ -244,6 +244,44 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
         sparsity_lambda=sparsity_lambda  # 傳遞稀疏性參數
     )
     
+    # 提取訓練過程中的稀疏性信息
+    training_info = {}
+    if training_history and 'adj_min' in training_history and training_history['adj_min']:
+        # 獲取最終的鄰接矩陣統計
+        final_adj_min = training_history['adj_min'][-1] if training_history['adj_min'] else 0.0
+        final_adj_max = training_history['adj_max'][-1] if training_history['adj_max'] else 0.0
+        final_adj_mean = training_history['adj_mean'][-1] if training_history['adj_mean'] else 0.0
+        
+        # 從訓練歷史中獲取最終的稀疏性指標
+        final_sparsity_01 = training_history['sparsity_01'][-1] if training_history['sparsity_01'] else 0.0
+        final_sparsity_03 = training_history['sparsity_03'][-1] if training_history['sparsity_03'] else 0.0
+        final_sparsity_05 = training_history['sparsity_05'][-1] if training_history['sparsity_05'] else 0.0
+        
+        training_info = {
+            'final_graph_sparsity': final_sparsity_03,  # 使用 0.3 作為主要閾值
+            'final_adj_probs': {
+                'min': final_adj_min,
+                'max': final_adj_max,
+                'mean': final_adj_mean
+            },
+            'sparsity_metrics': {
+                '0.1': final_sparsity_01,
+                '0.3': final_sparsity_03,
+                '0.5': final_sparsity_05
+            },
+            'training_epochs': len(training_history.get('loss', [])),
+            'final_loss': training_history.get('loss', [0.0])[-1] if training_history.get('loss') else 0.0
+        }
+    else:
+        # 如果沒有訓練歷史，設置默認值
+        training_info = {
+            'final_graph_sparsity': 0.0,
+            'final_adj_probs': {'min': 0.0, 'max': 0.0, 'mean': 0.0},
+            'sparsity_metrics': {'0.1': 0.0, '0.3': 0.0, '0.5': 0.0},
+            'training_epochs': 0,
+            'final_loss': 0.0
+        }
+    
     # 5. 獲取最終的鄰接矩陣
     model.eval()
     
@@ -511,7 +549,8 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
         
         # 🎯 可解釋性相關指標
         'interpretability_score': 0.4,  # 基礎KAN可解釋性
-        'feature_importance': list(final_scores.values()) if isinstance(final_scores, dict) else []
+        'feature_importance': list(final_scores.values()) if isinstance(final_scores, dict) else [],
+        'training_info': training_info
     }
     
     print(f"✓ 模型統計: {total_params:,}參數, {sparsity_info['sparsity_ratio']:.3f}稀疏性, {memory_usage:.1f}MB記憶體")
@@ -534,7 +573,8 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
             'feature_method': feature_method,
             'use_optimized_input': use_optimized_input,
             'extra_kwargs': kwargs
-        }
+        },
+        'training_info': training_info  # 🔥 新增：訓練過程中的稀疏性信息
     }
 
 
