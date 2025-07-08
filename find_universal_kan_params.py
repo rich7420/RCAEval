@@ -241,14 +241,32 @@ def get_all_case_paths(dataset_names: List[str], limit_per_dataset: int) -> List
 
 
 def get_ground_truth_from_path(case_path: str) -> List[str]:
-    """從案例路徑中提取真實根因"""
+    """從案例路徑中提取真實根因 (服務名稱)
+
+    規則：
+    1. 從 data.csv 所在目錄往上走，尋找第一個 *非純數字* 目錄（即 fault 目錄）。
+    2. 該目錄格式通常為 "<service>_<metric>"，例如
+       - productcatalogservice_cpu
+       - ts-auth-service_mem
+    3. 取 "_" 之前的部分作為服務名稱。
+    若解析失敗，回傳空列表。"""
     try:
         parts = case_path.split(os.sep)
-        service_fault = parts[-2]
-        service = service_fault.split('_')[0]
-        return [service]
+        # 從倒數第二層開始（倒數第一層是 data.csv 所在的數字目錄）
+        for part in reversed(parts[:-1]):
+            # 跳過純數字目錄（案例序號）
+            if part.isdigit():
+                continue
+            # 找到包含 "_" 的 fault 目錄
+            if "_" in part:
+                service = part.split("_")[0]
+                if service:  # 非空
+                    return [service]
+            # 若沒有 "_"，但也不是純數字，直接用整個目錄名
+            return [part]
+        return []
     except Exception:
-            return []
+        return []
     
 def run_single_test(case_path: str, dataset_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
     """執行單一案例並回傳結果字典"""
@@ -384,8 +402,7 @@ def analyze_and_save_results(all_results: Dict, best_config: Dict):
     # 3. 保存最佳參數到獨立文件
     if best_config:
         best_params_file = os.path.join(OUTPUT_DIR, "best_universal_params.json")
-        with open(best_params_file, 'w') as f:
-            dump_json(best_config['params'], best_params_file, indent=2)
+        dump_json(best_params_file, best_config['params'])
         print(f"✅ 最佳參數已保存至: {best_params_file}")
 
 def main():

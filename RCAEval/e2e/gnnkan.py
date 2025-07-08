@@ -333,8 +333,10 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
                         for service_key, score in anomaly_scores.items():
                             if service_key in node_name or node_name in service_key:
                                 # 增強異常服務的連接權重
-                                enhanced_adj[i, :] *= (1 + score * 0.5)
-                                enhanced_adj[:, i] *= (1 + score * 0.5)
+                                factor = (1 + score * 0.5)
+                                # ⚠️ GPU安全：避免來源與目的切片重疊造成 indexPut 錯誤
+                                enhanced_adj[i, :] = enhanced_adj[i, :].clone() * factor
+                                enhanced_adj[:, i] = enhanced_adj[:, i].clone() * factor
                     
                     print(f"✓ 故障時間增強完成，檢測到 {len(anomaly_scores)} 個異常指標")
                 
