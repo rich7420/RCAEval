@@ -85,7 +85,7 @@ TEST_PARAMS = {
         "graph_head": "pagerank", "config_type": "simplified", "feature_method": "ica",
         "learning_rate": 8e-5, "num_epochs": 200,
         "sparsity_lambda": 1e-2, "similarity_threshold": 0.4,
-        "max_edges_per_node": 10,
+                "max_edges_per_node": 10,
         "description": "中度稀疏 - 兼顧準確率與稀疏度"
     },
     # 3. 高稀疏
@@ -266,7 +266,7 @@ def get_ground_truth_from_path(case_path: str) -> List[str]:
             return [part]
         return []
     except Exception:
-        return []
+            return []
     
 def run_single_test(case_path: str, dataset_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
     """執行單一案例並回傳結果字典"""
@@ -283,8 +283,8 @@ def run_single_test(case_path: str, dataset_name: str, params: Dict[str, Any]) -
 
         # 執行 GNN-KAN 與 BARO
         gnn_kan_result = gnn_kan_rca(
-                data=data,
-                inject_time=inject_time,
+            data=data,
+            inject_time=inject_time,
             dataset=dataset_name,
             use_cuda=True,
             cpu_fallback=True,
@@ -310,7 +310,7 @@ def run_single_test(case_path: str, dataset_name: str, params: Dict[str, Any]) -
         final_sparsity = training_info.get("final_graph_sparsity", 0.0)
         final_adj_probs = training_info.get("final_adj_probs", {"min": 0.0, "max": 0.0, "mean": 0.0})
         sparsity_metrics = training_info.get("sparsity_metrics", {"0.1": 0.0, "0.3": 0.0, "0.5": 0.0})
-        
+            
         return {
             "success": True,
             "kan_score": kan_score,
@@ -321,6 +321,7 @@ def run_single_test(case_path: str, dataset_name: str, params: Dict[str, Any]) -
             "adj_probs": final_adj_probs,
             "sparsity_metrics": sparsity_metrics,
         }
+            
     except Exception as e:
         return {
             "success": False,

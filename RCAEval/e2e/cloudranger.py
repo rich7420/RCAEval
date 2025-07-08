@@ -132,7 +132,8 @@ def relaToRank(rela, access, rankPaces, frontend, beta=0.1, rho=0.3, print_trace
                     in_inds.append(j)
             # Normalize wrt in nodes
             if np.sum(M[k, i, in_inds]) > 0:
-                M[k, i, in_inds] /= np.sum(M[k, i, in_inds])
+                # GPU Safety: Replace in-place division
+                M[k, i, in_inds] = M[k, i, in_inds] / np.sum(M[k, i, in_inds])
     # Add self edges
     for k in range(n):
         for i in range(n):
@@ -144,7 +145,8 @@ def relaToRank(rela, access, rankPaces, frontend, beta=0.1, rho=0.3, print_trace
     for k in range(n):
         for i in range(n):
             if np.sum(M[k, i]) > 0:
-                M[k, i] /= np.sum(M[k, i])
+                # GPU Safety: Replace in-place division
+                M[k, i] = M[k, i] / np.sum(M[k, i])
 
     label = [i for i in range(1, n + 1)]
     l = secondorder_randomwalk(M, rankPaces, frontend, label, print_trace=print_trace)

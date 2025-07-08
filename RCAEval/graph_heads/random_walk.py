@@ -172,7 +172,8 @@ class RandomWalkScorer(Scorer):
 
             total_weight = matrix[node].sum()
             if total_weight > 0:
-                matrix[node] /= total_weight
+                # GPU Safety: Replace in-place division with a safe clone operation
+                matrix[node] = matrix[node].clone() / total_weight
             else:
                 matrix[node] = 1 / size
         return matrix
