@@ -72,86 +72,136 @@ DATASETS = {
 }
 
 TEST_PARAMS = {
-    # 1. 稠密對照組
-    "dense_baseline": {
-        "graph_head": "pagerank", "config_type": "simplified", "feature_method": "ica",
-        "learning_rate": 1e-4, "num_epochs": 150,
-        "sparsity_lambda": 1e-6, "similarity_threshold": 0.1,
-        "max_edges_per_node": 15,
-        "description": "稠密對照 - 幾乎無稀疏性約束"
-    },
-    # 2. 中度稀疏
-    "moderate_sparsity": {
-        "graph_head": "pagerank", "config_type": "simplified", "feature_method": "ica",
-        "learning_rate": 8e-5, "num_epochs": 200,
-        "sparsity_lambda": 1e-2, "similarity_threshold": 0.4,
-                "max_edges_per_node": 10,
-        "description": "中度稀疏 - 兼顧準確率與稀疏度"
-    },
-    # 3. 高稀疏
-    "high_sparsity": {
-        "graph_head": "pagerank", "config_type": "high_capacity", "feature_method": "ica",
-        "learning_rate": 5e-5, "num_epochs": 250,
-        "sparsity_lambda": 5e-2, "similarity_threshold": 0.6,
-        "max_edges_per_node": 5,
-        "description": "高稀疏 - 強稀疏性懲罰"
-    },
-    # 4. 極端稀疏
-    "extreme_sparsity": {
-        "graph_head": "pagerank", "config_type": "high_capacity", "feature_method": "ica",
-        "learning_rate": 5e-5, "num_epochs": 300,
-        "sparsity_lambda": 1e-1, "similarity_threshold": 0.8,
-        "max_edges_per_node": 3,
-        "description": "極端稀疏 - 驗證稀疏極限效應"
-    },
-    # 5. 高容量 + 中學習率
-    "high_capacity_mid_lr": {
-        "graph_head": "pagerank", "config_type": "high_capacity", "feature_method": "ica",
-        "learning_rate": 5e-5, "num_epochs": 300,
-        "sparsity_lambda": 5e-3, "kan_grid_size": 15,
-        "target_feature_dim": 128,
-        "description": "高容量網絡 - 中等學習率"
-    },
-    # 6. 高容量 + 低學習率
-    "high_capacity_low_lr": {
-        "graph_head": "pagerank", "config_type": "high_capacity", "feature_method": "ica",
-        "learning_rate": 1e-5, "num_epochs": 400,
-        "sparsity_lambda": 1e-3, "kan_grid_size": 20,
-        "target_feature_dim": 256,
-        "description": "高容量網絡 - 極低學習率"
-    },
-    # 7. 深層 GNN
-    "deep_gnn": {
-        "graph_head": "pagerank", "config_type": "high_capacity", "feature_method": "ica",
-        "learning_rate": 4e-5, "num_epochs": 350,
-        "sparsity_lambda": 5e-4, "num_gnn_layers": 4,
-        "hidden_dims": [256, 128, 64, 32],
-        "description": "更深的 GNN 結構"
-    },
-    # 8. kPCA(rbf) 特徵
-    "kpca_rbf": {
+    # === 策略 1: KPCA 核心深度探索 (18組) ===
+
+    # 1.1: RBF 核心 (7組) - 我們最有希望的方向
+    "kpca_rbf_baseline": {
         "graph_head": "pagerank", "config_type": "simplified", "feature_method": "kpca", "kpca_kernel": "rbf",
-        "learning_rate": 9e-5, "num_epochs": 200,
-        "sparsity_lambda": 5e-3, "similarity_threshold": 0.4,
-        "description": "特徵提取 - kPCA(rbf)"
+        "learning_rate": 9e-5, "num_epochs": 200, "sparsity_lambda": 5e-3, "description": "kpca_rbf - 基準線"
     },
-    # 9. kPCA(poly) + 高稀疏
-    "kpca_poly_sparse": {
+    "kpca_rbf_lower_sparsity": {
+        "graph_head": "pagerank", "config_type": "simplified", "feature_method": "kpca", "kpca_kernel": "rbf",
+        "learning_rate": 9e-5, "num_epochs": 200, "sparsity_lambda": 1e-4, "description": "kpca_rbf - 降低稀疏懲罰"
+    },
+    "kpca_rbf_higher_sparsity": {
+        "graph_head": "pagerank", "config_type": "simplified", "feature_method": "kpca", "kpca_kernel": "rbf",
+        "learning_rate": 9e-5, "num_epochs": 200, "sparsity_lambda": 1e-2, "description": "kpca_rbf - 提高稀疏懲罰"
+    },
+    "kpca_rbf_higher_lr": {
+        "graph_head": "pagerank", "config_type": "simplified", "feature_method": "kpca", "kpca_kernel": "rbf",
+        "learning_rate": 2e-4, "num_epochs": 200, "sparsity_lambda": 5e-3, "description": "kpca_rbf - 提高學習率"
+    },
+    "kpca_rbf_lower_lr": {
+        "graph_head": "pagerank", "config_type": "simplified", "feature_method": "kpca", "kpca_kernel": "rbf",
+        "learning_rate": 5e-5, "num_epochs": 250, "sparsity_lambda": 5e-3, "description": "kpca_rbf - 降低學習率"
+    },
+    "kpca_rbf_low_gamma": {
+        "graph_head": "pagerank", "config_type": "simplified", "feature_method": "kpca", "kpca_kernel": "rbf",
+        "learning_rate": 9e-5, "num_epochs": 200, "sparsity_lambda": 5e-3, "kpca_gamma": 0.1, "description": "kpca_rbf - 降低gamma值"
+    },
+    "kpca_rbf_high_gamma": {
+        "graph_head": "pagerank", "config_type": "simplified", "feature_method": "kpca", "kpca_kernel": "rbf",
+        "learning_rate": 9e-5, "num_epochs": 200, "sparsity_lambda": 5e-3, "kpca_gamma": 1.0, "description": "kpca_rbf - 提高gamma值"
+    },
+
+    # 1.2: Poly 核心 (5組)
+    "kpca_poly_baseline": {
         "graph_head": "pagerank", "config_type": "simplified", "feature_method": "kpca", "kpca_kernel": "poly",
-        "learning_rate": 1e-4, "num_epochs": 250,
-        "sparsity_lambda": 5e-2, "similarity_threshold": 0.6,
-        "max_edges_per_node": 6,
-        "description": "kPCA(poly) 與高稀疏"
+        "learning_rate": 1e-4, "num_epochs": 200, "sparsity_lambda": 5e-3, "description": "kpca_poly - 基準線"
     },
-    # 10. 快速收斂對照
-    "fast_convergence": {
+    "kpca_poly_lower_sparsity": {
+        "graph_head": "pagerank", "config_type": "simplified", "feature_method": "kpca", "kpca_kernel": "poly",
+        "learning_rate": 1e-4, "num_epochs": 200, "sparsity_lambda": 1e-4, "description": "kpca_poly - 降低稀疏懲罰"
+    },
+    "kpca_poly_higher_degree": {
+        "graph_head": "pagerank", "config_type": "simplified", "feature_method": "kpca", "kpca_kernel": "poly",
+        "learning_rate": 1e-4, "num_epochs": 200, "sparsity_lambda": 5e-3, "kpca_degree": 4, "description": "kpca_poly - 提高多項式次數"
+    },
+    "kpca_poly_higher_sparsity": {
+        "graph_head": "pagerank", "config_type": "simplified", "feature_method": "kpca", "kpca_kernel": "poly",
+        "learning_rate": 1e-4, "num_epochs": 200, "sparsity_lambda": 1e-2, "description": "kpca_poly - 提高稀疏懲罰"
+    },
+    "kpca_poly_high_capacity": {
+        "graph_head": "pagerank", "config_type": "high_capacity", "feature_method": "kpca", "kpca_kernel": "poly",
+        "learning_rate": 5e-5, "num_epochs": 300, "sparsity_lambda": 1e-3, "description": "kpca_poly - 結合高容量模型"
+    },
+    
+    # 1.3: Sigmoid 與 Linear 核心 (4組)
+    "kpca_sigmoid_baseline": {
+        "graph_head": "pagerank", "config_type": "simplified", "feature_method": "kpca", "kpca_kernel": "sigmoid",
+        "learning_rate": 9e-5, "num_epochs": 200, "sparsity_lambda": 5e-3, "description": "kpca_sigmoid - 基準線"
+    },
+    "kpca_sigmoid_high_capacity": {
+        "graph_head": "pagerank", "config_type": "high_capacity", "feature_method": "kpca", "kpca_kernel": "sigmoid",
+        "learning_rate": 5e-5, "num_epochs": 300, "sparsity_lambda": 1e-3, "description": "kpca_sigmoid - 結合高容量模型"
+    },
+    "kpca_linear_baseline": {
+        "graph_head": "pagerank", "config_type": "simplified", "feature_method": "kpca", "kpca_kernel": "linear",
+        "learning_rate": 1e-4, "num_epochs": 200, "sparsity_lambda": 5e-3, "description": "kpca_linear - 基準線"
+    },
+    "kpca_linear_high_capacity": {
+        "graph_head": "pagerank", "config_type": "high_capacity", "feature_method": "kpca", "kpca_kernel": "linear",
+        "learning_rate": 5e-5, "num_epochs": 300, "sparsity_lambda": 1e-3, "description": "kpca_linear - 結合高容量模型"
+    },
+
+    # === 策略 2: 圖與模型架構探索 (8組) ===
+    "arch_kpca_rbf_looser_graph": {
+        "graph_head": "pagerank", "config_type": "simplified", "feature_method": "kpca", "kpca_kernel": "rbf",
+        "learning_rate": 9e-5, "num_epochs": 200, "sparsity_lambda": 5e-3,
+        "similarity_threshold": 0.2, "max_edges_per_node": 15, "description": "架構 - kpca_rbf + 更寬鬆的圖"
+    },
+    "arch_kpca_rbf_stricter_graph": {
+        "graph_head": "pagerank", "config_type": "simplified", "feature_method": "kpca", "kpca_kernel": "rbf",
+        "learning_rate": 9e-5, "num_epochs": 250, "sparsity_lambda": 5e-3,
+        "similarity_threshold": 0.7, "max_edges_per_node": 4, "description": "架構 - kpca_rbf + 更嚴格的圖"
+    },
+    "arch_kpca_rbf_dfs_head": {
+        "graph_head": "dfs", "config_type": "simplified", "feature_method": "kpca", "kpca_kernel": "rbf",
+        "learning_rate": 9e-5, "num_epochs": 200, "sparsity_lambda": 5e-3, "description": "架構 - 嘗試DFS圖頭部"
+    },
+    "arch_kpca_rbf_rht_head": {
+        "graph_head": "rht", "config_type": "simplified", "feature_method": "kpca", "kpca_kernel": "rbf",
+        "learning_rate": 9e-5, "num_epochs": 200, "sparsity_lambda": 5e-3, "description": "架構 - 嘗試RHT圖頭部"
+    },
+    "arch_kpca_rbf_rw_head": {
+        "graph_head": "random_walk", "config_type": "simplified", "feature_method": "kpca", "kpca_kernel": "rbf",
+        "learning_rate": 9e-5, "num_epochs": 200, "sparsity_lambda": 5e-3, "description": "架構 - 嘗試RandomWalk圖頭部"
+    },
+    "arch_kpca_rbf_high_capacity": {
+        "graph_head": "pagerank", "config_type": "high_capacity", "feature_method": "kpca", "kpca_kernel": "rbf",
+        "learning_rate": 5e-5, "num_epochs": 300, "sparsity_lambda": 1e-3, "description": "架構 - kpca_rbf + 高容量模型"
+    },
+    "arch_kpca_rbf_deep_gnn": {
+        "graph_head": "pagerank", "config_type": "high_capacity", "feature_method": "kpca", "kpca_kernel": "rbf",
+        "learning_rate": 4e-5, "num_epochs": 350, "sparsity_lambda": 5e-4,
+        "num_gnn_layers": 4, "hidden_dims": [128, 64, 32, 16], "description": "架構 - kpca_rbf + 深層GNN"
+    },
+     "arch_kpca_rbf_large_grid": {
+        "graph_head": "pagerank", "config_type": "high_capacity", "feature_method": "kpca", "kpca_kernel": "rbf",
+        "learning_rate": 5e-5, "num_epochs": 300, "sparsity_lambda": 1e-3,
+        "kan_grid_size": 25, "description": "架構 - kpca_rbf + 大網格KAN"
+    },
+
+    # === 策略 3: ICA 對照組 (4組) ===
+    "ica_optimized_baseline": {
         "graph_head": "pagerank", "config_type": "simplified", "feature_method": "ica",
-        "learning_rate": 5e-4, "num_epochs": 100,
-        "sparsity_lambda": 5e-3, "similarity_threshold": 0.3,
-        "description": "快速收斂 - 高學習率低輪數"
+        "learning_rate": 9e-5, "num_epochs": 200, "sparsity_lambda": 1e-4, "description": "ICA對照 - 套用kpca最佳參數"
+    },
+    "ica_optimized_higher_sparsity": {
+        "graph_head": "pagerank", "config_type": "simplified", "feature_method": "ica",
+        "learning_rate": 9e-5, "num_epochs": 200, "sparsity_lambda": 5e-3, "description": "ICA對照 - 提高稀疏懲罰"
+    },
+    "ica_high_capacity": {
+        "graph_head": "pagerank", "config_type": "high_capacity", "feature_method": "ica",
+        "learning_rate": 5e-5, "num_epochs": 300, "sparsity_lambda": 1e-3, "description": "ICA對照 - 嘗試高容量模型"
+    },
+    "ica_no_optimized_input": {
+        "graph_head": "pagerank", "config_type": "simplified", "feature_method": "ica",
+        "learning_rate": 9e-5, "num_epochs": 200, "sparsity_lambda": 1e-4,
+        "use_optimized_input": False, "description": "ICA對照 - 關閉優化輸入"
     }
 }
-        
+
 # --- 核心功能函式 ---
 
 def check_and_download_datasets(dataset_names: List[str]):
@@ -408,58 +458,6 @@ def analyze_and_save_results(all_results: Dict, best_config: Dict):
 
 def main():
     """主執行函式"""
-    # --- 動態添加額外的測試參數 ---
-    # 這樣做可以避免直接修改複雜的字典結構，提高修改成功率
-    additional_params = {
-        "fast_conv": {
-            "graph_head": "pagerank", "config_type": "simplified", "feature_method": "ica",
-            "learning_rate": 5e-4, "num_epochs": 100, "sparsity_lambda": 5e-3,
-            "description": "快速收斂測試 - 高學習率, 少輪數 (加強稀疏性)"
-        },
-        "high_sparsity": {
-            "graph_head": "pagerank", "config_type": "high_capacity", "feature_method": "ica",
-            "learning_rate": 5e-5, "num_epochs": 300, "sparsity_lambda": 5e-2,
-            "description": "高稀疏性約束 - 尋找最關鍵鏈接 (極強稀疏性)"
-        },
-        "sparse_graph": {
-            "graph_head": "pagerank", "config_type": "high_capacity", "feature_method": "ica",
-            "learning_rate": 5e-5, "num_epochs": 250, "sparsity_lambda": 1e-2,
-            "similarity_threshold": 0.5, "max_edges_per_node": 8,
-            "description": "稀疏圖構建 - 高閾值 + 強稀疏性"
-        },
-        "ultra_sparse": {
-            "graph_head": "pagerank", "config_type": "high_capacity", "feature_method": "ica",
-            "learning_rate": 5e-5, "num_epochs": 300, "sparsity_lambda": 1e-1,
-            "similarity_threshold": 0.6, "max_edges_per_node": 5,
-            "description": "超稀疏配置 - 極強稀疏性 + 極高閾值"
-        },
-        "ultra_strong_sparsity": {
-            "graph_head": "pagerank", "config_type": "high_capacity", "feature_method": "ica",
-            "learning_rate": 5e-5, "num_epochs": 400, "sparsity_lambda": 5e-1,
-            "similarity_threshold": 0.7, "max_edges_per_node": 3,
-            "description": "超強稀疏性配置 - 極端稀疏化"
-        },
-        "extreme_sparsity": {
-            "graph_head": "pagerank", "config_type": "high_capacity", "feature_method": "ica",
-            "learning_rate": 5e-5, "num_epochs": 500, "sparsity_lambda": 1e0,
-            "similarity_threshold": 0.8, "max_edges_per_node": 2,
-            "description": "極端稀疏配置 - 最強稀疏性 + 最高閾值"
-        },
-        "kpca_poly": {
-            "graph_head": "pagerank", "config_type": "simplified", "feature_method": "kpca", "kpca_kernel": "poly",
-            "learning_rate": 1e-4, "num_epochs": 200, "sparsity_lambda": 5e-3,
-            "description": "特徵提取測試 - kPCA(poly) (加強稀疏性)"
-        },
-        "ica_and_dense": {
-            "graph_head": "pagerank", "config_type": "high_capacity", "feature_method": "ica",
-            "learning_rate": 8e-5, "num_epochs": 250, "sparsity_lambda": 1e-5,
-            "similarity_threshold": 0.1, "max_edges_per_node": 15,
-            "description": "組合測試 - ICA特徵 + 稠密圖 (對照組)"
-        }
-    }
-    TEST_PARAMS.update(additional_params)
-    # --- 參數添加完成 ---
-
     parser = argparse.ArgumentParser(description="尋找通用GNN-KAN參數")
     parser.add_argument(
         "--datasets", nargs="+", default=["RE1-OB", "RE2-OB", "RE3-OB", "RE1-SS", "RE2-SS"],
