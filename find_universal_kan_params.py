@@ -260,9 +260,20 @@ def get_all_case_paths(dataset_names: List[str], limit_per_dataset: int) -> List
         # 初始嘗試尋找案例
         found_cases = []
         if os.path.exists(dataset_path):
+            # 初始版本僅偵測 data.csv，改為多檔名支援
             for root, _, files in os.walk(dataset_path):
-                if "data.csv" in files and "inject_time.txt" in files:
-                    found_cases.append(os.path.join(root, "data.csv"))
+                candidate_file = None
+                if "data.csv" in files:
+                    candidate_file = "data.csv"
+                elif "simple_metrics.csv" in files:
+                    candidate_file = "simple_metrics.csv"
+                elif "metrics.csv" in files:
+                    candidate_file = "metrics.csv"
+                elif "telemetry.csv" in files:
+                    candidate_file = "telemetry.csv"
+
+                if candidate_file and "inject_time.txt" in files:
+                    found_cases.append(os.path.join(root, candidate_file))
         
         # 如果找不到案例，則觸發下載重試機制
         if not found_cases:
@@ -277,8 +288,18 @@ def get_all_case_paths(dataset_names: List[str], limit_per_dataset: int) -> List
                 # 重新掃描
                 if os.path.exists(dataset_path):
                     for root, _, files in os.walk(dataset_path):
-                        if "data.csv" in files and "inject_time.txt" in files:
-                            found_cases.append(os.path.join(root, "data.csv"))
+                        candidate_file = None
+                        if "data.csv" in files:
+                            candidate_file = "data.csv"
+                        elif "simple_metrics.csv" in files:
+                            candidate_file = "simple_metrics.csv"
+                        elif "metrics.csv" in files:
+                            candidate_file = "metrics.csv"
+                        elif "telemetry.csv" in files:
+                            candidate_file = "telemetry.csv"
+
+                        if candidate_file and "inject_time.txt" in files:
+                            found_cases.append(os.path.join(root, candidate_file))
             except Exception as e:
                 print(f"  ❌ 在為 {name} 下載重試過程中發生錯誤: {e}")
                 traceback.print_exc()
