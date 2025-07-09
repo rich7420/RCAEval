@@ -244,7 +244,7 @@ def check_and_download_datasets(dataset_names: List[str]):
 
 def get_all_case_paths(dataset_names: List[str], limit_per_dataset: int) -> List[Tuple[str, str]]:
     """
-    獲取所有指定數據集的案例路徑（os.walk 強健版本）
+    獲取所有指定數據集的案例路徑（增強版，帶有下載重試機制）
     返回一個元組列表 (案例路徑, 數據集名稱)
     """
     print(f"🔍 正在從 {dataset_names} 收集最多 {limit_per_dataset} 個案例...")
@@ -256,21 +256,37 @@ def get_all_case_paths(dataset_names: List[str], limit_per_dataset: int) -> List
             continue
 
         dataset_path = DATASETS[name]["path"]
-        if not os.path.exists(dataset_path):
-            print(f"  ⚠️ 數據集路徑不存在: {dataset_path}，跳過。請檢查下載過程。")
-            continue
-
+        
+        # 初始嘗試尋找案例
         found_cases = []
-        for root, _, files in os.walk(dataset_path):
-            if "data.csv" in files:
-                # 確保是案例目錄，而不是其他地方的 data.csv
-                if "inject_time.txt" in files:
+        if os.path.exists(dataset_path):
+            for root, _, files in os.walk(dataset_path):
+                if "data.csv" in files and "inject_time.txt" in files:
                     found_cases.append(os.path.join(root, "data.csv"))
         
-        found_cases.sort() # 確保順序一致
+        # 如果找不到案例，則觸發下載重試機制
+        if not found_cases:
+            print(f"  ⚠️ 在 {name} ({dataset_path}) 中未找到案例，嘗試強制重新下載...")
+            try:
+                download_func = DATASETS[name]["download_func"]
+                parent_dir = os.path.dirname(dataset_path)
+                os.makedirs(parent_dir, exist_ok=True)
+                download_func(local_path=parent_dir)
+                print(f"  📥 {name} 下載完成，重新掃描案例...")
+
+                # 重新掃描
+                if os.path.exists(dataset_path):
+                    for root, _, files in os.walk(dataset_path):
+                        if "data.csv" in files and "inject_time.txt" in files:
+                            found_cases.append(os.path.join(root, "data.csv"))
+            except Exception as e:
+                print(f"  ❌ 在為 {name} 下載重試過程中發生錯誤: {e}")
+                traceback.print_exc()
+
+        found_cases.sort()
 
         if not found_cases:
-            print(f"  ⚠️ 在 {name} ({dataset_path}) 中未找到任何 'data.csv' 案例文件")
+            print(f"  ❌ 即使在下載後，仍在 {name} ({dataset_path}) 中未找到任何 'data.csv' 案例文件")
             continue
 
         # 限制每個數據集的案例數量
@@ -284,7 +300,7 @@ def get_all_case_paths(dataset_names: List[str], limit_per_dataset: int) -> List
         all_paths.extend([(path, name) for path in limited_cases])
 
     if not all_paths:
-        print("❌ 嚴重錯誤：未找到任何可用案例！請檢查 'data' 目錄結構或下載腳本。")
+        print("❌ 嚴重錯誤：未找到任何可用案例！腳本無法繼續。")
         sys.exit(1)
 
     return all_paths
@@ -333,8 +349,8 @@ def run_single_test(case_path: str, dataset_name: str, params: Dict[str, Any]) -
 
         # 執行 GNN-KAN 與 BARO
         gnn_kan_result = gnn_kan_rca(
-            data=data,
-            inject_time=inject_time,
+                data=data,
+                inject_time=inject_time,
             dataset=dataset_name,
             use_cuda=True,
             cpu_fallback=True,
