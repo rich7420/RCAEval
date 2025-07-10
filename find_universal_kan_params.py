@@ -375,6 +375,7 @@ def run_single_test(case_path: str, dataset_name: str, params: Dict[str, Any]) -
             dataset=dataset_name,
             use_cuda=True,
             cpu_fallback=True,
+            use_optimized_input=True, # 啟用優化輸入以應對不同數據格式
             **params,
         )
         baro_result = baro(data, inject_time, dataset_name)
