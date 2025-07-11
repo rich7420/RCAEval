@@ -311,3 +311,42 @@ class GradientStabilizer:
 # StabilizedKANLayer 已移除 - 保持KAN純粹性
 # 只保留 AdvancedKANLayer 和 SimplifiedKANLayer
 # 梯度穩定功能通過 GradientStabilizer 類提供
+
+def adaptive_gradient_clipping(model, y: torch.Tensor, optimizer, clip_value: float = 0.1, epsilon: float = 1e-3):
+    """
+    自適應梯度裁剪，基於論文的梯度穩定性方案
+    C_k = clip_value * ||G_k||_F / ||g_k||_F
+    其中 G_k 是所有梯度，g_k 是最後一層的梯度
+    """
+    # 對y進行clone()，避免inplace操作導致的執行時錯誤
+    y_clone = y.clone()
+    
+    # 實際計算梯度
+    grads = torch.autograd.grad(
+        y_clone,
+        model.parameters(),
+        grad_outputs=torch.ones_like(y_clone),
+        create_graph=True,
+        retain_graph=True,
+        allow_unused=True
+    )
+    
+    # 計算最後一層的梯度範數
+    last_layer_grad_norm = torch.tensor(0.0, device=y.device)
+    if grads and grads[-1] is not None:
+        last_layer_grad_norm = torch.norm(grads[-1], p=2)
+    
+    # 計算所有梯度的Frobenius範數
+    total_grad_norm = torch.tensor(0.0, device=y.device)
+    for grad in grads:
+        if grad is not None:
+            total_grad_norm += torch.norm(grad, p=2)**2
+    total_grad_norm = torch.sqrt(total_grad_norm)
+    
+    # 計算裁剪係數
+    clip_coefficient = clip_value * total_grad_norm / (last_layer_grad_norm + epsilon)
+    
+    # 應用梯度裁剪
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_coefficient.item())
+    
+    return clip_coefficient.item()
