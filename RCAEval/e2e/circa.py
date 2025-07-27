@@ -9,10 +9,8 @@ from RCAEval.io.time_series import (
     drop_time,
     select_useful_cols,
 )
-from RCAEval.e2e import rca
 
 
-@rca
 def circa(data, inject_time=None, dataset=None, **kwargs):
     time_col = data["time"]
 

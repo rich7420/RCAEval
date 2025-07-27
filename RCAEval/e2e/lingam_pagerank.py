@@ -18,7 +18,6 @@ from RCAEval.e2e import rca
 warnings.filterwarnings("ignore")
 
 
-@rca
 def lingam_pagerank(data, inject_time=None, dataset=None, num_loop=None, sli=None, **kwargs):
     data = preprocess(
         data=data, dataset=dataset, dk_select_useful=kwargs.get("dk_select_useful", False)

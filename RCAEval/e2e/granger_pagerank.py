@@ -12,7 +12,6 @@ from RCAEval.io.time_series import (
 from RCAEval.e2e import rca
 
 
-@rca
 def granger_pagerank(data, inject_time=None, dataset=None, num_loop=None, sli=None, **kwargs):
     data = preprocess(
         data=data,

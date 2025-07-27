@@ -7,7 +7,6 @@ from RCAEval.io.time_series import drop_constant, drop_extra, drop_near_constant
 from RCAEval.e2e import rca
 
 
-@rca
 def pc_randomwalk(data, inject_time=None, dataset=None, n_iter=None, **kwargs):
     data = preprocess(
         data=data, dataset=dataset, dk_select_useful=kwargs.get("dk_select_useful", False)
@@ -38,6 +37,9 @@ def ntlr_randomwalk(data, inject_time=None, dataset=None, n_iter=None, **kwargs)
     from RCAEval.graph_construction.dag_gnn import notears_low_rank
 
     node_names = data.columns.to_list()
+
+    if n_iter is None:
+        n_iter = len(node_names)
 
     adj = notears_low_rank(data)
     ranks = random_walk(adj, node_names, num_loop=n_iter)
@@ -95,7 +97,6 @@ def lingam_randomwalk(data, inject_time=None, dataset=None, n_iter=None, **kwarg
         "node_names": node_names,
         "ranks": ranks,
     }
-
 
 
 @rca

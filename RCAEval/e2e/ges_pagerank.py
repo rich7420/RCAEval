@@ -2,7 +2,6 @@ from RCAEval.graph_construction.ges import ges
 from RCAEval.graph_heads.page_rank import page_rank
 from RCAEval.graph_heads.random_walk import random_walk
 from RCAEval.io.time_series import preprocess
-from RCAEval.e2e import rca
 
 def ges_pagerank(data, inject_time=None, dataset=None, **kwargs):
     data = preprocess(

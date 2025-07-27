@@ -33,7 +33,6 @@ from RCAEval.utility import (
     download_re3_dataset, 
 )
 
-
 if is_py310():
     from RCAEval.e2e import (
         baro,
@@ -47,7 +46,6 @@ if is_py310():
         fci_pagerank,
         fci_randomwalk,
         ges_pagerank,
-        gnn_kan,
         granger_pagerank,
         granger_randomwalk,
         lingam_pagerank,
@@ -63,10 +61,20 @@ if is_py310():
         pc_randomwalk,
         run,
         tracerca,
+        ht, 
+        rcd, 
+        mmrcd,
+        get_gnn_kan_rca  # 延遲導入函數
     )
+    # 只在需要時導入 GNN-KAN
+    def get_gnn_kan():
+        return get_gnn_kan_rca()
 
 elif is_py38():
     from RCAEval.e2e import dummy, e_diagnosis, ht, rcd, mmrcd
+    
+    def get_gnn_kan():
+        raise ImportError("GNN-KAN requires Python 3.10+")
 else:
     print("Please use Python 3.8 or 3.10")
     exit(1)
@@ -79,21 +87,164 @@ except ImportError:
     pass
 
 
+def update_eval_config(
+    data_root_path: str, inject_time: int, duration: int = 10, **kwargs
+) -> dict:
+    return {
+        "data_root_path": data_root_path,
+        "inject_time": inject_time,
+        "duration": duration,
+        **kwargs,
+    }
+
+
+def get_data_path(args):
+    if args.dataset == "ob":
+        return "data/online-boutique"
+    elif args.dataset == "mm-ob":
+        return "data/online-boutique"
+    elif args.dataset == "ss1":
+        return "data/sock-shop-1"
+    elif args.dataset == "mm-ss1":
+        return "data/sock-shop-1"
+    elif args.dataset == "ss2":
+        return "data/sock-shop-2"
+    elif args.dataset == "mm-ss2":
+        return "data/sock-shop-2"
+    elif args.dataset == "tt":
+        return "data/train-ticket"
+    elif args.dataset == "mm-tt":
+        return "data/train-ticket"
+    elif args.dataset == "re1":
+        return "data/re-1"
+    elif args.dataset == "re2-ob":
+        return "data/re2/ob"
+    elif args.dataset == "re2-tt":
+        return "data/re2/tt"
+    elif args.dataset == "re3":
+        return "data/re-3"
+    elif args.dataset == "synthetic":
+        return "data/synthetic"
+    else:
+        raise ValueError(f"Unknown dataset: {args.dataset}")
+
+
+def run_single_experiment(args, fail_id, sub_args):
+    data_path = os.path.join(get_data_path(args), str(fail_id))
+
+    # 根據方法決定是否導入 GNN-KAN
+    if args.method == "gnn_kan":
+        try:
+            gnn_kan = get_gnn_kan()
+            # 🎯 應用優化參數（如果來自比較場景）
+            optimized_config = {
+                'graph_head': 'pagerank',
+                'config_type': 'simplified',
+                'feature_method': 'kpca',
+                'kpca_kernel': 'rbf',
+                'learning_rate': 9e-5,
+                'num_epochs': 200,
+                'sparsity_lambda': 1e-4,
+                'use_cuda': True,
+                'cpu_fallback': True,
+                'use_optimized_input': True,
+                'similarity_threshold': 0.15,
+                'max_edges_per_node': 12,
+                'target_feature_dim': 64,
+                'force_node_expansion': True
+            }
+            # 將優化參數注入到 sub_args
+            sub_args.update(optimized_config)
+            print(f"🎯 Applied optimized GNN-KAN parameters for comparison")
+        except ImportError as e:
+            print(f"Failed to import GNN-KAN: {e}")
+            return None
+    else:
+        gnn_kan = None
+
+    try:
+        if "mm-" in args.dataset:
+            # Multi-source dataset handling
+            from RCAEval.utility import read_multimodal_data
+            
+            data, inject_time, meta = read_multimodal_data(data_path, **sub_args)
+        else:
+            # Single-source dataset handling  
+            from RCAEval.utility import read_data
+
+            data, inject_time, meta = read_data(data_path, **sub_args)
+
+        # Execute the RCA method
+        if args.method == "gnn_kan" and gnn_kan is not None:
+            result = gnn_kan(data, inject_time, dataset=args.dataset, **sub_args)
+        else:
+            # Use globals() for other methods
+            result = globals()[args.method](data, inject_time, dataset=args.dataset, **sub_args)
+
+        # Prepare evaluation configuration
+        eval_config = update_eval_config(
+            data_path, inject_time, meta.get("duration", 10), **sub_args
+        )
+
+        # Evaluate results
+        evaluator = Evaluator(config=eval_config)
+        evaluation_result = evaluator.eval(result, meta)
+
+        return {
+            "result": result,
+            "evaluation": evaluation_result,
+            "meta": meta,
+            "config": eval_config,
+        }
+
+    except Exception as e:
+        print(f"Error in experiment {fail_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
 def parse_args():
-    parser = argparse.ArgumentParser(description="RCAEval evaluation")
-    parser.add_argument("--method", type=str, help="Choose a method.")
-    parser.add_argument("--dataset", type=str, help="Choose a dataset.", choices=[
-        "online-boutique", "sock-shop-1", "sock-shop-2", "train-ticket",
-        "re1-ob", "re1-ss", "re1-tt", "re2-ob", "re2-ss", "re2-tt", "re3-ob", "re3-ss", "re3-tt"
-    ])
-    parser.add_argument("--length", type=int, default=20, help="Time series length (RQ4)")
-    parser.add_argument("--tdelta", type=int, default=0, help="Specify $t_delta$ to simulate delay in anomaly detection")
-    parser.add_argument("--test", action="store_true", help="Perform smoke test on certain methods without fully run on all data")
+    parser = argparse.ArgumentParser()
+    
+    # 動態構建可用方法列表
+    available_methods = []
+    for name in globals():
+        if callable(globals()[name]) and not name.startswith('_'):
+            available_methods.append(name)
+    
+    # 添加 gnn_kan 到可用方法列表
+    available_methods.append('gnn_kan')
+    
+    # 移除不是 RCA 方法的函數
+    method_blacklist = [
+        'parse_args', 'get_data_path', 'run_single_experiment', 
+        'update_eval_config', 'get_gnn_kan', 'get_gnn_kan_rca',
+        'Pool', 'Evaluator', 'Node', 'tqdm'
+    ]
+    available_methods = [m for m in available_methods if m not in method_blacklist]
+    
+    parser.add_argument("--method", type=str, required=True, 
+                        help=f"Available methods: {sorted(available_methods)}")
+    parser.add_argument("--dataset", type=str, required=True)
+    parser.add_argument("--test", action="store_true")
+    parser.add_argument("--num_workers", type=int, default=16)
+    parser.add_argument("--dk_select_useful", action="store_true")
+    parser.add_argument("--dk_select_sli", type=str, default=None)
+    parser.add_argument("--dk_select_sli_prefix", type=str, default=None)
+    # 添加缺失的參數以保持兼容性
+    parser.add_argument("--length", type=int, default=None, help="Time series length")
+    parser.add_argument("--tdelta", type=int, default=0, help="Time delta for anomaly detection delay")
+    parser.add_argument("--iter_num", type=int, default=10, help="Number of iterations")
+    parser.add_argument("--useful", action="store_true", help="Select useful columns")
+    
     args = parser.parse_args()
-
-    if args.method not in globals():
+    
+    # 檢查方法是否可用
+    if args.method not in available_methods:
+        print(f"Available methods: {sorted(available_methods)}")
         raise ValueError(f"{args.method=} not defined. Please check imported methods.")
-
+    
     return args
 
 
@@ -238,23 +389,47 @@ def process(data_path):
         raise ValueError("SLI not implemented")
 
     # == PROCESS ==
-    func = globals()[args.method]
+    if args.method == 'gnn_kan':
+        func = get_gnn_kan()
+    else:
+        func = globals()[args.method]
 
     try:
         st = datetime.now()
         
-        out = func(
+        # 🚀 GNN-KAN 優化參數應用
+        gnn_kan_kwargs = {}
+        if args.method == 'gnn_kan':
+            print("🚀 使用 GNN-KAN 優化參數...")
+            # 應用優化的參數
+            gnn_kan_kwargs = {
+                'graph_head': 'pagerank',
+                'config_type': 'simplified',
+                'feature_method': 'kpca',
+                'kpca_kernel': 'rbf',
+                'learning_rate': 9e-5,
+                'num_epochs': 200,
+                'sparsity_lambda': 1e-4,
+                'use_cuda': True,
+                'cpu_fallback': True,
+                'use_optimized_input': True,
+                'similarity_threshold': 0.15,
+                'max_edges_per_node': 12,
+                'target_feature_dim': 64,
+                'force_node_expansion': True
+            }
+            print(f"✅ 已應用優化 GNN-KAN 參數")
+            
+        result = func(
             data,
             inject_time,
-            dataset=args.dataset,
-            anomalies=None,
-            dk_select_useful=False,
+            dataset=args.dataset.split("-")[0] if "-" in args.dataset else args.dataset,
+            num_loop=args.iter_num,
             sli=sli,
-            verbose=False,
-            n_iter=num_node,
-            args=run_args,
+            dk_select_useful=args.dk_select_useful,
+            **gnn_kan_kwargs
         )
-        root_causes = out.get("ranks")
+        root_causes = result.get("ranks")
         # print("==============")
         # print(f"{data_path=}")
         # print(root_causes[:5])

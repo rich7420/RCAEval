@@ -9,7 +9,7 @@ from RCAEval.graph_heads.page_rank import page_rank
 from RCAEval.io.time_series import preprocess
 from RCAEval.e2e import rca
 
-@rca
+
 def pc_pagerank(
     data, inject_time=None, dataset=None, dk_select_useful=False, with_bg=False, n_iter=10, **kwargs
 ):

@@ -14,7 +14,8 @@ ENCODING = "utf-8"
 
 
 def is_py310():
-    return sys.version_info.major == 3 and sys.version_info.minor == 10
+    # 支持 Python 3.10 及以上版本
+    return sys.version_info.major == 3 and sys.version_info.minor >= 10
 
 
 def is_py38():

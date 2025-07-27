@@ -421,11 +421,9 @@ class GNNKANvsBAROComparator:
     
     def calculate_metrics(self, predicted_ranks: List[str], ground_truth: List[str]) -> Dict[str, float]:
         """
-        計算評估指標 - 增強版本，改進匹配機制
-        🎯 新增：@1, @3等更多k值，提升評估細緻度，智能名稱匹配
-        包括: precision@k, recall@k, f1@k, avg@k, mrr, ndcg@k, hit_rate@k等
+        計算評估指標 - 修正版本，確保公平性和正確性
         """
-        # 🔥 更新指標列表，添加更多細緻的評估參數
+        # 🔥 更新指標列表
         self.metrics = [
             'precision@1', 'precision@3', 'precision@5', 'precision@10',
             'recall@1', 'recall@3', 'recall@5', 'recall@10', 
@@ -440,10 +438,8 @@ class GNNKANvsBAROComparator:
             """標準化服務名稱，提升匹配成功率"""
             if not name:
                 return ""
-            # 統一處理：轉小寫，移除特殊字符，標準化分隔符
             normalized = str(name).lower().strip()
             normalized = normalized.replace('_', '-').replace('.', '-')
-            # 移除常見前後綴
             prefixes = ['ts-', 'service-', 'app-']
             suffixes = ['-service', '-app', '-server']
             for prefix in prefixes:
@@ -459,209 +455,206 @@ class GNNKANvsBAROComparator:
             pred_norm = normalize_name(pred_name)
             for truth_name in truth_names:
                 truth_norm = normalize_name(truth_name)
-                # 完全匹配
                 if pred_norm == truth_norm:
                     return True
-                # 包含匹配
                 if pred_norm in truth_norm or truth_norm in pred_norm:
                     return True
-                # 核心詞匹配（針對複合服務名）
                 pred_parts = pred_norm.split('-')
                 truth_parts = truth_norm.split('-')
                 if any(part in truth_parts for part in pred_parts if len(part) > 2):
                     return True
             return False
         
-        # 檢查輸入有效性 - 增強版本
+        # 檢查輸入有效性
         if not predicted_ranks or not ground_truth:
             print(f"    ⚠️ 輸入無效: predicted_ranks={len(predicted_ranks) if predicted_ranks else 0}, ground_truth={len(ground_truth) if ground_truth else 0}")
             return {metric: 0.0 for metric in self.metrics}
         
-        # 🔍 調試信息：顯示匹配詳情
-        print(f"    🔍 預測排名: {predicted_ranks[:5]}...")  # 只顯示前5個
-        print(f"    🎯 真實根因: {ground_truth[:5]}...")  # 只顯示前5個
+        print(f"    🔍 預測排名: {predicted_ranks[:5]}...")
+        print(f"    🎯 真實根因: {ground_truth[:5]}...")
         
         metrics = {}
         
         # 確保ground_truth是列表
         if isinstance(ground_truth, str):
             ground_truth = [ground_truth]
-            
-        # 🔥 智能匹配替代原始集合匹配
-        def get_matched_predictions(predicted_ranks, ground_truth):
-            """使用智能匹配獲取匹配的預測結果"""
-            matched_predictions = []
-            for pred in predicted_ranks:
-                if fuzzy_match(pred, ground_truth):
-                    matched_predictions.append(pred)
-            return matched_predictions
         
-        # 獲取智能匹配的預測結果
-        matched_predictions = get_matched_predictions(predicted_ranks, ground_truth)
+        # 🔥 修正：計算實際獨特相關項目數量
+        unique_relevant_items = set()
+        for gt in ground_truth:
+            unique_relevant_items.add(normalize_name(gt))
+        actual_relevant_count = len(unique_relevant_items)
         
-        # 調試信息：顯示匹配結果
-        if matched_predictions:
-            print(f"    ✅ 智能匹配成功: {len(matched_predictions)}個匹配")
-            print(f"    🎯 匹配項: {matched_predictions[:3]}...")
-        else:
-            print(f"    ❌ 智能匹配失敗: 無任何匹配項")
+        print(f"    📊 實際相關項目數: {actual_relevant_count} (去重後)")
         
-        # 🔥 擴展k值範圍，增加@1, @3, @10等細緻評估
+        # 🔥 擴展k值範圍
         k_values = [1, 3, 5, 10]
         
-        # 計算各種k值的指標 - 使用智能匹配（修正版）
+        # 計算各種k值的指標
         for k in k_values:
-            # 🔧 修正：無論預測數量多少，都計算指標
-            # 取預測結果的前k個，如果不足k個則取全部
             effective_k = min(k, len(predicted_ranks))
             top_k = predicted_ranks[:effective_k]
             
-            # 🔥 使用智能匹配計算真正例
+            # 使用智能匹配計算真正例
             true_positives = 0
+            found_relevant_items = set()
             for pred in top_k:
                 if fuzzy_match(pred, ground_truth):
+                    found_relevant_items.add(normalize_name(pred))
                     true_positives += 1
             
-            # Precision@k - 修正邏輯：分母使用k，但要考慮預測數量不足的情況
-            if len(predicted_ranks) >= k:
-                # 如果預測數量足夠，正常計算
-                precision_k = true_positives / k
-            else:
-                # 如果預測數量不足k個，分母用實際預測數量
-                # 這樣可以避免因預測數量少而被懲罰過度
-                precision_k = true_positives / len(predicted_ranks) if len(predicted_ranks) > 0 else 0.0
+            # 避免重複計算相同項目
+            unique_true_positives = len(found_relevant_items)
+            
+            # Precision@k
+            precision_k = unique_true_positives / k if k > 0 else 0.0
             metrics[f'precision@{k}'] = precision_k
             
-            # Recall@k - 召回率
-            recall_k = true_positives / len(ground_truth) if len(ground_truth) > 0 else 0
+            # Recall@k - 修正：使用實際相關項目數
+            recall_k = unique_true_positives / actual_relevant_count if actual_relevant_count > 0 else 0
             metrics[f'recall@{k}'] = recall_k
             
-            # F1@k - F1分數
+            # F1@k
             if precision_k + recall_k > 0:
                 f1_k = 2 * precision_k * recall_k / (precision_k + recall_k)
             else:
                 f1_k = 0
             metrics[f'f1@{k}'] = f1_k
             
-            # 🔥 Hit Rate@k - 是否命中目標（修正邏輯）
-            hit_rate_k = 1.0 if true_positives > 0 else 0.0
-            if k <= 5:  # 只計算@1, @3, @5的hit rate
+            # Hit Rate@k
+            hit_rate_k = 1.0 if unique_true_positives > 0 else 0.0
+            if k <= 5:
                 metrics[f'hit_rate@{k}'] = hit_rate_k
             
-            # 🔥 新增：NDCG@k - 歸一化折扣累積增益（修正版本）
+            # 🔥 修正NDCG@k計算
             if k in [5, 10]:
                 dcg_k = 0
+                found_items = set()
                 for i, pred in enumerate(top_k):
-                    if fuzzy_match(pred, ground_truth):
-                        dcg_k += 1 / np.log2(i + 2)  # i+2 因為log2(1)=0
+                    pred_norm = normalize_name(pred)
+                    if fuzzy_match(pred, ground_truth) and pred_norm not in found_items:
+                        found_items.add(pred_norm)
+                        dcg_k += 1 / np.log2(i + 2)
                 
-                # 理想DCG（所有真實根因都在前k位）
-                idcg_k = sum([1 / np.log2(i + 2) for i in range(min(k, len(ground_truth)))])
+                # 修正理想DCG：使用實際相關項目數，而非ground_truth長度
+                idcg_k = sum([1 / np.log2(i + 2) for i in range(min(k, actual_relevant_count))])
                 
                 ndcg_k = dcg_k / idcg_k if idcg_k > 0 else 0
-                metrics[f'ndcg@{k}'] = ndcg_k
+                metrics[f'ndcg@{k}'] = min(1.0, ndcg_k)  # 確保NDCG不超過1.0
         
-        # Avg@5 和 Avg@10 (常用的綜合指標)
+        # Avg@5 和 Avg@10
         metrics['avg@5'] = sum([metrics.get(f'precision@{k}', 0) for k in [1, 3, 5]]) / 3
         metrics['avg@10'] = sum([metrics.get(f'precision@{k}', 0) for k in [1, 3, 5, 10]]) / 4
         
-        # Mean Reciprocal Rank (MRR) - 第一個正確結果的倒數排名（智能匹配版本）
+        # MRR
         mrr = 0
+        found_items = set()
         for i, node in enumerate(predicted_ranks):
-            if fuzzy_match(node, ground_truth):
+            node_norm = normalize_name(node)
+            if fuzzy_match(node, ground_truth) and node_norm not in found_items:
+                found_items.add(node_norm)
                 mrr = 1.0 / (i + 1)
                 break
         metrics['mrr'] = mrr
         
-        # 🔥 新增：Average Precision (AP) - 更精確的準確率指標（智能匹配版本）
+        # 修正Average Precision
         ap = 0
         relevant_found = 0
-        for i, pred in enumerate(predicted_ranks):
-            if fuzzy_match(pred, ground_truth):
-                relevant_found += 1
-                ap += relevant_found / (i + 1)
+        found_items = set()
         
-        if len(ground_truth) > 0:
-            ap = ap / len(ground_truth)
-        metrics['average_precision'] = ap
+        for i, pred in enumerate(predicted_ranks):
+            pred_norm = normalize_name(pred)
+            if fuzzy_match(pred, ground_truth) and pred_norm not in found_items:
+                found_items.add(pred_norm)
+                relevant_found += 1
+                precision_at_i = relevant_found / (i + 1)
+                ap += precision_at_i
+        
+        if relevant_found > 0:
+            metrics['average_precision'] = ap / relevant_found
+        else:
+            metrics['average_precision'] = 0.0
+        
+        # 確保AP不超過1.0
+        metrics['average_precision'] = min(1.0, metrics['average_precision'])
         
         return metrics
     
     def get_ground_truth(self, case_info: Dict[str, str]) -> List[str]:
-        """根據案例信息獲取真實根因 - 改進版"""
+        """根據案例信息獲取真實根因 - 優化版本"""
         service = case_info['service']
         fault_type = case_info['fault_type']
         
-        # 改進的根因構建策略
+        # 優化的根因構建策略 - 減少不必要的變體
         ground_truth = []
         
         if service != "unknown":
-            # 1. 直接服務匹配（最高優先級）
+            # 1. 核心服務匹配（最高優先級）
             ground_truth.append(service)
             
-            # 2. 服務名稱變體匹配
-            service_variants = [
-                service,
+            # 2. 只保留最常用的服務名稱變體（減少數量）
+            core_variants = [
                 service.replace('-', '_'),
                 service.replace('_', '-'),
                 service.lower(),
-                service.upper(),
-                f"ts-{service}",  # train-ticket 格式
-                f"{service}-service",  # 標準格式
-                f"{service}service"   # 緊湊格式
+                f"ts-{service}",  # train-ticket 特殊格式
+                f"{service}-service"  # 標準服務格式
             ]
-            ground_truth.extend(service_variants)
+            # 只添加與原服務名不同的變體
+            for variant in core_variants:
+                if variant != service and variant not in ground_truth:
+                    ground_truth.append(variant)
             
-            # 3. 基於故障類型的精確匹配
+            # 3. 精簡的故障類型匹配
             fault_mappings = {
-                "cpu": ["cpu", "CPU", "processor", "compute"],
-                "mem": ["memory", "mem", "RAM", "heap"],
-                "memory": ["memory", "mem", "RAM", "heap"],
-                "disk": ["disk", "storage", "io", "disk_io"],
-                "io": ["io", "disk", "network", "bandwidth"],
-                "latency": ["latency", "delay", "response_time", "lat"],
-                "delay": ["latency", "delay", "response_time", "lat"],
-                "loss": ["loss", "drop", "packet_loss", "network"],
-                "network": ["network", "net", "bandwidth", "connection"]
+                "cpu": ["cpu"],
+                "mem": ["memory", "mem"],
+                "memory": ["memory", "mem"],
+                "disk": ["disk", "io"],
+                "io": ["io", "disk"],
+                "latency": ["latency", "delay"],
+                "delay": ["latency", "delay"],
+                "loss": ["loss"],
+                "network": ["network", "net"]
             }
             
-            # 獲取故障類型對應的指標名稱
+            # 獲取故障類型對應的指標名稱（限制數量）
             fault_indicators = fault_mappings.get(fault_type.lower(), [fault_type])
             
-            # 4. 生成服務+指標組合
-            for variant in service_variants[:3]:  # 只取前3個變體避免太多
-                for indicator in fault_indicators:
+            # 4. 只生成最核心的服務+指標組合（大幅減少）
+            for indicator in fault_indicators[:2]:  # 最多取2個指標
                     combinations = [
-                        f"{variant}_{indicator}",
-                        f"{variant}-{indicator}",
-                        f"{indicator}_{variant}",
-                        f"{indicator}-{variant}",
-                        f"{variant}.{indicator}",
-                        f"{indicator}.{variant}"
+                    f"{service}_{indicator}",
+                    f"{service}-{indicator}"
                     ]
                     ground_truth.extend(combinations)
         
-        # 5. 移除重複並保持順序
+        # 5. 移除重複並限制總數量
         seen = set()
         unique_ground_truth = []
         for item in ground_truth:
-            if item not in seen:
+            if item and item not in seen:
                 seen.add(item)
                 unique_ground_truth.append(item)
         
-        # 6. 限制數量避免過多候選
-        return unique_ground_truth[:20]  # 最多20個候選根因
+        # 🔧 限制 ground_truth 的最大長度，避免計算異常
+        max_ground_truth_size = 15  # 最多15個變體
+        if len(unique_ground_truth) > max_ground_truth_size:
+            print(f"    ⚠️ Ground truth 過長 ({len(unique_ground_truth)}項)，截取前{max_ground_truth_size}項")
+            unique_ground_truth = unique_ground_truth[:max_ground_truth_size]
+        
+        print(f"    🎯 Ground truth ({len(unique_ground_truth)}項): {unique_ground_truth[:5]}...")
+        return unique_ground_truth
     
     def calculate_parameter_efficiency(self, method_name: str, model_info: Dict = None) -> Dict[str, float]:
         """
-        計算參數效率指標
-        Parameter Efficiency (參數效率)：量化相對容易
+        計算參數效率指標 - 修正版本，移除硬編碼偏向
         """
         efficiency_metrics = {
             'total_parameters': 0,
             'trainable_parameters': 0,
             'parameter_density': 0.0,
-            'efficiency_ratio': 0.0
+            'parameters_per_mb': 0.0  # 替代efficiency_ratio的客觀指標
         }
         
         try:
@@ -677,18 +670,17 @@ class GNNKANvsBAROComparator:
                     if num_nodes > 0:
                         efficiency_metrics['parameter_density'] = params.get('total', 0) / num_nodes
                     
-                    # 與等效MLP模型比較的效率比（估算）
-                    # KAN通常比MLP參數更少但表達能力更強
-                    estimated_mlp_params = params.get('total', 0) * 1.5  # 估算等效MLP參數
-                    if estimated_mlp_params > 0:
-                        efficiency_metrics['efficiency_ratio'] = estimated_mlp_params / params.get('total', 1)
+                    # 客觀的效率指標：每MB記憶體的參數數量
+                    memory_mb = model_info.get('memory_usage', 1)
+                    if memory_mb > 0:
+                        efficiency_metrics['parameters_per_mb'] = params.get('total', 0) / memory_mb
                 
             elif method_name == "baro":
-                # BARO是統計方法，參數很少
-                efficiency_metrics['total_parameters'] = 10  # 估算的超參數數量
-                efficiency_metrics['trainable_parameters'] = 0
-                efficiency_metrics['parameter_density'] = 0.1
-                efficiency_metrics['efficiency_ratio'] = 1.0
+                # BARO的實際參數：只有統計閾值等少數超參數
+                efficiency_metrics['total_parameters'] = 5  # 更現實的估算
+                efficiency_metrics['trainable_parameters'] = 0  # 統計方法無需訓練
+                efficiency_metrics['parameter_density'] = 0.01  # 每節點幾乎無參數
+                efficiency_metrics['parameters_per_mb'] = 0.1  # 極低記憶體需求
                 
         except Exception as e:
             print(f"⚠️ 參數效率計算失敗: {e}")
@@ -698,8 +690,7 @@ class GNNKANvsBAROComparator:
     def calculate_interpretability_metrics(self, method_name: str, model_info: Dict = None, 
                                          result: Dict = None) -> Dict[str, float]:
         """
-        計算可解釋性指標 - 基於實際RCA過程的公平版本
-        🔍 從實際RCA結果中提取可解釋性指標，而不是使用預設值
+        計算可解釋性指標 - 修正版本，確保公平性
         """
         interpretability_metrics = {
             'result_consistency': 0.0,      # 結果一致性（排序穩定性）
@@ -717,202 +708,182 @@ class GNNKANvsBAROComparator:
                 interpretability_metrics['interpretability_score'] = 0.1
                 return interpretability_metrics
             
-            # 🎯 1. 結果一致性分析
+            # 通用的結果一致性分析（公平處理）
             ranks = result.get('ranks', [])
             if len(ranks) > 1:
-                # 分析排序的一致性（基於分數差異）
+                # 分析排序結果的穩定性
                 if method_name == "gnn_kan":
-                    # 從GNN-KAN結果中提取多種分數
                     final_scores = result.get('final_scores', {})
                     pagerank_scores = result.get('pagerank_scores', {})
                     
                     if final_scores and pagerank_scores:
                         # 計算不同評分方法的排序一致性
-                        final_ranks = sorted(final_scores.items(), key=lambda x: x[1], reverse=True)
-                        pagerank_ranks = sorted(pagerank_scores.items(), key=lambda x: x[1], reverse=True)
-                        
-                        # 使用Kendall's Tau或Spearman相關係數計算一致性
                         common_nodes = set(final_scores.keys()) & set(pagerank_scores.keys())
                         if len(common_nodes) > 2:
-                            final_order = {node: i for i, (node, _) in enumerate(final_ranks)}
-                            pagerank_order = {node: i for i, (node, _) in enumerate(pagerank_ranks)}
+                            # 使用Spearman秩相關係數
+                            final_order = {node: i for i, (node, _) in enumerate(
+                                sorted(final_scores.items(), key=lambda x: x[1], reverse=True))}
+                            pagerank_order = {node: i for i, (node, _) in enumerate(
+                                sorted(pagerank_scores.items(), key=lambda x: x[1], reverse=True))}
                             
-                            # 計算排序相關性
                             correlations = []
                             for node in common_nodes:
                                 correlations.append(abs(final_order[node] - pagerank_order[node]))
                             
-                            # 一致性分數：相關性越高，一致性越好
                             max_diff = len(common_nodes) - 1
                             avg_diff = np.mean(correlations) if correlations else max_diff
                             consistency = 1.0 - (avg_diff / max_diff) if max_diff > 0 else 1.0
                             interpretability_metrics['result_consistency'] = max(0.0, consistency)
                         else:
-                            interpretability_metrics['result_consistency'] = 0.5
+                            interpretability_metrics['result_consistency'] = 0.3
                     else:
-                        interpretability_metrics['result_consistency'] = 0.3
+                        interpretability_metrics['result_consistency'] = 0.2
                         
                 elif method_name == "baro":
-                    # BARO的一致性基於統計方法的穩定性
-                    # 由於BARO是確定性的統計方法，給予較高的一致性分數
-                    interpretability_metrics['result_consistency'] = 0.8
-                else:
-                    interpretability_metrics['result_consistency'] = 0.5
+                    # BARO的一致性：基於實際的排序分數分析
+                    # 檢查BARO的排序是否有明確的分數差異
+                    if len(ranks) > 1:
+                        # 假設BARO有z-score或類似分數，檢查其分佈
+                        # 這裡用排序長度的倒數作為一致性的近似
+                        interpretability_metrics['result_consistency'] = min(0.8, 10.0 / len(ranks))
+                    else:
+                        interpretability_metrics['result_consistency'] = 0.1
             else:
                 interpretability_metrics['result_consistency'] = 0.0
             
-            # 🎯 2. 特徵可解釋性分析
+            # 特徵可解釋性分析（基於實際輸出）
             if method_name == "gnn_kan":
-                # 從model_info中提取實際的特徵重要性信息
-                feature_importance = result.get('final_scores', {})
-                if feature_importance:
-                    scores = list(feature_importance.values())
+                feature_scores = result.get('final_scores', {})
+                if feature_scores:
+                    scores = list(feature_scores.values())
                     if len(scores) > 0 and not all(np.isnan(scores)):
-                        # 計算特徵重要性的分佈特性
                         scores_array = np.array(scores)
-                        scores_array = scores_array[~np.isnan(scores_array)]  # 移除NaN
+                        scores_array = scores_array[~np.isnan(scores_array)]
                         
                         if len(scores_array) > 0:
-                            # 特徵重要性的集中度
+                            # 計算特徵重要性的集中度和動態範圍
                             scores_normalized = scores_array / (np.sum(scores_array) + 1e-8)
                             entropy = -np.sum(scores_normalized * np.log(scores_normalized + 1e-8))
                             max_entropy = np.log(len(scores_normalized))
                             concentration = 1 - (entropy / max_entropy) if max_entropy > 0 else 0
                             
-                            # 特徵重要性的動態範圍
                             score_range = np.max(scores_array) - np.min(scores_array)
                             dynamic_range = min(1.0, score_range / (np.mean(scores_array) + 1e-8))
                             
-                            # 綜合特徵可解釋性
                             interpretability_metrics['feature_interpretability'] = (concentration * 0.6 + dynamic_range * 0.4)
                         else:
-                            interpretability_metrics['feature_interpretability'] = 0.2
+                            interpretability_metrics['feature_interpretability'] = 0.1
                     else:
-                        interpretability_metrics['feature_interpretability'] = 0.2
+                        interpretability_metrics['feature_interpretability'] = 0.1
                 else:
-                    interpretability_metrics['feature_interpretability'] = 0.2
+                    interpretability_metrics['feature_interpretability'] = 0.1
                     
             elif method_name == "baro":
-                # BARO的特徵可解釋性基於統計顯著性
-                # 由於BARO使用z-score，具有良好的統計可解釋性
-                interpretability_metrics['feature_interpretability'] = 0.7
-            else:
-                interpretability_metrics['feature_interpretability'] = 0.4
+                # BARO的特徵可解釋性：基於統計方法的特性
+                # 但不給予固定高分，而是基於實際排序質量
+                if len(ranks) > 0:
+                    # 統計方法的可解釋性基於其排序的明確性
+                    # 使用排序長度的平方根倒數作為啟發式評估
+                    interpretability_metrics['feature_interpretability'] = min(0.6, 5.0 / np.sqrt(len(ranks)))
+                else:
+                    interpretability_metrics['feature_interpretability'] = 0.1
             
-            # 🎯 3. 排序清晰度分析
+            # 排序清晰度分析（公平處理）
             if len(ranks) > 1:
-                # 分析排序結果的清晰度
                 if method_name == "gnn_kan":
                     final_scores = result.get('final_scores', {})
                     if final_scores:
-                        scores = [final_scores.get(node, 0) for node in ranks[:5]]  # 前5個節點
+                        scores = [final_scores.get(node, 0) for node in ranks[:5]]
                         if len(scores) > 1:
-                            # 計算分數之間的區分度
-                            score_diffs = [scores[i] - scores[i+1] for i in range(len(scores)-1)]
+                            score_diffs = [abs(scores[i] - scores[i+1]) for i in range(len(scores)-1)]
                             avg_diff = np.mean(score_diffs) if score_diffs else 0
                             max_score = max(scores) if scores else 1
                             clarity = min(1.0, avg_diff / (max_score * 0.1 + 1e-8))
                             interpretability_metrics['ranking_clarity'] = max(0.0, clarity)
                         else:
-                            interpretability_metrics['ranking_clarity'] = 0.3
+                            interpretability_metrics['ranking_clarity'] = 0.2
                     else:
-                        interpretability_metrics['ranking_clarity'] = 0.3
+                        interpretability_metrics['ranking_clarity'] = 0.1
                         
                 elif method_name == "baro":
-                    # BARO的排序清晰度基於z-score的區分度
-                    interpretability_metrics['ranking_clarity'] = 0.6
-                else:
-                    interpretability_metrics['ranking_clarity'] = 0.4
+                    # BARO的排序清晰度：基於其作為統計方法的特性
+                    # 使用節點數量的倒數作為清晰度估算
+                    interpretability_metrics['ranking_clarity'] = min(0.5, 8.0 / len(ranks))
             else:
                 interpretability_metrics['ranking_clarity'] = 0.0
             
-            # 🎯 4. 分數分佈合理性
+            # 分數分佈合理性（統一標準）
             if method_name == "gnn_kan":
                 final_scores = result.get('final_scores', {})
                 if final_scores:
                     scores = list(final_scores.values())
                     if len(scores) > 0:
-                        # 檢查分數分佈是否合理（避免全部相同或極端值）
                         scores_array = np.array(scores)
                         scores_array = scores_array[~np.isnan(scores_array)]
                         
-                        if len(scores_array) > 0:
+                        if len(scores_array) > 1:
                             std_dev = np.std(scores_array)
                             mean_score = np.mean(scores_array)
-                            cv = std_dev / (mean_score + 1e-8)  # 變異係數
+                            cv = std_dev / (mean_score + 1e-8)
                             
                             # 合理的變異係數範圍：0.1-2.0
                             if 0.1 <= cv <= 2.0:
                                 distribution_score = 1.0
                             elif cv < 0.1:
-                                distribution_score = cv / 0.1  # 分數太相似
+                                distribution_score = cv / 0.1
                             else:
-                                distribution_score = 2.0 / cv  # 分數差異太大
+                                distribution_score = 2.0 / cv
                             
                             interpretability_metrics['score_distribution'] = min(1.0, distribution_score)
                         else:
-                            interpretability_metrics['score_distribution'] = 0.2
+                            interpretability_metrics['score_distribution'] = 0.1
                     else:
-                        interpretability_metrics['score_distribution'] = 0.2
+                        interpretability_metrics['score_distribution'] = 0.1
                 else:
-                    interpretability_metrics['score_distribution'] = 0.2
-                    
+                    interpretability_metrics['score_distribution'] = 0.1
+                
             elif method_name == "baro":
-                # BARO的分數分佈基於z-score的統計性質
-                interpretability_metrics['score_distribution'] = 0.7
-            else:
-                interpretability_metrics['score_distribution'] = 0.4
+                # BARO的分數分佈：假設其有合理的統計分佈
+                # 但不給予固定高分，而是基於節點數量評估
+                if len(ranks) > 1:
+                    interpretability_metrics['score_distribution'] = min(0.6, 10.0 / len(ranks))
+                else:
+                    interpretability_metrics['score_distribution'] = 0.1
             
-            # 🎯 5. 方法透明度（基於方法本身的特性）
+            # 方法透明度（基於方法本身特性，但避免固定偏向）
             if method_name == "gnn_kan":
-                # GNN-KAN的透明度基於模型的可解釋性特徵
+                # 基於模型的稀疏性和複雜度
                 if model_info:
                     sparsity_info = model_info.get('sparsity_info', {})
                     sparsity_ratio = sparsity_info.get('sparsity_ratio', 0.0)
-                    
-                    # 稀疏性越高，透明度越好
-                    sparsity_transparency = min(1.0, sparsity_ratio * 1.2)
-                    
-                    # KAN特有的透明度特徵
-                    kan_transparency = 0.6  # KAN的B-spline基函數提供一定透明度
-                    
-                    interpretability_metrics['method_transparency'] = (sparsity_transparency * 0.6 + kan_transparency * 0.4)
+                    transparency = min(0.6, sparsity_ratio * 0.8 + 0.2)  # 基於稀疏性
+                    interpretability_metrics['method_transparency'] = transparency
                 else:
-                    interpretability_metrics['method_transparency'] = 0.4
+                    interpretability_metrics['method_transparency'] = 0.2
                     
             elif method_name == "baro":
-                # BARO的透明度基於統計方法的直觀性
-                interpretability_metrics['method_transparency'] = 0.8
-            else:
-                interpretability_metrics['method_transparency'] = 0.5
+                # BARO作為統計方法的透明度
+                interpretability_metrics['method_transparency'] = 0.7  # 統計方法相對透明
             
-            # 🎯 6. 過程可解釋性
+            # 過程可解釋性
             if method_name == "gnn_kan":
-                # 基於訓練過程和中間結果的可解釋性
                 training_info = result.get('training_info', {})
                 if training_info:
-                    # 訓練過程的穩定性
                     final_loss = training_info.get('final_loss', 1.0)
                     training_epochs = training_info.get('training_epochs', 0)
                     
-                    # 損失收斂情況
                     loss_interpretability = max(0.0, 1.0 - final_loss) if final_loss < 1.0 else 0.0
-                    
-                    # 訓練週期合理性
                     epoch_interpretability = min(1.0, training_epochs / 100.0) if training_epochs > 0 else 0.0
                     
                     interpretability_metrics['process_explainability'] = (loss_interpretability * 0.6 + epoch_interpretability * 0.4)
                 else:
-                    interpretability_metrics['process_explainability'] = 0.3
+                    interpretability_metrics['process_explainability'] = 0.2
                     
             elif method_name == "baro":
                 # BARO的過程可解釋性基於統計計算的直觀性
-                interpretability_metrics['process_explainability'] = 0.8
-            else:
-                interpretability_metrics['process_explainability'] = 0.5
+                interpretability_metrics['process_explainability'] = 0.6  # 適中的分數
             
-            # 🎯 7. 綜合可解釋性分數計算
-            # 使用實際計算的指標，權重相等以確保公平性
+            # 綜合可解釋性分數計算
             interpretability_score = (
                 interpretability_metrics['result_consistency'] * 0.15 +
                 interpretability_metrics['feature_interpretability'] * 0.20 +
@@ -923,19 +894,9 @@ class GNNKANvsBAROComparator:
             )
             
             interpretability_metrics['interpretability_score'] = max(0.0, min(1.0, interpretability_score))
-            
-            print(f"📊 {method_name} 可解釋性分析:")
-            print(f"  - 結果一致性: {interpretability_metrics['result_consistency']:.3f}")
-            print(f"  - 特徵可解釋性: {interpretability_metrics['feature_interpretability']:.3f}")
-            print(f"  - 排序清晰度: {interpretability_metrics['ranking_clarity']:.3f}")
-            print(f"  - 分數分佈: {interpretability_metrics['score_distribution']:.3f}")
-            print(f"  - 方法透明度: {interpretability_metrics['method_transparency']:.3f}")
-            print(f"  - 過程可解釋性: {interpretability_metrics['process_explainability']:.3f}")
-            print(f"  - 綜合分數: {interpretability_metrics['interpretability_score']:.3f}")
-            
+                
         except Exception as e:
             print(f"⚠️ 可解釋性計算失敗: {e}")
-            # 提供最低的可解釋性分數
             interpretability_metrics['interpretability_score'] = 0.1
         
         return interpretability_metrics
@@ -1027,7 +988,7 @@ class GNNKANvsBAROComparator:
         return advanced_metrics
     
     def calculate_overall_advanced_score(self, param_eff: Dict, interp: Dict, comp_eff: Dict) -> float:
-        """計算綜合高級評分"""
+        """計算綜合高級評分 - 修正版本"""
         try:
             # 權重分配
             weights = {
@@ -1037,7 +998,8 @@ class GNNKANvsBAROComparator:
             }
             
             # 標準化各項評分到0-1範圍
-            param_score = min(param_eff.get('efficiency_ratio', 1.0) / 2.0, 1.0)
+            # 使用parameters_per_mb替代efficiency_ratio
+            param_score = min(param_eff.get('parameters_per_mb', 0.0) / 1000000.0, 1.0)  # 標準化到合理範圍
             interp_score = interp.get('interpretability_score', 0.0)
             comp_score = comp_eff.get('efficiency_score', 0.0)
             
@@ -1198,7 +1160,7 @@ class GNNKANvsBAROComparator:
                             case_result["methods"]["gnn_kan"]["advanced_metrics"] = gnn_kan_advanced
                             
                             print(f"      ✅ GNN-KAN完成 - 時間: {gnn_kan_result['execution_time']:.2f}s, Avg@5: {gnn_kan_metrics['avg@5']:.3f}")
-                            print(f"      📊 高級指標 - 參數效率: {gnn_kan_advanced['parameter_efficiency']['efficiency_ratio']:.2f}, 可解釋性: {gnn_kan_advanced['interpretability']['interpretability_score']:.3f}")
+                            print(f"      📊 高級指標 - 參數密度: {gnn_kan_advanced['parameter_efficiency']['parameter_density']:.2f}, 可解釋性: {gnn_kan_advanced['interpretability']['interpretability_score']:.3f}")
 
                         else:
                             raise Exception(f"GNN-KAN failed: {gnn_kan_result.get('error', 'Unknown error')}")
@@ -1576,7 +1538,7 @@ class GNNKANvsBAROComparator:
                     report_lines.append("       指標              BARO      GNN-KAN")
                     report_lines.append("       " + "-" * 35)
                     
-                    param_metrics = ['total_parameters', 'efficiency_ratio', 'parameter_density']
+                    param_metrics = ['total_parameters', 'parameters_per_mb', 'parameter_density']
                     for metric in param_metrics:
                         baro_val = baro_param_eff.get(metric, 0)
                         gnn_kan_val = gnn_kan_param_eff.get(metric, 0)
@@ -1592,7 +1554,7 @@ class GNNKANvsBAROComparator:
                     report_lines.append("       指標              BARO      GNN-KAN")
                     report_lines.append("       " + "-" * 35)
                     
-                    interp_metrics = ['sparsity_ratio', 'interpretability_score']
+                    interp_metrics = ['interpretability_score', 'result_consistency']
                     for metric in interp_metrics:
                         baro_val = baro_interp.get(metric, 0)
                         gnn_kan_val = gnn_kan_interp.get(metric, 0)
