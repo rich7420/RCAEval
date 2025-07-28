@@ -478,7 +478,7 @@ class GNNKANvsBAROComparator:
         # 確保ground_truth是列表
         if isinstance(ground_truth, str):
             ground_truth = [ground_truth]
-        
+            
         # 🔥 修正：計算實際獨特相關項目數量
         unique_relevant_items = set()
         for gt in ground_truth:
@@ -708,68 +708,46 @@ class GNNKANvsBAROComparator:
                 interpretability_metrics['interpretability_score'] = 0.1
                 return interpretability_metrics
             
-            # 通用的結果一致性分析（公平處理）
             ranks = result.get('ranks', [])
+
+            # --- 結果一致性 ---
             if len(ranks) > 1:
-                # 分析排序結果的穩定性
                 if method_name == "gnn_kan":
                     final_scores = result.get('final_scores', {})
                     pagerank_scores = result.get('pagerank_scores', {})
-                    
                     if final_scores and pagerank_scores:
-                        # 計算不同評分方法的排序一致性
                         common_nodes = set(final_scores.keys()) & set(pagerank_scores.keys())
                         if len(common_nodes) > 2:
-                            # 使用Spearman秩相關係數
-                            final_order = {node: i for i, (node, _) in enumerate(
-                                sorted(final_scores.items(), key=lambda x: x[1], reverse=True))}
-                            pagerank_order = {node: i for i, (node, _) in enumerate(
-                                sorted(pagerank_scores.items(), key=lambda x: x[1], reverse=True))}
-                            
-                            correlations = []
-                            for node in common_nodes:
-                                correlations.append(abs(final_order[node] - pagerank_order[node]))
-                            
+                            final_order = {node: i for i, (node, _) in enumerate(sorted(final_scores.items(), key=lambda x: x[1], reverse=True))}
+                            pagerank_order = {node: i for i, (node, _) in enumerate(sorted(pagerank_scores.items(), key=lambda x: x[1], reverse=True))}
+                            correlations = [abs(final_order[node] - pagerank_order[node]) for node in common_nodes]
                             max_diff = len(common_nodes) - 1
                             avg_diff = np.mean(correlations) if correlations else max_diff
                             consistency = 1.0 - (avg_diff / max_diff) if max_diff > 0 else 1.0
                             interpretability_metrics['result_consistency'] = max(0.0, consistency)
                         else:
                             interpretability_metrics['result_consistency'] = 0.3
-                    else:
-                        interpretability_metrics['result_consistency'] = 0.2
-                        
                 elif method_name == "baro":
-                    # BARO的一致性：基於實際的排序分數分析
-                    # 檢查BARO的排序是否有明確的分數差異
-                    if len(ranks) > 1:
-                        # 假設BARO有z-score或類似分數，檢查其分佈
-                        # 這裡用排序長度的倒數作為一致性的近似
-                        interpretability_metrics['result_consistency'] = min(0.8, 10.0 / len(ranks))
-                    else:
-                        interpretability_metrics['result_consistency'] = 0.1
+                    interpretability_metrics['result_consistency'] = min(0.8, 10.0 / len(ranks))
+                else:
+                    interpretability_metrics['result_consistency'] = 0.1
             else:
                 interpretability_metrics['result_consistency'] = 0.0
-            
-            # 特徵可解釋性分析（基於實際輸出）
+
+            # --- 特徵可解釋性 ---
             if method_name == "gnn_kan":
                 feature_scores = result.get('final_scores', {})
                 if feature_scores:
                     scores = list(feature_scores.values())
                     if len(scores) > 0 and not all(np.isnan(scores)):
-                        scores_array = np.array(scores)
-                        scores_array = scores_array[~np.isnan(scores_array)]
-                        
+                        scores_array = np.array(scores)[~np.isnan(np.array(scores))]
                         if len(scores_array) > 0:
-                            # 計算特徵重要性的集中度和動態範圍
                             scores_normalized = scores_array / (np.sum(scores_array) + 1e-8)
                             entropy = -np.sum(scores_normalized * np.log(scores_normalized + 1e-8))
                             max_entropy = np.log(len(scores_normalized))
                             concentration = 1 - (entropy / max_entropy) if max_entropy > 0 else 0
-                            
                             score_range = np.max(scores_array) - np.min(scores_array)
                             dynamic_range = min(1.0, score_range / (np.mean(scores_array) + 1e-8))
-                            
                             interpretability_metrics['feature_interpretability'] = (concentration * 0.6 + dynamic_range * 0.4)
                         else:
                             interpretability_metrics['feature_interpretability'] = 0.1
@@ -777,18 +755,13 @@ class GNNKANvsBAROComparator:
                         interpretability_metrics['feature_interpretability'] = 0.1
                 else:
                     interpretability_metrics['feature_interpretability'] = 0.1
-                    
             elif method_name == "baro":
-                # BARO的特徵可解釋性：基於統計方法的特性
-                # 但不給予固定高分，而是基於實際排序質量
                 if len(ranks) > 0:
-                    # 統計方法的可解釋性基於其排序的明確性
-                    # 使用排序長度的平方根倒數作為啟發式評估
                     interpretability_metrics['feature_interpretability'] = min(0.6, 5.0 / np.sqrt(len(ranks)))
                 else:
-                    interpretability_metrics['feature_interpretability'] = 0.1
+                    interpretability_metrics['feature_interpretability'] = 0.1 # Corrected from assigning to a non-existent branch
             
-            # 排序清晰度分析（公平處理）
+            # --- 排序清晰度 ---
             if len(ranks) > 1:
                 if method_name == "gnn_kan":
                     final_scores = result.get('final_scores', {})
@@ -804,36 +777,28 @@ class GNNKANvsBAROComparator:
                             interpretability_metrics['ranking_clarity'] = 0.2
                     else:
                         interpretability_metrics['ranking_clarity'] = 0.1
-                        
                 elif method_name == "baro":
-                    # BARO的排序清晰度：基於其作為統計方法的特性
-                    # 使用節點數量的倒數作為清晰度估算
                     interpretability_metrics['ranking_clarity'] = min(0.5, 8.0 / len(ranks))
             else:
                 interpretability_metrics['ranking_clarity'] = 0.0
-            
-            # 分數分佈合理性（統一標準）
+
+            # --- 分數分佈合理性 ---
             if method_name == "gnn_kan":
                 final_scores = result.get('final_scores', {})
                 if final_scores:
                     scores = list(final_scores.values())
                     if len(scores) > 0:
-                        scores_array = np.array(scores)
-                        scores_array = scores_array[~np.isnan(scores_array)]
-                        
+                        scores_array = np.array(scores)[~np.isnan(np.array(scores))]
                         if len(scores_array) > 1:
                             std_dev = np.std(scores_array)
                             mean_score = np.mean(scores_array)
                             cv = std_dev / (mean_score + 1e-8)
-                            
-                            # 合理的變異係數範圍：0.1-2.0
                             if 0.1 <= cv <= 2.0:
                                 distribution_score = 1.0
                             elif cv < 0.1:
                                 distribution_score = cv / 0.1
                             else:
                                 distribution_score = 2.0 / cv
-                            
                             interpretability_metrics['score_distribution'] = min(1.0, distribution_score)
                         else:
                             interpretability_metrics['score_distribution'] = 0.1
@@ -841,49 +806,39 @@ class GNNKANvsBAROComparator:
                         interpretability_metrics['score_distribution'] = 0.1
                 else:
                     interpretability_metrics['score_distribution'] = 0.1
-                
             elif method_name == "baro":
-                # BARO的分數分佈：假設其有合理的統計分佈
-                # 但不給予固定高分，而是基於節點數量評估
                 if len(ranks) > 1:
                     interpretability_metrics['score_distribution'] = min(0.6, 10.0 / len(ranks))
                 else:
-                    interpretability_metrics['score_distribution'] = 0.1
+                    interpretability_metrics['score_distribution'] = 0.1 # Corrected from assigning to a non-existent branch
             
-            # 方法透明度（基於方法本身特性，但避免固定偏向）
+            # --- 方法透明度 ---
             if method_name == "gnn_kan":
-                # 基於模型的稀疏性和複雜度
                 if model_info:
                     sparsity_info = model_info.get('sparsity_info', {})
                     sparsity_ratio = sparsity_info.get('sparsity_ratio', 0.0)
-                    transparency = min(0.6, sparsity_ratio * 0.8 + 0.2)  # 基於稀疏性
+                    transparency = min(0.6, sparsity_ratio * 0.8 + 0.2)
                     interpretability_metrics['method_transparency'] = transparency
                 else:
                     interpretability_metrics['method_transparency'] = 0.2
-                    
             elif method_name == "baro":
-                # BARO作為統計方法的透明度
-                interpretability_metrics['method_transparency'] = 0.7  # 統計方法相對透明
+                interpretability_metrics['method_transparency'] = 0.7
             
-            # 過程可解釋性
+            # --- 過程可解釋性 ---
             if method_name == "gnn_kan":
                 training_info = result.get('training_info', {})
                 if training_info:
                     final_loss = training_info.get('final_loss', 1.0)
                     training_epochs = training_info.get('training_epochs', 0)
-                    
                     loss_interpretability = max(0.0, 1.0 - final_loss) if final_loss < 1.0 else 0.0
                     epoch_interpretability = min(1.0, training_epochs / 100.0) if training_epochs > 0 else 0.0
-                    
                     interpretability_metrics['process_explainability'] = (loss_interpretability * 0.6 + epoch_interpretability * 0.4)
                 else:
                     interpretability_metrics['process_explainability'] = 0.2
-                    
             elif method_name == "baro":
-                # BARO的過程可解釋性基於統計計算的直觀性
-                interpretability_metrics['process_explainability'] = 0.6  # 適中的分數
+                interpretability_metrics['process_explainability'] = 0.6
             
-            # 綜合可解釋性分數計算
+            # --- 綜合可解釋性分數計算 ---
             interpretability_score = (
                 interpretability_metrics['result_consistency'] * 0.15 +
                 interpretability_metrics['feature_interpretability'] * 0.20 +
@@ -892,7 +847,6 @@ class GNNKANvsBAROComparator:
                 interpretability_metrics['method_transparency'] * 0.20 +
                 interpretability_metrics['process_explainability'] * 0.15
             )
-            
             interpretability_metrics['interpretability_score'] = max(0.0, min(1.0, interpretability_score))
                 
         except Exception as e:
