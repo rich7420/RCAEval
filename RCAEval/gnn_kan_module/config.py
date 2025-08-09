@@ -256,113 +256,117 @@ class SimplifiedGNNKANConfig:
 class HighCapacityGNNKANConfig(SimplifiedGNNKANConfig):
     """
     高容量KAN配置 - 保持純粹性的同時提升表達能力
-    專門用於複雜場景和大規模數據
+    🔧 修正版：解決維度不匹配和穩定性問題
     """
     
     def __init__(self):
         super().__init__()
         
-        # 🚀 增強KAN容量 - 保持純粹性
-        self.kan_grid_size = 12             # 更高密度的B-spline
-        self.kan_num_basis = 12             # 更多基函數
-        self.kan_spline_order = 4           # 更高階樣條
+        # 🚀 增強KAN容量 - 保持與輸入處理器兼容
+        self.kan_grid_size = 8              # 適度增加 B-spline 密度
+        self.kan_num_basis = 8              # 適度增加基函數
+        self.kan_spline_order = 4           # 稍高階樣條
         
-        # 🎯 擴展架構 - 深度KAN網絡
-        self.input_dim = 128
-        self.target_feature_dim = 128       # 目標特徵維度  
-        self.hidden_dims = [256, 192, 128, 96, 64]  # 5層深度
-        self.output_dim = 64
-        self.num_gnn_layers = 3
+        # 🎯 擴展架構 - 與實際特徵維度匹配
+        self.input_dim = 64                 # 🔧 修正：匹配實際輸入特徵維度
+        self.target_feature_dim = 64        # 🔧 修正：與 optimized_config 一致
+        self.hidden_dims = [96, 64, 48]     # 🔧 修正：適度深化，避免過度複雜
+        self.output_dim = 32                # 🔧 修正：適中的輸出維度
+        self.num_gnn_layers = 2             # 🔧 修正：從3層減少到2層，提高穩定性
         
-        # 🔧 高容量特徵處理
-        self.feature_method = 'ica'         # 高容量場景下ICA更有效
-        self.ica_components = 16            # 更多ICA成分
+        # 🔧 高容量特徵處理 - 與當前系統兼容
+        self.feature_method = 'kpca'        # 🔧 修正：與 optimized_config 一致
+        self.kpca_kernel = 'rbf'            # 🔧 修正：確保一致性
+        self.ica_components = 12            # 保持適中的 ICA 成分
         
-        # ⚡ 高容量穩定性
-        self.gradient_clip_norm = 0.8       # 更嚴格的梯度控制
-        self.stability_check_freq = 30      # 更頻繁的穩定性檢查
-        self.dropout = 0.15                 # 更強的正則化
+        # ⚡ 高容量穩定性 - 加強數值穩定性
+        self.gradient_clip_norm = 0.5       # 🔧 修正：更嚴格的梯度控制
+        self.stability_check_freq = 20      # 🔧 修正：更頻繁檢查，但不過度
+        self.dropout = 0.25                 # 🔧 修正：適度增強正則化
         
-        # 📈 高容量訓練
-        self.learning_rate = 0.0005         # 更小的學習率
-        self.base_learning_rate = 0.0005    # 兼容性別名
-        self.num_epochs = 150               # 更多訓練輪次
+        # 📈 高容量訓練 - 更保守的訓練策略
+        self.learning_rate = 5e-5           # 🔧 修正：更小的學習率提高穩定性
+        self.base_learning_rate = 5e-5      # 兼容性別名
+        self.num_epochs = 150               # 🔧 修正：適中的訓練輪次
         self.epochs = 150                   # 兼容性別名
-        self.patience = 25                  # 更大的耐心值
-        self.warmup_epochs = 15             # 預熱階段
+        self.patience = 20                  # 🔧 修正：適中的耐心值
+        self.warmup_epochs = 10             # 🔧 修正：適度預熱
         
-        # 🎯 高容量KAN正則化
-        self.base_l1_lambda = 2e-3          # 兼容性別名
-        self.base_entropy_lambda = 2e-3     # 兼容性別名
-        self.stability_check_frequency = 30 # 穩定性檢查頻率
+        # 🎯 高容量KAN正則化 - 平衡表達能力與穩定性
+        self.base_l1_lambda = 1e-3          # 保持適度正則化
+        self.base_entropy_lambda = 1e-3     # 保持適度熵正則化
+        self.stability_check_frequency = 25 # 🔧 修正：平衡檢查頻率
         
-        self.use_kpca = True  # 優先使用kPCA
-        self.l2_lambda = 5e-5
-        self.smoothness_lambda = 2e-6
-        self.learnable_edges = True
-        self.max_log_features = 150
+        # 🔧 兼容性配置 - 確保與現有系統無縫集成
+        self.use_kpca = True                # 與 optimized_config 一致
+        self.l2_lambda = 1e-5               # 適度 L2 正則化
+        self.smoothness_lambda = 1e-6       # 平滑性正則化
+        self.learnable_edges = True         # 保持動態圖學習
+        self.max_log_features = 100         # 適中的日誌特徵數
         
-        # 🔧 模型特定配置 - 確保兼容性
-        self.hidden_dim = self.hidden_dims[0] if self.hidden_dims else 128
+        # 🔧 模型特定配置 - 確保維度兼容性
+        self.hidden_dim = self.hidden_dims[0] if self.hidden_dims else 96
         self.num_layers = self.num_gnn_layers  # 層數別名
-        self.use_residual = True  # 殘差連接
+        self.use_residual = True            # 殘差連接提高穩定性
         self.kan_config = self.get_kan_config()  # KAN配置對象
     
     def update_for_kan_purity(self):
-        """更新配置以最大化KAN純粹性，最小化MLP特性"""
-        print("🎯 Updating config for maximum KAN purity...")
+        """更新配置以最大化KAN純粹性，同時保持穩定性"""
+        print("🎯 Updating HighCapacity config for balanced KAN purity and stability...")
         
-        # 🚀 大幅增強KAN表達能力 - 針對複雜數據集優化
-        self.kan_grid_size = max(20, self.kan_grid_size)  # 高容量版本更高
-        self.kan_num_basis = max(24, self.kan_num_basis)  # 更多基函數
-        self.kan_spline_order = max(6, self.kan_spline_order)  # 更高階樣條
+        # 🚀 平衡的KAN增強 - 避免過度複雜化
+        self.kan_grid_size = min(12, self.kan_grid_size + 2)    # 🔧 修正：適度增加
+        self.kan_num_basis = min(12, self.kan_num_basis + 2)    # 🔧 修正：適度增加
+        self.kan_spline_order = min(5, self.kan_spline_order + 1) # 🔧 修正：限制最大階數
         self.adaptive_spline_order = True
         self.learnable_activation = True
         self.minimize_linear_component = True
         
-        # 🎯 增強特徵處理能力 - 專門針對train-ticket類型數據
-        if self.feature_method in ['simplified', 'stl']:
-            self.feature_method = 'ica'  # 強制使用更強的特徵處理
+        # 🎯 保守的特徵處理增強
+        if self.feature_method in ['simplified']:
+            self.feature_method = 'kpca'    # 🔧 修正：使用穩定的 KPCA
         
-        # 🔥 深化網絡架構 - 提升複雜模式學習能力
+        # 🔥 保守的網絡架構調整 - 避免梯度問題
         if hasattr(self, 'hidden_dims'):
-            # 擴展到更深的網絡 - 高容量版本
-            self.hidden_dims = [768, 512, 384, 256, 192, 128, 96, 64]
-        else:
-            self.hidden_dims = [384, 256, 192, 128]
+            # 🔧 修正：適度擴展，保持穩定性
+            self.hidden_dims = [128, 96, 64]  # 比原始方案更保守
         
-        # 📈 優化訓練配置 - 提升準確率
-        self.learning_rate = min(0.0002, self.learning_rate)  # 更小學習率
-        self.num_epochs = max(250, self.num_epochs)  # 更多訓練輪數
-        self.warmup_epochs = max(30, getattr(self, 'warmup_epochs', 15))
+        # 📈 穩定的訓練配置
+        self.learning_rate = min(3e-5, self.learning_rate)  # 🔧 修正：更保守的學習率
+        self.num_epochs = min(200, self.num_epochs + 20)    # 🔧 修正：適度增加訓練
+        self.warmup_epochs = min(15, getattr(self, 'warmup_epochs', 10) + 5)
         
-        # 🎯 強化正則化 - 避免過擬合同時保持表達能力
-        self.gradient_clip_norm = 0.3  # 更嚴格的梯度控制
-        self.dropout = max(0.2, self.dropout)  # 更強的正則化
+        # 🎯 增強穩定性控制
+        self.gradient_clip_norm = 0.3       # 🔧 修正：更嚴格控制
+        self.dropout = min(0.3, self.dropout + 0.05)  # 🔧 修正：適度增加 dropout
         
-        # 🔧 ICA增強配置 - 專門處理複雜時序特徵
-        current_ica = getattr(self, 'ica_components', None)
-        if current_ica is None:
-            self.ica_components = 48  # 默認值
-        else:
-            self.ica_components = max(48, current_ica)
-        self.ica_max_iter = 1500  # 更多ICA迭代
-        self.ica_fun = 'logcosh'  # 更穩定的ICA函數
-        
-        # 🚀 添加新的KAN特性
-        self.kan_adaptive_activation = True
-        self.kan_nonlinear_residual = True
-        self.kan_feature_interaction = True
-        self.kan_multi_scale_learning = True  # 高容量獨有
-        
-        # 移除MLP相關配置
-        self.use_batch_norm = False         # BatchNorm是MLP常用技術
-        self.use_layer_norm = True          # LayerNorm更通用
-        
-        self.use_stl_decomposition = False
-        self.use_kll_processing = False
-        
-        print("✓ Config updated for KAN purity with enhanced accuracy features")
+        print(f"  ✓ KAN Grid Size: {self.kan_grid_size}")
+        print(f"  ✓ Hidden Dims: {self.hidden_dims}")
+        print(f"  ✓ Learning Rate: {self.learning_rate}")
+        print(f"  ✓ Gradient Clip: {self.gradient_clip_norm}")
+        print(f"  ✓ Dropout: {self.dropout}")
+    
+    def get_kan_config(self):
+        """🔧 新增：返回 KAN 層配置對象"""
+        return {
+            'grid_size': self.kan_grid_size,
+            'spline_order': self.kan_spline_order,
+            'num_basis': self.kan_num_basis,
+            'use_residual': self.use_residual,
+            'adaptive_spline_order': self.adaptive_spline_order,
+            'learnable_activation': self.learnable_activation,
+            'l1_lambda': self.base_l1_lambda,
+            'entropy_lambda': self.base_entropy_lambda
+        }
+    
+    def get_stability_config(self):
+        """🔧 新增：返回穩定性配置"""
+        return {
+            'gradient_clip_norm': self.gradient_clip_norm,
+            'stability_check_freq': self.stability_check_freq,
+            'l2_lambda': self.l2_lambda,
+            'smoothness_lambda': self.smoothness_lambda
+        }
 
 
 class FastGNNKANConfig(SimplifiedGNNKANConfig):
