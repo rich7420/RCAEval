@@ -1078,25 +1078,31 @@ class GNNKANvsBAROComparator:
                         print(f"      ❌ BARO失敗: {baro_result['error']}")
                     
                     # 🚀 測試 GNN-KAN - 使用最有希望的通用參數組合
-                    print("    🤖 運行 GNN-KAN (kpca_rbf_lower_sparsity 優化配置)...")
+                    print("    🤖 運行 GNN-KAN (穩健通用配置)...")
                     
-                    # 🔥 使用 find_universal_kan_params.py 中最有希望的參數組合
-                    # kpca_rbf_lower_sparsity - KPCA+RBF核心，降低稀疏懲罰
+                    # 🔥 穩健的通用優化配置 - "The Robust Generalist"
+                    # 結合高性能和穩定性的最佳實踐，旨在通用於所有數據集
                     optimized_config = {
                         'graph_head': 'pagerank',         # PageRank 圖頭部
                         'config_type': 'simplified',     # 簡化配置類型
                         'feature_method': 'kpca',        # 使用 KPCA 特徵提取
                         'kpca_kernel': 'rbf',            # RBF 核心函數
-                        'learning_rate': 9e-5,           # 優化學習率
-                        'num_epochs': 200,               # 訓練輪數
-                        'sparsity_lambda': 1e-4,         # 降低稀疏懲罰，保持更多有用連接
+                        'learning_rate': 8e-7,           # 回到高性能基礎學習率
+                        'num_epochs': 200,               # 回到高性能基礎訓練輪數
+                        'sparsity_lambda': 1e-5,         # 保持原始高效配置
                         'use_cuda': True,                # 啟用 CUDA 加速
                         'cpu_fallback': True,            # CPU 回退支援
                         'use_optimized_input': True,     # 啟用優化輸入處理
-                        'similarity_threshold': 0.15,    # 降低相似度閾值，增加節點連接
-                        'max_edges_per_node': 12,        # 大幅增加每節點最大邊數
-                        'target_feature_dim': 64,        # 增加特徵維度
-                        'force_node_expansion': True     # 強制節點擴展（自定義參數）
+                        'similarity_threshold': 0.15,    # 回到原始閾值（效率/準確性平衡佳）
+                        'max_edges_per_node': 12,        # 保持原始高效配置
+                        'target_feature_dim': 64,        # 保持原始高效配置
+                        'hidden_dim': 64,                # 保持原始高效配置
+                        'force_node_expansion': True,    # 強制節點擴展
+                        # 🆕 穩健的穩定性參數
+                        'kan_grid_size': 10,              # 平衡的模型容量
+                        'input_clamp_range': [-3.0, 3.0], # 穩健的數值範圍
+                        'gradient_clipping': 1.0,        # 標準的梯度裁剪
+                        'numerical_stability': True      # 必要的穩定性保障
                     }
                     
                     try:
