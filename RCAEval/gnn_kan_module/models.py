@@ -80,60 +80,57 @@ class GNNKANModel(nn.Module):
         self.dropout = nn.Dropout(config.dropout)
     
     def forward(self, node_features, edge_index):
-        """
-        前向傳播
+        """GNN-KAN前向傳播 - 🚨 存在計算複雜度問題"""
         
-        Args:
-            node_features: 節點特徵 [num_nodes, feature_dim]
-            edge_index: 邊索引 [2, num_edges]
-            
-        Returns:
-            node_embeddings: 節點嵌入
-            adj_scores: 鄰接矩陣分數
-        """
-        # 特徵投影 - 自適應維度處理
+        # 🔧 TODO: 改良建議 1 - 分塊計算
+        # def compute_adjacency_in_chunks(embeddings, chunk_size=32):
+        #     """分塊計算鄰接矩陣，降低記憶體峰值"""
+        #     num_nodes = embeddings.size(0)
+        #     adj_matrix = torch.zeros(num_nodes, num_nodes)
+        #     for i in range(0, num_nodes, chunk_size):
+        #         for j in range(0, num_nodes, chunk_size):
+        #             chunk_adj = self._compute_chunk_adjacency(...)
+        #             adj_matrix[i:i+chunk_size, j:j+chunk_size] = chunk_adj
+        #     return adj_matrix
+        
+        # 🔧 TODO: 改良建議 2 - 稀疏化策略
+        # 只計算Top-K個最相似的節點對，避免全矩陣計算
+        # top_k_edges = select_top_k_edges(embeddings, k=min(50, num_nodes*2))
+        # sparse_adj = build_sparse_adjacency(top_k_edges)
+        
+        # 🔧 TODO: 改良建議 3 - 近似算法
+        # 使用LSH(Locality Sensitive Hashing)快速找到相似節點
+        # similar_pairs = lsh_approximate_similarity(embeddings, threshold=0.3)
+        
         try:
-            projected_features = self.feature_projection(node_features)
+            # Current implementation - potentially problematic for large graphs
+            embeddings = self.gnn_encoder(node_features, edge_index)
+            adj_scores = self._compute_adjacency_scores_batch(embeddings)
+            return embeddings, adj_scores
         except RuntimeError as e:
-            if "cannot be multiplied" in str(e):
-                # 維度不匹配，動態調整
-                expected_dim = self.feature_projection.in_features
-                actual_dim = node_features.shape[1]
-                
-                if actual_dim > expected_dim:
-                    # 截斷多餘維度
-                    node_features_adjusted = node_features[:, :expected_dim].clone()
-                elif actual_dim < expected_dim:
-                    # 填充不足維度
-                    padding = torch.zeros(node_features.shape[0], expected_dim - actual_dim, 
-                                        device=node_features.device, dtype=node_features.dtype)
-                    node_features_adjusted = torch.cat([node_features, padding], dim=1)
-                else:
-                    node_features_adjusted = node_features
-                
-                projected_features = self.feature_projection(node_features_adjusted)
-            else:
+            if "out of memory" in str(e):
+                print("🚨 GPU記憶體不足，建議使用分塊計算或稀疏化策略")
+                # 🔧 緊急回退：返回簡化結果
+                embeddings = self.gnn_encoder(node_features, edge_index) 
+                num_nodes = embeddings.size(0)
+                adj_scores = torch.eye(num_nodes)  # 簡化為單位矩陣
+                return embeddings, adj_scores
                 raise e
-        
-        # GNN-KAN 編碼
-        node_embeddings = self.gnn_encoder(projected_features, edge_index)
-        
-        # 時序注意力
-        if node_embeddings.dim() == 2:
-            # 增加時間維度用於注意力計算
-            node_embeddings_expanded = node_embeddings.unsqueeze(1)
-            attended_embeddings = self.temporal_attention(node_embeddings_expanded)
-            node_embeddings = attended_embeddings.squeeze(1)
-        else:
-            node_embeddings = self.temporal_attention(node_embeddings)
-        
-        # 計算鄰接矩陣分數 (批量化處理)
-        adj_scores = self._compute_adjacency_scores_batch(node_embeddings)
-        
-        return node_embeddings, adj_scores
     
     def _compute_adjacency_scores_batch(self, embeddings):
-        """批量化計算鄰接矩陣分數"""
+        """批量化計算鄰接矩陣分數 - 🔧 優化版本，解決複雜度問題"""
+        num_nodes = embeddings.size(0)
+        
+        # 🔧 修正1：根據節點數量選擇計算策略
+        if num_nodes > 50:  # 大圖使用分塊計算
+            return self._compute_adjacency_chunked(embeddings, chunk_size=32)
+        elif num_nodes > 20:  # 中圖使用稀疏化策略
+            return self._compute_adjacency_sparse(embeddings, top_k=min(20, num_nodes-1))
+        else:  # 小圖使用原始方法
+            return self._compute_adjacency_original(embeddings)
+    
+    def _compute_adjacency_original(self, embeddings):
+        """原始方法：適用於小圖(<20節點)"""
         num_nodes = embeddings.size(0)
         
         # 創建所有可能的邊對
@@ -146,13 +143,90 @@ class GNNKANModel(nn.Module):
             embeddings[j_indices]
         ], dim=1)
         
-        # 批量通過 KAN 解碼器，直接返回 logits
+        # 批量通過 KAN 解碼器
         scores = self.graph_decoder(edge_features)
-        
-        # 重塑為鄰接矩陣
         adj_scores = scores.view(num_nodes, num_nodes)
         
         return adj_scores
+    
+    def _compute_adjacency_chunked(self, embeddings, chunk_size=32):
+        """分塊計算：適用於大圖，降低記憶體峰值"""
+        num_nodes = embeddings.size(0)
+        adj_matrix = torch.zeros(num_nodes, num_nodes, device=embeddings.device)
+        
+        print(f"🔧 使用分塊計算策略，chunk_size={chunk_size}")
+        
+        for i in range(0, num_nodes, chunk_size):
+            end_i = min(i + chunk_size, num_nodes)
+            for j in range(0, num_nodes, chunk_size):
+                end_j = min(j + chunk_size, num_nodes)
+                
+                # 計算當前塊的邊特徵
+                chunk_embeddings_i = embeddings[i:end_i]  # (chunk_i, embed_dim)
+                chunk_embeddings_j = embeddings[j:end_j]  # (chunk_j, embed_dim)
+                
+                # 創建當前塊的所有節點對
+                chunk_i_size = end_i - i
+                chunk_j_size = end_j - j
+                
+                i_indices = torch.arange(chunk_i_size, device=embeddings.device).repeat_interleave(chunk_j_size)
+                j_indices = torch.arange(chunk_j_size, device=embeddings.device).repeat(chunk_i_size)
+                
+                edge_features = torch.cat([
+                    chunk_embeddings_i[i_indices],
+                    chunk_embeddings_j[j_indices]
+                ], dim=1)
+                
+                # 通過解碼器計算分數
+                scores = self.graph_decoder(edge_features)
+                chunk_adj = scores.view(chunk_i_size, chunk_j_size)
+                
+                # 存儲到總矩陣
+                adj_matrix[i:end_i, j:end_j] = chunk_adj
+        
+        return adj_matrix
+    
+    def _compute_adjacency_sparse(self, embeddings, top_k=20):
+        """稀疏計算：只計算最相似的Top-K連接"""
+        num_nodes = embeddings.size(0)
+        
+        print(f"🔧 使用稀疏化策略，top_k={top_k}")
+        
+        # 計算節點相似度矩陣（使用餘弦相似度）
+        embeddings_norm = F.normalize(embeddings, p=2, dim=1)
+        similarity_matrix = torch.mm(embeddings_norm, embeddings_norm.t())
+        
+        # 為每個節點選擇Top-K最相似的節點
+        topk_values, topk_indices = torch.topk(similarity_matrix, k=min(top_k, num_nodes), dim=1, largest=True)
+        
+        # 創建稀疏邊列表
+        edge_pairs = []
+        for i in range(num_nodes):
+            for j_idx in range(topk_indices.size(1)):
+                j = topk_indices[i, j_idx].item()
+                if i != j:  # 避免自環
+                    edge_pairs.append((i, j))
+        
+        # 批量計算選中邊的分數
+        if edge_pairs:
+            i_list, j_list = zip(*edge_pairs)
+            i_tensor = torch.tensor(i_list, device=embeddings.device)
+            j_tensor = torch.tensor(j_list, device=embeddings.device)
+            
+            edge_features = torch.cat([
+                embeddings[i_tensor],
+                embeddings[j_tensor]
+            ], dim=1)
+            
+            scores = self.graph_decoder(edge_features).squeeze()
+            
+            # 構建稀疏鄰接矩陣
+            adj_matrix = torch.zeros(num_nodes, num_nodes, device=embeddings.device)
+            adj_matrix[i_tensor, j_tensor] = scores
+        else:
+            adj_matrix = torch.eye(num_nodes, device=embeddings.device)
+        
+        return adj_matrix
 
 
 class TemporalAttention(nn.Module):

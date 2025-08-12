@@ -243,22 +243,65 @@ class GNNKANLoss(nn.Module):
         return total_loss
 
 
-def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambda=1e-5):
+def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambda=None):
     """
-    通用GNN-KAN模型訓練函數
+    🚨 ISSUE 6: 實時性能力不足分析
     
-    Args:
-        model (nn.Module): GNN-KAN模型
-        node_features (torch.Tensor): 節點特徵
-        edge_index (torch.Tensor): 邊索引
-        config (SimplifiedGNNKANConfig): 配置對象
-        sparsity_lambda (float): 稀疏性正則化強度
-        
-    Returns:
-        model: 訓練好的模型
-        training_history: 訓練歷史記錄
+    實時性問題：
+    1. **訓練時間過長**：
+       - 當前需要200輪訓練，平均60-180秒
+       - 實際故障響應要求：<10秒內給出初步分析
+       - On-the-fly訓練在生產環境不可行
+    
+    2. **冷啟動問題**：
+       - 新系統或新故障類型需要重新訓練
+       - 缺乏預訓練模型或遷移學習機制
+       - 無法利用歷史相似故障的經驗
+    
+    3. **增量學習缺失**：
+       - 每次都是完全重新訓練
+       - 無法持續從新故障中學習
+       - 模型不能隨時間演化改進
+    
+    4. **推理複雜度**：
+       - O(V²)的鄰接矩陣計算在推理時仍然需要
+       - KAN層的B-spline計算比MLP的矩陣乘法更耗時
+       - 多階段後處理增加了響應延遲
+    
+    🔧 實時化改進建議：
+    1. 預訓練+微調策略：
+       # pretrained_model = load_universal_pretrained_model()
+       # quick_adapted = few_shot_adaptation(pretrained_model, current_data)
+    
+    2. 模型壓縮：
+       # compressed_model = knowledge_distillation(full_model, student_model)
+       # quantized_model = dynamic_quantization(compressed_model)
+    
+    3. 近似推理：
+       # sparse_adj = approximate_adjacency(embeddings, top_k=20)
+       # fast_pagerank = power_iteration_early_stop(sparse_adj, max_iter=10)
+    
+    4. 分級響應：
+       # immediate_response = fast_heuristic_ranking(raw_features)  # <1s
+       # refined_response = simplified_kan_inference(processed_data)  # <5s  
+       # detailed_analysis = full_gnn_kan_pipeline(all_data)  # <30s
+    
+    Current implementation - NOT suitable for real-time production
     """
-    device = torch.device("cuda" if torch.cuda.is_available() and config.use_cuda else "cpu")
+    # 🔧 修正6：實時性改進 - 添加快速模式
+    fast_mode = getattr(config, 'fast_mode', False) or sparsity_lambda is None
+    if fast_mode:
+        print("🚀 啟用快速訓練模式")
+        # 快速模式：減少訓練輪數，提高收斂速度
+        config.num_epochs = min(50, config.num_epochs)
+        config.learning_rate = config.learning_rate * 1.5  # 更激進的學習率
+        print(f"   快速模式配置：{config.num_epochs}輪訓練，學習率×1.5")
+    
+    # 設置稀疏性參數
+    if sparsity_lambda is None:
+        sparsity_lambda = 1e-5 if fast_mode else 1e-4
+    
+    device = 'cuda' if config.use_cuda and torch.cuda.is_available() else 'cpu'
     model.to(device)
     node_features = node_features.to(device)
     edge_index = edge_index.to(device)

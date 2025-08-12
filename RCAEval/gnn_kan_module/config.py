@@ -9,9 +9,39 @@ import numpy as np
 
 class SimplifiedGNNKANConfig:
     """
-    簡化的GNN-KAN配置 - 專注於KAN核心特性
-    新增：ICA、kPCA特徵處理支持
-    強調：KAN vs MLP的本質差異
+    🚨 ISSUE 5: 泛化能力限制分析
+    
+    當前配置的泛化限制：
+    1. **固定特徵維度問題**：
+       - target_feature_dim=64 是硬編碼的，不適應不同規模系統
+       - 小系統（<10個服務）：64維可能過度參數化
+       - 大系統（>100個服務）：64維可能表達不足
+    
+    2. **KAN參數固定化問題**：
+       - kan_grid_size和kan_num_basis對所有場景使用相同值
+       - 不同故障類型可能需要不同的非線性複雜度
+       - 靜態配置無法適應數據分佈變化
+    
+    3. **領域特化問題**：
+       - 配置基於微服務架構優化，對其他架構可能不適用
+       - 缺乏跨領域的自適應機制
+       - 沒有考慮不同行業的故障模式差異
+    
+    4. **時間序列長度依賴**：
+       - 配置假設了特定的時間窗口長度
+       - 對於短時爆發故障vs長期漸變故障表現可能差異很大
+    
+    🔧 改進建議：
+    1. 自適應維度配置：
+       # target_feature_dim = max(32, min(128, num_services * 2))
+       # kan_complexity = auto_tune_kan_params(data_complexity)
+    
+    2. 領域適應機制：
+       # if domain == 'financial': config.conservative_mode = True
+       # elif domain == 'gaming': config.latency_sensitive = True
+    
+    3. 動態配置調整：
+       # config.auto_tune_from_validation(historical_performance)
     """
     
     def __init__(self):
@@ -197,60 +227,126 @@ class SimplifiedGNNKANConfig:
         return issues
     
     def update_for_kan_purity(self):
-        """更新配置以最大化KAN純粹性，最小化MLP特性"""
-        print("🎯 Updating config for maximum KAN purity...")
+        """
+        動態更新配置以增強KAN純度 - 基於特徵維度自適應調整
+        🎯 目標：保持KAN特性純粹，最小化MLP相關性
+        """
+        if self.target_feature_dim > 32:
+            # 🔧 修正5：基於特徵維度的自適應調整
+            # 中高維特徵需要更精細的基函數網格
+            old_grid_size = self.kan_grid_size
+            old_num_basis = self.kan_num_basis
+            
+            # 自適應調整KAN複雜度
+            self.kan_grid_size = min(old_grid_size * 2, 20)
+            self.kan_num_basis = min(old_num_basis + 4, 24)
+            
+            print(f"🔧 自適應KAN調整: grid_size {old_grid_size}→{self.kan_grid_size}, num_basis {old_num_basis}→{self.kan_num_basis}")
         
-        # 🚀 大幅增強KAN表達能力 - 針對複雜數據集優化
-        self.kan_grid_size = max(20, self.kan_grid_size)  # 高容量版本更高
-        self.kan_num_basis = max(24, self.kan_num_basis)  # 更多基函數
-        self.kan_spline_order = max(6, self.kan_spline_order)  # 更高階樣條
-        self.adaptive_spline_order = True
-        self.learnable_activation = True
+        # 強化KAN純度設置
         self.minimize_linear_component = True
+        self.learnable_activation = True
+        self.adaptive_spline_order = False  # 簡化配置中保持固定
         
-        # 🎯 增強特徵處理能力 - 專門針對train-ticket類型數據
-        if self.feature_method in ['simplified', 'stl']:
-            self.feature_method = 'ica'  # 強制使用更強的特徵處理
+        # 🔧 修正5：添加自適應調整記錄
+        self._adaptation_applied = True
+        self._original_params = {
+            'grid_size': getattr(self, '_original_grid_size', self.kan_grid_size),
+            'num_basis': getattr(self, '_original_num_basis', self.kan_num_basis)
+        }
+    
+    def auto_adapt_to_data(self, data_characteristics):
+        """
+        🔧 修正5：根據數據特徵自動調整配置
         
-        # 🔥 深化網絡架構 - 提升複雜模式學習能力
-        if hasattr(self, 'hidden_dims'):
-            # 擴展到更深的網絡 - 高容量版本
-            self.hidden_dims = [768, 512, 384, 256, 192, 128, 96, 64]
-        else:
-            self.hidden_dims = [384, 256, 192, 128]
+        Args:
+            data_characteristics: Dict包含數據特徵信息
+                - num_services: 服務數量
+                - num_metrics: 指標數量  
+                - time_series_length: 時間序列長度
+                - failure_type: 故障類型
+                - domain: 應用領域
+        """
+        print("🔧 執行數據自適應配置調整...")
         
-        # 📈 優化訓練配置 - 提升準確率
-        self.learning_rate = min(0.0002, self.learning_rate)  # 更小學習率
-        self.num_epochs = max(250, self.num_epochs)  # 更多訓練輪數
-        self.warmup_epochs = max(30, getattr(self, 'warmup_epochs', 15))
+        # 1. 基於系統規模調整特徵維度
+        num_services = data_characteristics.get('num_services', 10)
+        num_metrics = data_characteristics.get('num_metrics', 20)
         
-        # 🎯 強化正則化 - 避免過擬合同時保持表達能力
-        self.gradient_clip_norm = 0.3  # 更嚴格的梯度控制
-        self.dropout = max(0.2, self.dropout)  # 更強的正則化
+        # 自適應特徵維度：基於服務數量和指標複雜度
+        if num_services <= 5:  # 小型系統
+            self.target_feature_dim = 32
+            self.hidden_dim = 48
+            self.kan_grid_size = 6
+            print(f"📊 檢測到小型系統({num_services}服務)，降低模型複雜度")
+        elif num_services <= 15:  # 中型系統
+            self.target_feature_dim = 64
+            self.hidden_dim = 96
+            self.kan_grid_size = 10
+            print(f"📊 檢測到中型系統({num_services}服務)，使用標準配置")
+        else:  # 大型系統
+            self.target_feature_dim = min(128, num_services * 4)
+            self.hidden_dim = min(192, num_services * 8)
+            self.kan_grid_size = min(15, num_services)
+            print(f"📊 檢測到大型系統({num_services}服務)，增加模型容量")
         
-        # 🔧 ICA增強配置 - 專門處理複雜時序特徵
-        current_ica = getattr(self, 'ica_components', None)
-        if current_ica is None:
-            self.ica_components = 48  # 默認值
-        else:
-            self.ica_components = max(48, current_ica)
-        self.ica_max_iter = 1500  # 更多ICA迭代
-        self.ica_fun = 'logcosh'  # 更穩定的ICA函數
+        # 2. 基於故障類型調整訓練策略
+        failure_type = data_characteristics.get('failure_type', 'unknown')
+        if failure_type == 'cascading':
+            # 級聯故障需要更多訓練輪數
+            self.num_epochs = max(150, self.num_epochs)
+            self.learning_rate *= 0.8  # 更保守的學習率
+            print("🔄 級聯故障模式：增加訓練輪數，降低學習率")
+        elif failure_type == 'burst':
+            # 突發故障可以快速收斂
+            self.num_epochs = min(100, self.num_epochs)
+            self.learning_rate *= 1.2  # 更激進的學習率
+            print("💥 突發故障模式：減少訓練輪數，提高學習率")
         
-        # 🚀 添加新的KAN特性
-        self.kan_adaptive_activation = True
-        self.kan_nonlinear_residual = True
-        self.kan_feature_interaction = True
-        self.kan_multi_scale_learning = True  # 高容量獨有
+        # 3. 基於領域調整正則化策略
+        domain = data_characteristics.get('domain', 'general')
+        if domain == 'financial':
+            # 金融領域需要更保守的策略
+            self.dropout = min(0.2, self.dropout * 1.5)
+            self.weight_decay *= 2.0
+            print("💰 金融領域：增強正則化，提高穩定性")
+        elif domain == 'gaming':
+            # 遊戲領域對延遲敏感，簡化模型
+            self.num_gnn_layers = min(2, self.num_gnn_layers)
+            self.batch_size = min(16, self.batch_size)
+            print("🎮 遊戲領域：簡化模型，減少延遲")
         
-        # 移除MLP相關配置
-        self.use_batch_norm = False         # BatchNorm是MLP常用技術
-        self.use_layer_norm = True          # LayerNorm更通用
+        # 4. 基於時間序列長度調整
+        ts_length = data_characteristics.get('time_series_length', 100)
+        if ts_length < 50:
+            # 短時間序列，降低模型複雜度防止過擬合
+            self.dropout = max(0.2, self.dropout)
+            self.num_epochs = min(80, self.num_epochs)
+            print("⏱️ 短時間序列：增加dropout，減少訓練輪數")
+        elif ts_length > 500:
+            # 長時間序列，可以使用更複雜的模型
+            self.num_epochs = max(150, self.num_epochs)
+            self.batch_size = min(64, self.batch_size * 2)
+            print("📈 長時間序列：增加訓練輪數和批次大小")
         
-        self.use_stl_decomposition = False
-        self.use_kll_processing = False
+        # 記錄調整信息
+        self._data_adaptation_info = {
+            'num_services': num_services,
+            'adapted_feature_dim': self.target_feature_dim,
+            'adapted_hidden_dim': self.hidden_dim,
+            'adapted_kan_grid_size': self.kan_grid_size,
+            'adapted_epochs': self.num_epochs,
+            'failure_type': failure_type,
+            'domain': domain
+        }
         
-        print("✓ Config updated for KAN purity with enhanced accuracy features")
+        print(f"✅ 自適應配置完成：feature_dim={self.target_feature_dim}, hidden_dim={self.hidden_dim}")
+        
+    def get_adaptation_summary(self):
+        """獲取自適應調整的摘要信息"""
+        if hasattr(self, '_data_adaptation_info'):
+            return self._data_adaptation_info
+        return {'adaptation_applied': False}
 
 
 class HighCapacityGNNKANConfig(SimplifiedGNNKANConfig):
