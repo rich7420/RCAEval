@@ -201,107 +201,132 @@ class AdvancedKANLayer(nn.Module):
         return basis_tensor
     
     def forward(self, x):
-        """純粹的KAN前向傳播 - 強調可學習激活函數"""
+        """
+        🚨 ISSUE 2: KAN層數值穩定性問題
+        問題分析：
+        1. B-spline基函數在極值處容易發散：T_n(x) = 2x*T_{n-1}(x) - T_{n-2}(x)
+        2. Chebyshev多項式在|x|>1時指數增長，可能導致梯度爆炸
+        3. 可學習激活函數可能學習到病態的變換
+        4. 當spline_order較高時，數值不穩定性加劇
+        
+        🔧 改良建議：
+        1. 添加更嚴格的輸入範圍限制：x ∈ [-2, 2] 而非 [-5, 5]
+        2. 使用Chebyshev第二類多項式U_n(x)，數值性質更穩定
+        3. 添加自適應正則化：根據梯度範數動態調整正則化強度
+        4. 實現梯度裁剪在KAN層內部，而非依賴外部機制
+        """
+        # 🔧 現有的範圍限制可能不夠嚴格
+        x = torch.clamp(x, min=-5.0, max=5.0)  # 建議改為 [-2, 2]
+        
         # 輸入穩定性處理
         if torch.isnan(x).any():
-            x = torch.nan_to_num(x, nan=0.0)
+            print("⚠️ KAN層檢測到NaN輸入，進行清理")
+            x = torch.nan_to_num(x, nan=0.0, posinf=2.0, neginf=-2.0)
         
-        # 🎯 KAN核心計算流程
+        # 🔧 修正2：更嚴格的數值穩定性處理
+        # 改為更保守的範圍限制
+        x = torch.clamp(x, min=-2.0, max=2.0)
+        
+        # 檢查輸入分佈，自適應縮放
+        x_std = torch.std(x)
+        if x_std > 1.0:
+            # 如果標準差過大，進行自適應縮放
+            scaling_factor = 1.0 / (x_std + 1e-8)
+            x = x * scaling_factor
+            if hasattr(self, '_scaling_factor'):
+                self._scaling_factor = self._scaling_factor * 0.9 + scaling_factor * 0.1  # 指數移動平均
+            else:
+                self._scaling_factor = scaling_factor
+        
         try:
-            # 1. 最小化的基礎線性變換 (不是MLP的主要特徵提取)
-            base_output = self.base_linear(x) * 0.1  # 降低線性成分權重
+            # B-spline 基函數計算 - 使用更穩定的實現
+            spline_output = self.enhanced_b_spline_basis(x)
+        except Exception as e:
+            print(f"⚠️ B-spline計算失敗，使用回退策略: {e}")
+            spline_output = self._fallback_basis(x)
+        
+        # 可學習激活函數 - 添加數值穩定性檢查
+        try:
+            activation_output = torch.tanh(x @ self.activation_weights.t())  # 使用tanh確保有界
             
-            # 2. 核心：B-spline基函數計算 (KAN的主要特徵)
-            basis_functions = self.pure_b_spline_basis(x)
+            # 檢查輸出的數值穩定性
+            if torch.isnan(activation_output).any() or torch.isinf(activation_output).any():
+                print("⚠️ 激活函數輸出不穩定，使用線性回退")
+                activation_output = x @ (self.activation_weights.t() * 0.1)  # 縮小權重
+        except Exception as e:
+            print(f"⚠️ 可學習激活計算失敗: {e}")
+            activation_output = x @ (torch.ones_like(self.activation_weights).t() * 0.1)
+        
+        # 🔧 修正2：輸出組合時的數值穩定性
+        if self.use_both_components:
+            # 自適應權重組合，防止某一項主導
+            spline_norm = torch.norm(spline_output)
+            activation_norm = torch.norm(activation_output)
             
-            # 🔧 修復einsum維度問題 - 安全的B-spline計算
-            batch_size, input_dim = x.shape
-            try:
-                # 檢查維度兼容性
-                if (basis_functions.shape[0] == batch_size and 
-                    basis_functions.shape[1] == input_dim and
-                    basis_functions.shape[2] == self.num_basis):
-                    # 正常的einsum操作
-                    spline_output = torch.einsum('oij,bij->bo', self.spline_coeffs, basis_functions)
-                else:
-                    print(f"B-spline dimension mismatch: basis_functions={basis_functions.shape}, spline_coeffs={self.spline_coeffs.shape}")
-                    # 使用安全的矩陣乘法回退
-                    basis_flat = basis_functions.view(batch_size, -1)
-                    coeffs_flat = self.spline_coeffs.view(self.output_dim, -1)
-                    
-                    # 調整維度匹配
-                    min_dim = min(basis_flat.shape[1], coeffs_flat.shape[1])
-                    spline_output = torch.mm(basis_flat[:, :min_dim], coeffs_flat[:, :min_dim].t())
-                    
-            except RuntimeError as e:
-                print(f"B-spline computation failed: {e}, using fallback")
-                # 回退到線性變換
-                spline_output = self.base_linear(x) * 0.5
-            
-            # 3. 核心：可學習激活函數 (KAN vs MLP的關鍵差異)
-            try:
-                activation_output = self.learnable_activation(x)
+            if spline_norm > 0 and activation_norm > 0:
+                # 歸一化後組合
+                spline_weight = 1.0 / (1.0 + activation_norm / spline_norm)
+                activation_weight = 1.0 - spline_weight
                 
-                # 🔧 修復激活函數矩陣維度問題 - 詳細診斷
-                print(f"🔍 激活函數維度診斷:")
-                print(f"  activation_weights.shape: {self.activation_weights.shape}")
-                print(f"  batch_size: {batch_size}, input_dim: {input_dim}, output_dim: {self.output_dim}")
-                
-                # 檢查是否為矩陣（至少2維）
-                if activation_output.dim() < 2 or self.activation_weights.dim() < 2:
-                    print(f"⚠️ 維度不足: activation_output.dim()={activation_output.dim()}, activation_weights.dim()={self.activation_weights.dim()}")
-                    # 確保至少是2D
-                    if activation_output.dim() == 1:
-                        activation_output = activation_output.unsqueeze(0)
-                    if self.activation_weights.dim() == 1:
-                        self.activation_weights = self.activation_weights.unsqueeze(0)
-                
-                # 安全的矩陣乘法計算
-                if (activation_output.shape[0] == batch_size and 
-                    activation_output.shape[1] <= self.activation_weights.shape[1]):
-                    # 使用安全的矩陣乘法
-                    feat_dim = activation_output.shape[1]
-                    weight_subset = self.activation_weights[:, :feat_dim]  # [output_dim, feat_dim]
-                    activation_output = torch.mm(activation_output, weight_subset.t())  # [batch_size, output_dim]
-                    print(f"✅ 激活函數計算成功: {activation_output.shape}")
-                else:
-                    print(f"⚠️ 維度不匹配，使用安全回退")
-                    # 維度調整回退
-                    min_feat_dim = min(activation_output.shape[-1], self.activation_weights.shape[-1])
-                    activation_output_safe = activation_output[..., :min_feat_dim]
-                    weights_safe = self.activation_weights[:, :min_feat_dim]
-                    
-                    # 確保batch維度正確
-                    if activation_output_safe.shape[0] != batch_size:
-                        activation_output_safe = activation_output_safe[:batch_size]
-                    
-                    activation_output = torch.mm(activation_output_safe, weights_safe.t())
-                    # print(f"✅ 回退計算成功: {activation_output.shape}")
-                        
-            except RuntimeError as e:
-                print(f"❌ Activation computation failed: {e}")
-                # print(f"  activation_output type: {type(activation_output)}")
-                # print(f"  activation_weights type: {type(self.activation_weights)}")
-                if hasattr(activation_output, 'shape'):
-                    print(f"  activation_output shape: {activation_output.shape}")
-                if hasattr(self.activation_weights, 'shape'):
-                    print(f"  activation_weights shape: {self.activation_weights.shape}")
-                print(f"  Using zero fallback")
-                activation_output = torch.zeros(batch_size, self.output_dim, device=x.device)
+                output = spline_weight * spline_output + activation_weight * activation_output
+            else:
+                output = spline_output + activation_output * 0.1  # 降低activation的影響
+        
+        # 🔧 修正2：更嚴格的輸出裁剪和穩定化
+        output = torch.clamp(output, min=-3.0, max=3.0)  # 更嚴格的輸出範圍
+        output = torch.nan_to_num(output, nan=0.0, posinf=3.0, neginf=-3.0)
+        
+        # 梯度裁剪（在層內部進行）
+        if self.training and output.requires_grad:
+            # 註冊一個hook來進行梯度裁剪
+            def gradient_clipping_hook(grad):
+                return torch.clamp(grad, min=-1.0, max=1.0)
             
-            # 4. KAN輸出組合 (B-spline主導，激活函數輔助)
-            kan_output = spline_output + activation_output + base_output
-            
-            # 5. 穩定性歸一化
-            output = self.ln(kan_output)
-                
-        except RuntimeError as e:
-            print(f"KAN forward failed: {e}, using linear fallback")
-            # 簡化錯誤處理
-            output = self.base_linear(x)
-            output = self.ln(output)
+            output.register_hook(gradient_clipping_hook)
         
         return output
+    
+    def enhanced_b_spline_basis(self, x):
+        """增強的B-spline基函數計算，提高數值穩定性"""
+        # 歸一化到 [-1, 1] 區間（Chebyshev多項式的標準定義域）
+        x_normalized = torch.clamp(x, min=-2.0, max=2.0) / 2.0
+        
+        # 使用修正的Chebyshev遞歸，增加數值穩定性檢查
+        basis_functions = []
+        
+        # T0(x) = 1
+        T0 = torch.ones_like(x_normalized)
+        basis_functions.append(T0)
+        
+        if self.num_basis > 1:
+            # T1(x) = x
+            T1 = x_normalized
+            basis_functions.append(T1)
+            
+            # 遞歸計算其餘基函數，添加穩定性檢查
+            for n in range(2, self.num_basis):
+                # T_n(x) = 2x * T_{n-1}(x) - T_{n-2}(x)
+                Tn = 2.0 * x_normalized * basis_functions[-1] - basis_functions[-2]
+                
+                # 🔧 修正2：數值穩定性檢查
+                if torch.any(torch.abs(Tn) > 10.0):  # 檢測到可能的發散
+                    print(f"⚠️ Chebyshev多項式T_{n}出現數值不穩定，使用截斷策略")
+                    Tn = torch.clamp(Tn, min=-5.0, max=5.0)
+                
+                basis_functions.append(Tn)
+        
+        # 組合基函數
+        basis_matrix = torch.stack(basis_functions, dim=-1)  # (..., num_basis)
+        
+        # 計算B-spline輸出，添加數值檢查
+        spline_output = torch.einsum('...i,oji->...o', basis_matrix, self.spline_coeffs)
+            
+        # 最終數值穩定性檢查
+        if torch.isnan(spline_output).any() or torch.isinf(spline_output).any():
+            print("⚠️ B-spline輸出包含無效值，使用回退策略")
+            return self._fallback_basis(x)
+        
+        return spline_output
 
 
 class SimplifiedKANLayer(nn.Module):
@@ -781,3 +806,172 @@ class CompatibleSimplifiedKANLayer(SimplifiedKANLayer):
 
 def create_compatible_kan_layer(input_dim, output_dim, **kwargs):
     return CompatibleSimplifiedKANLayer(input_dim, output_dim, **kwargs)
+
+
+class KANEdgeDecoder(nn.Module):
+    """
+    KAN 邊解碼器 - 用於 Graph Decoder，將 MLP 替換為 KAN
+    
+    架構: KAN(2*d → d') → Linear(d' → 1) → 輸出 logit
+    特性: 可學習激活函數、數值穩定性保護、輕量配置
+    """
+    
+    def __init__(self, input_dim, hidden_dim=None, num_basis=4, 
+                 spline_order=3, dropout=0.1, stability_mode=True):
+        super(KANEdgeDecoder, self).__init__()
+        
+        self.input_dim = input_dim  # 應該是 2 * node_embedding_dim
+        self.hidden_dim = hidden_dim or (input_dim // 2)  # 預設為輸入維度的一半
+        self.num_basis = num_basis
+        self.spline_order = spline_order 
+        self.dropout_rate = dropout
+        self.stability_mode = stability_mode
+        
+        # 🎯 KAN 層：輸入 [h_i; h_j] → 隱藏表示
+        self.kan_layer = CompatibleSimplifiedKANLayer(
+            input_dim=self.input_dim,
+            output_dim=self.hidden_dim,
+            num_basis=self.num_basis,
+            verbose=False  # 避免過多日誌輸出
+        )
+        
+        # 🔧 Dropout 和 LayerNorm
+        self.dropout = nn.Dropout(self.dropout_rate)
+        self.layer_norm = nn.LayerNorm(self.hidden_dim, eps=1e-4)
+        
+        # 🎯 線性標頭：隱藏表示 → logit (輸出原始分數，不做 sigmoid)
+        self.linear_head = nn.Linear(self.hidden_dim, 1, bias=True)
+        
+        # 🔧 數值穩定性組件
+        if self.stability_mode:
+            self.gradient_stabilizer = self._create_gradient_stabilizer()
+        
+        self._init_parameters()
+    
+    def _init_parameters(self):
+        """初始化參數 - 針對邊打分優化"""
+        # 線性標頭使用小權重初始化
+        nn.init.xavier_uniform_(self.linear_head.weight, gain=0.1)
+        nn.init.constant_(self.linear_head.bias, 0.0)
+    
+    def _create_gradient_stabilizer(self):
+        """創建梯度穩定器（如果需要的話）"""
+        return lambda x: torch.clamp(x, min=-5.0, max=5.0)
+    
+    def forward(self, edge_features):
+        """
+        前向傳播
+        
+        Args:
+            edge_features: [N, 2*d] - 節點對特徵 [h_i; h_j]
+            
+        Returns:
+            logits: [N, 1] - 邊存在的原始分數 (logit，未經 sigmoid)
+        """
+        # 輸入檢查
+        if edge_features.dim() != 2:
+            raise ValueError(f"Expected 2D input, got {edge_features.dim()}D")
+        
+        if edge_features.size(1) != self.input_dim:
+            raise ValueError(f"Expected input dim {self.input_dim}, got {edge_features.size(1)}")
+        
+        # 🔧 數值穩定性預處理
+        if self.stability_mode:
+            edge_features = self._stabilize_input(edge_features)
+        
+        try:
+            # 🎯 通過 KAN 層進行非線性變換
+            kan_output = self.kan_layer(edge_features)
+            
+            # 🔧 檢查 KAN 輸出有效性
+            if torch.isnan(kan_output).any() or torch.isinf(kan_output).any():
+                print("⚠️ KAN Edge Decoder: KAN 層輸出包含無效值，進行修復")
+                kan_output = torch.nan_to_num(kan_output, nan=0.0, posinf=2.0, neginf=-2.0)
+            
+            # 🔧 LayerNorm + Dropout
+            normalized_output = self.layer_norm(kan_output)
+            if self.training:
+                normalized_output = self.dropout(normalized_output)
+            
+            # 🎯 線性標頭輸出 logit
+            logits = self.linear_head(normalized_output)
+            
+            # 🔧 最終數值穩定性檢查
+            if self.stability_mode:
+                logits = self._stabilize_output(logits)
+            
+            return logits
+            
+        except Exception as e:
+            print(f"⚠️ KAN Edge Decoder 處理失敗: {e}")
+            # 🔧 回退策略：簡單線性變換
+            return self._fallback_forward(edge_features)
+    
+    def _stabilize_input(self, x):
+        """輸入穩定化"""
+        # 1. NaN 和無窮值處理
+        x = torch.nan_to_num(x, nan=0.0, posinf=2.0, neginf=-2.0)
+        
+        # 2. 範圍限制
+        x = torch.clamp(x, min=-5.0, max=5.0)
+        
+        # 3. 自適應縮放（如果標準差過大）
+        x_std = torch.std(x)
+        if x_std > 2.0:
+            scaling_factor = 2.0 / (x_std + 1e-8)
+            x = x * scaling_factor
+        
+        return x
+    
+    def _stabilize_output(self, logits):
+        """輸出穩定化"""
+        # 限制 logit 範圍，避免極端值
+        logits = torch.clamp(logits, min=-10.0, max=10.0)
+        
+        # NaN 檢查
+        if torch.isnan(logits).any() or torch.isinf(logits).any():
+            logits = torch.nan_to_num(logits, nan=0.0, posinf=5.0, neginf=-5.0)
+        
+        return logits
+    
+    def _fallback_forward(self, edge_features):
+        """回退策略：簡單線性變換"""
+        try:
+            # 直接通過線性層，但先降維
+            if edge_features.size(1) > self.hidden_dim:
+                # 簡單的特徵選擇
+                reduced_features = edge_features[:, :self.hidden_dim]
+            else:
+                # 零填充
+                padding = torch.zeros(edge_features.size(0), 
+                                    self.hidden_dim - edge_features.size(1),
+                                    device=edge_features.device,
+                                    dtype=edge_features.dtype)
+                reduced_features = torch.cat([edge_features, padding], dim=1)
+            
+            return self.linear_head(reduced_features)
+            
+        except Exception as e:
+            print(f"⚠️ 回退策略也失敗: {e}")
+            # 最終回退：返回零 logit
+            return torch.zeros(edge_features.size(0), 1, 
+                             device=edge_features.device, 
+                             dtype=edge_features.dtype)
+    
+    def get_model_info(self):
+        """獲取模型信息，用於評估"""
+        total_params = sum(p.numel() for p in self.parameters())
+        kan_params = sum(p.numel() for p in self.kan_layer.parameters())
+        linear_params = sum(p.numel() for p in self.linear_head.parameters())
+        
+        return {
+            'model_name': 'KANEdgeDecoder',
+            'total_parameters': total_params,
+            'kan_parameters': kan_params,
+            'linear_parameters': linear_params,
+            'input_dim': self.input_dim,
+            'hidden_dim': self.hidden_dim,
+            'num_basis': self.num_basis,
+            'learnable_activations': kan_params,  # KAN 參數都是可學習激活相關
+            'parameter_efficiency_score': kan_params / max(total_params, 1)
+        }

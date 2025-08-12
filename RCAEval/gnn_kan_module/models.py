@@ -68,13 +68,37 @@ class GNNKANModel(nn.Module):
         except ImportError:
             self.temporal_attention = TemporalAttention(config.output_dim)
         
-        # KAN 解碼器 - 用於計算鄰接矩陣
-        self.graph_decoder = nn.Sequential(
-            nn.Linear(config.output_dim * 2, config.output_dim),
-            # nn.LeakyReLU(negative_slope=0.01),
-            nn.Dropout(config.dropout),
-            nn.Linear(config.output_dim, 1)
-        )
+        # 🎯 圖解碼器 - 支持 KAN/MLP 切換
+        self.use_kan_decoder = getattr(config, 'use_kan_decoder', False)
+        
+        if self.use_kan_decoder:
+            # 🚀 使用 KAN 解碼器
+            from .kan_components.kan_layers import KANEdgeDecoder
+            
+            kan_hidden_dim = getattr(config, 'kan_decoder_hidden_dim', None) or (config.output_dim // 2)
+            kan_num_basis = getattr(config, 'kan_decoder_num_basis', 4)
+            kan_spline_order = getattr(config, 'kan_decoder_spline_order', 3)
+            kan_dropout = getattr(config, 'kan_decoder_dropout', config.dropout)
+            kan_stability = getattr(config, 'kan_decoder_stability_mode', True)
+            
+            self.graph_decoder = KANEdgeDecoder(
+                input_dim=config.output_dim * 2,
+                hidden_dim=kan_hidden_dim,
+                num_basis=kan_num_basis,
+                spline_order=kan_spline_order,
+                dropout=kan_dropout,
+                stability_mode=kan_stability
+            )
+            print(f"✓ 使用 KAN Graph Decoder: {config.output_dim * 2} → {kan_hidden_dim} → 1")
+        else:
+            # 🔧 使用傳統 MLP 解碼器
+            self.graph_decoder = nn.Sequential(
+                nn.Linear(config.output_dim * 2, config.output_dim),
+                # nn.LeakyReLU(negative_slope=0.01),
+                nn.Dropout(config.dropout),
+                nn.Linear(config.output_dim, 1)
+            )
+            print(f"✓ 使用 MLP Graph Decoder: {config.output_dim * 2} → {config.output_dim} → 1")
         
         # Dropout
         self.dropout = nn.Dropout(config.dropout)
@@ -424,17 +448,17 @@ def compute_loss_stable(node_embeddings, adj_scores, edge_index, config):
             valid_edge_index = edge_index[:, valid_indices]
             true_adj[valid_edge_index[0], valid_edge_index[1]] = 1.0
     
-    # 裁剪 adj_scores 以避免數值不穩定
-    adj_scores_clipped = torch.clamp(adj_scores, min=1e-7, max=1-1e-7)
-    
-    # 使用穩定的二元交叉熵
-    reconstruction_loss = F.binary_cross_entropy(adj_scores_clipped, true_adj, reduction='mean')
+    # 🎯 統一使用 BCEWithLogits 損失函數 (更穩定，適用於 KAN 和 MLP)
+    # 無論是 KAN 還是 MLP 解碼器，都假設輸出 logit (原始分數)
+    reconstruction_loss = F.binary_cross_entropy_with_logits(adj_scores, true_adj, reduction='mean')
     
     # 2. 嵌入正則化損失 (使用更溫和的正則化)
     embedding_reg = torch.norm(node_embeddings, p=2, dim=1).mean()
     
     # 3. 稀疏性損失 (鼓勵稀疏的鄰接矩陣)
-    sparsity_loss = torch.norm(adj_scores, p=1) / (num_nodes * num_nodes)
+    # 對 logit 應用 sigmoid 後計算稀疏性
+    adj_probs = torch.sigmoid(adj_scores)
+    sparsity_loss = torch.norm(adj_probs, p=1) / (num_nodes * num_nodes)
     
     # 確保各個損失項都是有效的數值
     if torch.isnan(reconstruction_loss) or torch.isinf(reconstruction_loss):

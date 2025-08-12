@@ -125,6 +125,14 @@ class SimplifiedGNNKANConfig:
         self.learnable_edges = True  # 可學習邊權重
         self.max_log_features = 100  # 最大日誌特徵數
         
+        # 🎯 KAN Graph Decoder 配置
+        self.use_kan_decoder = False  # 是否使用 KAN 解碼器 (預設 False)
+        self.kan_decoder_hidden_dim = None  # KAN 解碼器隱藏維度 (自動設為 output_dim//2)
+        self.kan_decoder_num_basis = 4  # KAN 解碼器基函數數量 (輕量配置)
+        self.kan_decoder_spline_order = 3  # KAN 解碼器樣條階數
+        self.kan_decoder_dropout = 0.1  # KAN 解碼器 dropout
+        self.kan_decoder_stability_mode = True  # 是否啟用數值穩定性保護
+        
         # 🔧 模型特定配置 - 確保兼容性
         self.hidden_dim = self.hidden_dims[0] if self.hidden_dims else 64
         self.num_layers = self.num_gnn_layers  # 層數別名
@@ -400,6 +408,14 @@ class HighCapacityGNNKANConfig(SimplifiedGNNKANConfig):
         self.learnable_edges = True         # 保持動態圖學習
         self.max_log_features = 100         # 適中的日誌特徵數
         
+        # 🎯 高容量 KAN Graph Decoder 配置
+        self.use_kan_decoder = False        # 預設關閉，可手動啟用
+        self.kan_decoder_hidden_dim = None  # 自動設為 output_dim//2
+        self.kan_decoder_num_basis = 6      # 高容量：更多基函數
+        self.kan_decoder_spline_order = 4   # 高容量：更高階樣條
+        self.kan_decoder_dropout = 0.15     # 高容量：稍微增加 dropout
+        self.kan_decoder_stability_mode = True
+        
         # 🔧 模型特定配置 - 確保維度兼容性
         self.hidden_dim = self.hidden_dims[0] if self.hidden_dims else 96
         self.num_layers = self.num_gnn_layers  # 層數別名
@@ -512,6 +528,14 @@ class FastGNNKANConfig(SimplifiedGNNKANConfig):
         self.smoothness_lambda = 5e-7
         self.learnable_edges = False
         self.max_log_features = 50
+        
+        # 🎯 快速 KAN Graph Decoder 配置
+        self.use_kan_decoder = False        # 預設關閉，追求速度
+        self.kan_decoder_hidden_dim = None  # 自動設為 output_dim//2 
+        self.kan_decoder_num_basis = 3      # 快速：最少基函數
+        self.kan_decoder_spline_order = 3   # 快速：標準階數
+        self.kan_decoder_dropout = 0.05     # 快速：最少 dropout
+        self.kan_decoder_stability_mode = True
         
         # 🔧 模型特定配置 - 確保兼容性
         self.hidden_dim = self.hidden_dims[0] if self.hidden_dims else 64

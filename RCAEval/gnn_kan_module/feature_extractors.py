@@ -159,7 +159,7 @@ class MultiModalFeatureExtractor:
         self.log_processor = UnifiedLogProcessor.from_config(config)
         self.trace_processor = UnifiedTraceProcessor.from_config(config)
         self.metric_processor = UnifiedMetricProcessor.from_config(config)
-        
+
     def extract_features(self, data_dict: dict, inject_time=None, dataset=None):
         """
         從多模態數據中提取特徵。
@@ -167,7 +167,7 @@ class MultiModalFeatureExtractor:
         Args:
             data_dict (dict): 包含 'metrics', 'logs', 'traces' 的字典。
             inject_time: 故障注入時間。
-            
+
         Returns:
             fused_features (np.ndarray): 融合後的特徵矩陣。
             node_names (list): 節點名稱列表。
