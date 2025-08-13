@@ -1102,7 +1102,14 @@ class GNNKANvsBAROComparator:
                         'kan_grid_size': 10,              # 平衡的模型容量
                         'input_clamp_range': [-3.0, 3.0], # 穩健的數值範圍
                         'gradient_clipping': 1.0,        # 標準的梯度裁剪
-                        'numerical_stability': True      # 必要的穩定性保障
+                        'numerical_stability': True,     # 必要的穩定性保障
+                        # # 🆕 啟用 KAN Graph Decoder（替代 MLP 解碼器），預設是不使用KAN Graph Decoder
+                        # 'use_kan_decoder': True,
+                        # # 解碼器輕量配置，兼顧表達與效率
+                        # 'kan_decoder_num_basis': 4,
+                        # 'kan_decoder_hidden_dim': 32,   # 通常為 output_dim 的 1x~2x
+                        # 'kan_decoder_dropout': 0.10,
+                        # 'kan_decoder_spline_order': 3
                     }
                     
                     try:
