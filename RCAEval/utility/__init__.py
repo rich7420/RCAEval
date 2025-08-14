@@ -344,6 +344,48 @@ def download_re3_dataset(local_path=None):
     download_re3ss_dataset(local_path=RE3_local_path)
     download_re3tt_dataset(local_path=RE3_local_path)
     
+def download_syn_circa_dataset(local_path=None):
+    """Download the synthetic CIRCA dataset from Zenodo."""
+    if local_path == None:
+        local_path = "data"
+    if not os.path.exists(local_path):
+        os.makedirs(local_path)
+    if os.path.exists(join(local_path, "syn_circa")):
+        return
+    download_data("https://zenodo.org/records/13305663/files/syn_circa.zip?download=1", "syn_circa.zip")
+    with zipfile.ZipFile("syn_circa.zip", 'r') as file:
+        file.extractall(local_path)
+    os.remove("syn_circa.zip")
+
+
+def download_syn_rcd_dataset(local_path=None):
+    """Download the synthetic RCD dataset from Zenodo."""
+    if local_path == None:
+        local_path = "data"
+    if not os.path.exists(local_path):
+        os.makedirs(local_path)
+    if os.path.exists(join(local_path, "syn_rcd")):
+        return
+    download_data("https://zenodo.org/records/13305663/files/syn_rcd.zip?download=1", "syn_rcd.zip")
+    with zipfile.ZipFile("syn_rcd.zip", 'r') as file:
+        file.extractall(local_path)
+    os.remove("syn_rcd.zip")
+
+
+def download_syn_causil_dataset(local_path=None):
+    """Download the synthetic CauSIL dataset from Zenodo."""
+    if local_path == None:
+        local_path = "data"
+    if not os.path.exists(local_path):
+        os.makedirs(local_path)
+    if os.path.exists(join(local_path, "syn_causil")):
+        return
+    download_data("https://zenodo.org/records/13305663/files/syn_causil.zip?download=1", "syn_causil.zip")
+    with zipfile.ZipFile("syn_causil.zip", 'r') as file:
+        file.extractall(local_path)
+    os.remove("syn_causil.zip")
+
+
 def read_data(data_path, strip=True):
     """Read CSV data for root cause analysis."""
     data = pd.read_csv(data_path)

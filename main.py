@@ -237,6 +237,8 @@ def parse_args():
     parser.add_argument("--tdelta", type=int, default=0, help="Time delta for anomaly detection delay")
     parser.add_argument("--iter_num", type=int, default=10, help="Number of iterations")
     parser.add_argument("--useful", action="store_true", help="Select useful columns")
+    parser.add_argument("--fast_mode", action="store_true", help="Enable fast mode for GNN-KAN")
+    parser.add_argument("--minimal_preprocessing", action="store_true", help="Use minimal preprocessing like comparison.py")
     
     args = parser.parse_args()
     
@@ -325,33 +327,47 @@ def process(data_path):
     service, metric = basename(dirname(dirname(data_path))).split("_")
     case = basename(dirname(data_path))
 
-    rp = join(result_path, f"{service}_{metric}_{case}.json")
+    rp = join(result_path, f"{args.method}_{service}_{metric}_{case}.json")
 
     # == Load and Preprocess data ==
     data = pd.read_csv(data_path)
     
-    # remove lat-50, only selecte lat-90 
-    data = data.loc[:, ~data.columns.str.endswith("_latency-50")]
-    
-    if "mm-tt" in data_path:
-        time_col = data["time"]
-        data = data.loc[:, data.columns.str.startswith("ts-")]
-        data["time"] = time_col
+    # 🔧 可選的數據預處理（為了與comparison.py一致性，可以選擇性使用）
+    if args.method == 'gnn_kan' and hasattr(args, 'minimal_preprocessing') and args.minimal_preprocessing:
+        print("  📊 使用最小預處理模式（與comparison.py一致）")
+        # 只進行必要的inf和NA處理
+        data = data.replace([np.inf, -np.inf], np.nan)
+        data = data.fillna(method="ffill") 
+        data = data.fillna(0)
+    else:
+        print("  📊 使用標準預處理模式")
+        # remove lat-50, only selecte lat-90 
+        data = data.loc[:, ~data.columns.str.endswith("_latency-50")]
         
-    # handle inf
-    data = data.replace([np.inf, -np.inf], np.nan)
+        if "mm-tt" in data_path:
+            time_col = data["time"]
+            data = data.loc[:, data.columns.str.startswith("ts-")]
+            data["time"] = time_col
+            
+        # handle inf
+        data = data.replace([np.inf, -np.inf], np.nan)
 
-    # handle na
-    data = data.fillna(method="ffill")
-    data = data.fillna(0)
+        # handle na
+        data = data.fillna(method="ffill")
+        data = data.fillna(0)
 
     with open(join(data_dir, "inject_time.txt")) as f:
-        inject_time = int(f.readlines()[0].strip()) + args.tdelta
-    # for metrics, minutes -> seconds // 2
-    normal_df = data[data["time"] < inject_time].tail(args.length * 60 // 2)
-    anomal_df = data[data["time"] >= inject_time].head(args.length * 60 // 2)
-
-    data = pd.concat([normal_df, anomal_df], ignore_index=True)
+        inject_time = int(f.readlines()[0].strip())
+        # 🔧 修正：移除tdelta偏移，與comparison.py保持一致
+        if args.tdelta != 0:
+            print(f"  ⚠️ 忽略tdelta偏移({args.tdelta})，使用原始注入時間以確保一致性")
+    
+    # 🔧 修正：使用完整數據而非切片，與comparison.py保持一致
+    print(f"  📊 使用完整數據集，注入時間: {inject_time}")
+    print(f"  📊 原始數據形狀: {data.shape}")
+    
+    # 不再進行時間切片，保持數據完整性
+    # data = 完整數據，與comparison.py一致
 
     # num column, exclude time
     num_node = len(data.columns) - 1
@@ -401,23 +417,41 @@ def process(data_path):
         gnn_kan_kwargs = {}
         if args.method == 'gnn_kan':
             print("🚀 使用 GNN-KAN 優化參數...")
-            # 應用優化的參數
+            # 🔥 應用與comparison.py一致的高性能優化參數
             gnn_kan_kwargs = {
                 'graph_head': 'pagerank',
                 'config_type': 'simplified',
                 'feature_method': 'kpca',
                 'kpca_kernel': 'rbf',
-                'learning_rate': 9e-5,
+                'learning_rate': 8e-7,               # 🚀 修正：使用高性能學習率
                 'num_epochs': 200,
-                'sparsity_lambda': 1e-4,
+                'sparsity_lambda': 1e-5,             # 🚀 修正：使用更好的稀疏性配置
                 'use_cuda': True,
                 'cpu_fallback': True,
                 'use_optimized_input': True,
                 'similarity_threshold': 0.15,
                 'max_edges_per_node': 12,
                 'target_feature_dim': 64,
-                'force_node_expansion': True
+                'hidden_dim': 64,
+                'force_node_expansion': True,
+                # 🆕 新增穩健性參數（與comparison.py一致）
+                'kan_grid_size': 10,
+                'input_clamp_range': [-3.0, 3.0],
+                'gradient_clipping': 1.0,
+                'numerical_stability': True
             }
+            
+            # 🚀 快速模式優化
+            if args.fast_mode:
+                print("⚡ 啟用快速模式 - 大幅減少訓練時間")
+                gnn_kan_kwargs.update({
+                    'num_epochs': 50,                    # 減少訓練輪數
+                    'learning_rate': 1e-6,               # 提高學習率
+                    'kan_grid_size': 6,                  # 減少KAN複雜度
+                    'target_feature_dim': 32,            # 減少特徵維度
+                    'hidden_dim': 32,                    # 減少隱藏維度
+                    'simplified_mode': True              # 啟用簡化模式
+                })
             print(f"✅ 已應用優化 GNN-KAN 參數")
             
         result = func(
@@ -438,7 +472,7 @@ def process(data_path):
         raise e
         print(f"{args.method=} failed on {data_path=}")
         print(e)
-        rp = join(result_path, f"{service}_{metric}_{case}_failed.json")
+        rp = join(result_path, f"{args.method}_{service}_{metric}_{case}_failed.json")
         with open(rp, "w") as f:
             json.dump({"error": str(e)}, f)
 
@@ -454,9 +488,39 @@ avg_speed = round(time_taken.total_seconds() / len(data_paths), 2)
 
 
 # ======== EVALUTION ===========
-rps = glob.glob(join(result_path, "*.json"))
-services = sorted(list(set([basename(x).split("_")[0] for x in rps])))
-faults = sorted(list(set([basename(x).split("_")[1] for x in rps])))
+# 🔧 修正：只評估當前方法的結果，避免cache混淆
+rps = glob.glob(join(result_path, f"{args.method}_*.json"))
+print(f"📊 評估 {args.method} 方法的結果文件: {len(rps)} 個")
+# 🔧 修正：簡化解析服務和故障類型
+# 文件格式: {method}_{service}_{fault}_{case}.json
+# 例如: gnn_kan_ts-travel-service_socket_1.json
+services = []
+faults = []
+for rp in rps:
+    filename = basename(rp).replace('.json', '')
+    print(f"🔍 解析文件名: {filename}")
+    
+    # 移除方法名前綴
+    if filename.startswith(f"{args.method}_"):
+        remaining = filename[len(f"{args.method}_"):]
+        print(f"  移除方法名後: {remaining}")
+        
+        # 從右邊開始切分：最後是案例號，倒數第二是故障類型
+        parts = remaining.split('_')
+        if len(parts) >= 3:
+            case = parts[-1]  # 案例號
+            fault = parts[-2]  # 故障類型 
+            service = '_'.join(parts[:-2])  # 服務名（可能包含下劃線）
+            
+            print(f"  解析結果: service={service}, fault={fault}, case={case}")
+            services.append(service)
+            faults.append(fault)
+
+services = sorted(list(set(services)))
+faults = sorted(list(set(faults)))
+
+print(f"📊 發現服務: {services}")
+print(f"📊 發現故障類型: {faults}")
 
 eval_data = {
     "service-fault": [],
@@ -491,7 +555,22 @@ for service in services:
         f_evaluator = Evaluator()
 
         for rp in rps:
-            s, m = basename(rp).split("_")[:2]
+            # 🔧 修正：簡化解析文件名獲取服務和故障類型
+            filename = basename(rp).replace('.json', '')
+            
+            # 移除方法名前綴
+            if not filename.startswith(f"{args.method}_"):
+                continue
+                
+            remaining = filename[len(f"{args.method}_"):]
+            parts = remaining.split('_')
+            
+            if len(parts) < 3:
+                continue
+                
+            m = parts[-2]  # 故障類型 
+            s = '_'.join(parts[:-2])  # 服務名
+            
             if s != service or m != fault:
                 continue  # ignore
 
