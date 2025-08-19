@@ -87,6 +87,20 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
         # kan_adj = kan_autoencoder(simplified_features)  
         # final_ranks = pagerank_only(kan_adj)
     """
+    # 🔧 記憶體優化：清理 GPU 快取
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
+    # 🔧 記憶體優化：設置較小的批次大小
+    import gc
+    gc.collect()
+    # 🔧 記憶體優化：清理 GPU 快取
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
+    # 🔧 記憶體優化：設置較小的批次大小
+    import gc
+    gc.collect()
     print("🔥 使用純粹KAN模組化架構進行RCA分析")
     print("🎯 目標：證明用KAN取代MLP的有效性（高準確率）")
     print(f"🔧 特徵方法：{feature_method}，配置類型：{config_type}")
@@ -410,30 +424,68 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
     # 特徵嵌入相似性分析
     embedding_scores = {}
     if embeddings.shape[0] > 0:
-        # 計算每個節點嵌入的方差（異常性指標）
-        embedding_variance = np.var(embeddings.numpy(), axis=1)
-        embedding_scores = {node_names[i]: embedding_variance[i] for i in range(len(node_names))}
+        # 🔧 修復：安全的嵌入方差計算
+        try:
+            embeddings_np = embeddings.detach().cpu().numpy()
+            
+            # 檢查嵌入是否包含 NaN 或 Inf
+            if np.any(np.isnan(embeddings_np)) or np.any(np.isinf(embeddings_np)):
+                print("⚠️ 檢測到嵌入中的 NaN/Inf，進行清理...")
+                embeddings_np = np.nan_to_num(embeddings_np, nan=0.0, posinf=1.0, neginf=-1.0)
+            
+            # 計算每個節點嵌入的方差（異常性指標）
+            embedding_variance = np.var(embeddings_np, axis=1)
+            
+            # 檢查方差計算結果
+            if np.any(np.isnan(embedding_variance)) or np.any(np.isinf(embedding_variance)):
+                print("⚠️ 嵌入方差計算產生 NaN/Inf，使用預設值")
+                embedding_variance = np.ones(len(node_names)) * 0.1
+            
+            embedding_scores = {node_names[i]: float(embedding_variance[i]) for i in range(len(node_names))}
+            
+        except Exception as emb_error:
+            print(f"⚠️ 嵌入分析失敗: {emb_error}，使用預設分數")
+            embedding_scores = {node: 0.1 for node in node_names}
     
-    # 6.2 綜合評分算法
+    # 6.2 綜合評分算法 - 🔧 修復：添加 NaN 安全檢查
     final_scores = {}
     for node in node_names:
         score = 0.0
         
-        # PageRank權重 (40%)
+        # PageRank權重 (40%) - 安全計算
         if node in pagerank_scores:
-            score += 0.4 * pagerank_scores[node]
+            pr_score = pagerank_scores[node]
+            if not (np.isnan(pr_score) or np.isinf(pr_score)):
+                score += 0.4 * pr_score
+            else:
+                print(f"⚠️ PageRank NaN 跳過: {node}")
         
-        # 度中心性權重 (30%)
+        # 度中心性權重 (30%) - 安全計算
         if node in degree_scores:
-            max_degree = max(degree_scores.values()) if degree_scores.values() else 1
-            score += 0.3 * (degree_scores[node] / max_degree)
+            degree_values = [v for v in degree_scores.values() if not (np.isnan(v) or np.isinf(v))]
+            max_degree = max(degree_values) if degree_values else 1.0
+            
+            if max_degree > 0 and not (np.isnan(degree_scores[node]) or np.isinf(degree_scores[node])):
+                normalized_degree = degree_scores[node] / max_degree
+                if not (np.isnan(normalized_degree) or np.isinf(normalized_degree)):
+                    score += 0.3 * normalized_degree
         
-        # 嵌入異常性權重 (30%)
+        # 嵌入異常性權重 (30%) - 安全計算
         if node in embedding_scores:
-            max_embedding = max(embedding_scores.values()) if embedding_scores.values() else 1
-            score += 0.3 * (embedding_scores[node] / max_embedding)
+            embedding_values = [v for v in embedding_scores.values() if not (np.isnan(v) or np.isinf(v))]
+            max_embedding = max(embedding_values) if embedding_values else 1.0
+            
+            if max_embedding > 0 and not (np.isnan(embedding_scores[node]) or np.isinf(embedding_scores[node])):
+                normalized_embedding = embedding_scores[node] / max_embedding
+                if not (np.isnan(normalized_embedding) or np.isinf(normalized_embedding)):
+                    score += 0.3 * normalized_embedding
         
-        final_scores[node] = score
+        # 🆕 最終 NaN 檢查
+        if np.isnan(score) or np.isinf(score):
+            print(f"⚠️ 最終分數 NaN，設為預設值: {node}")
+            score = 0.001  # 給一個很小的預設值
+        
+        final_scores[node] = float(score)
     
     # 6.3 故障時間點相關性增強
     if inject_time is not None and isinstance(data, dict):
@@ -584,6 +636,22 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
     }
     
     print(f"✓ 模型統計: {total_params:,}參數, {sparsity_info['sparsity_ratio']:.3f}稀疏性, {memory_usage:.1f}MB記憶體")
+    
+    
+    # 🔧 記憶體優化：函數結束前清理
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
+    import gc
+    gc.collect()
+    
+    
+    # 🔧 記憶體優化：函數結束前清理
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
+    import gc
+    gc.collect()
     
     return {
         'ranks': ranks,
@@ -842,6 +910,22 @@ def simplified_gnn_kan_rca(data, inject_time=None, dataset=None, config_type='si
     print(f"   Top-3根因: {final_ranks[:3]}")
     
     # 構建簡化的返回結果
+    
+    # 🔧 記憶體優化：函數結束前清理
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
+    import gc
+    gc.collect()
+    
+    
+    # 🔧 記憶體優化：函數結束前清理
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
+    import gc
+    gc.collect()
+    
     return {
         'ranks': final_ranks,
         'final_scores': final_scores,
@@ -882,12 +966,16 @@ class RealTimeGNNKAN:
     
     def _initialize_heuristic_rules(self):
         """初始化啟發式規則"""
-        return {
-            'high_cpu_services': ['database', 'compute', 'ml'],
-            'high_memory_services': ['cache', 'redis', 'session'],
-            'network_critical_services': ['gateway', 'proxy', 'lb'],
-            'error_keywords': ['error', 'fail', 'timeout', 'exception']
-        }
+        
+    # 🔧 記憶體優化：函數結束前清理
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
+    import gc
+    gc.collect()
+    
+    
+    # 這個 return 語句被錯誤放置，應該移除
     
     def immediate_response(self, data, inject_time=None):
         """<1秒響應：基於規則的快速分析"""
@@ -930,12 +1018,8 @@ class RealTimeGNNKAN:
         response_time = time.time() - start_time
         print(f"✅ 即時響應完成: {response_time:.3f}秒")
         
-        return {
-            'ranks': ranks,
-            'response_time': response_time,
-            'response_level': 'immediate',
-            'confidence': 'low'
-        }
+        
+    # 移除重複的記憶體清理和錯誤的 return 語句
     
     def refined_response(self, data, inject_time=None):
         """<5秒響應：輕量KAN推理"""

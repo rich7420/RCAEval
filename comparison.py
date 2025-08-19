@@ -1570,6 +1570,61 @@ class GNNKANvsBAROComparator:
         else:
             return str(obj)
 
+    def run_single_comparison(self, dataset_name, method_name, data_path, inject_time):
+        """執行單個比較測試 - 改進錯誤處理"""
+        try:
+            print(f"🔍 測試 {method_name} 在 {dataset_name} 數據集...")
+            
+            # 載入數據
+            data = self.load_case_data(data_path)
+            if data is None:
+                return None
+            
+            # 執行方法
+            start_time = time.time()
+            
+            if method_name == 'gnn_kan':
+                result = self.run_gnn_kan_method(data, inject_time)
+            elif method_name == 'baro':
+                result = self.run_baro_method(data, inject_time)
+            else:
+                print(f"⚠️ 未知方法: {method_name}")
+                return None
+            
+            execution_time = time.time() - start_time
+            
+            if result is None:
+                print(f"❌ {method_name} 執行失敗")
+                return None
+            
+            # 計算評估指標
+            ground_truth = self.get_ground_truth(data_path)
+            metrics = self.calculate_metrics(result.get('ranks', []), ground_truth)
+            
+            return {
+                'method': method_name,
+                'dataset': dataset_name,
+                'success': True,
+                'execution_time': execution_time,
+                'metrics': metrics,
+                'ranks': result.get('ranks', [])
+            }
+            
+        except Exception as e:
+            print(f"❌ {method_name} 在 {dataset_name} 執行失敗: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            return {
+                'method': method_name,
+                'dataset': dataset_name,
+                'success': False,
+                'error': str(e),
+                'execution_time': 0.0,
+                'metrics': {},
+                'ranks': []
+            }
+
     def save_results(self):
         """保存比較結果 - 修復循環引用問題"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
