@@ -327,6 +327,17 @@ class GNNKANvsBAROComparator:
                 "has_rtt": True,
                 "series": "RCD",
                 "synthetic": True
+            },
+            
+            # 🆕 CauSIL 合成數據集
+            "causil": {
+                "path": "data/syn_causil",  # 合成CauSIL數據集
+                "download_func": download_syn_causil_dataset,
+                "description": "CauSIL 合成數據集 (因果推理)",
+                "scale": "medium",
+                "has_rtt": True,
+                "series": "CauSIL",
+                "synthetic": True
             }
 
         }
@@ -2359,7 +2370,7 @@ def main():
                        choices=["online-boutique", "sock-shop-1", "sock-shop-2", "train-ticket", 
                                "re1-ob", "re1-ss", "re1-tt", "re2-ob", "re2-ss", "re2-tt", 
                                "re3-ob", "re3-ss", "re3-tt", "multi-source",
-                               "circa10", "circa50", "rcd10", "rcd50"],  # 🆕 添加數據集配置變體
+                               "circa10", "circa50", "rcd10", "rcd50", "causil"],  # 🆕 添加完整數據集配置
                        default=["online-boutique", "train-ticket", "re1-ob", "re1-tt", "re2-ob", "re2-ss", "re3-ob"],
                        help="要測試的數據集 (包含基礎、RE1、RE2、RE3系列、多模態數據集)")
     parser.add_argument("--limit", type=int, default=5, help="每個數據集的測試案例數量限制")
