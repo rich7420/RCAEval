@@ -1,0 +1,84 @@
+{
+  "flags": {
+    "productCatalogFailure": {
+      "state": "ENABLED",
+      "variants": {
+        "on": true,
+        "off": false
+      },
+      "defaultVariant": "off",
+      "targeting": {
+        "fractional": [
+          {
+            "variant": "on",
+            "weight": 0
+          },
+          {
+            "variant": "off", 
+            "weight": 100
+          }
+        ]
+      }
+    },
+    "recommendationCache": {
+      "state": "ENABLED",
+      "variants": {
+        "on": true,
+        "off": false
+      },
+      "defaultVariant": "on",
+      "targeting": {
+        "fractional": [
+          {
+            "variant": "on",
+            "weight": 100
+          },
+          {
+            "variant": "off",
+            "weight": 0
+          }
+        ]
+      }
+    },
+    "adServiceFailure": {
+      "state": "ENABLED",
+      "variants": {
+        "on": true,
+        "off": false
+      },
+      "defaultVariant": "off",
+      "targeting": {
+        "fractional": [
+          {
+            "variant": "on",
+            "weight": 0
+          },
+          {
+            "variant": "off",
+            "weight": 100
+          }
+        ]
+      }
+    },
+    "cartServiceFailure": {
+      "state": "ENABLED", 
+      "variants": {
+        "on": true,
+        "off": false
+      },
+      "defaultVariant": "off",
+      "targeting": {
+        "fractional": [
+          {
+            "variant": "on",
+            "weight": 0
+          },
+          {
+            "variant": "off",
+            "weight": 100
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,312 @@
+# OpenTelemetry Demo Application Services
+# This file extends the main docker-compose.yml with detailed OTel Demo configuration
+
+services:
+  # Frontend Service
+  otel-demo-frontend:
+    image: ghcr.io/open-telemetry/demo:1.10.0-frontend
+    container_name: otel-demo-frontend
+    environment:
+      - PORT=8080
+      - FRONTEND_ADDR=0.0.0.0:8080
+      - AD_SERVICE_ADDR=otel-demo-adservice:9555
+      - CART_SERVICE_ADDR=otel-demo-cartservice:7070
+      - CHECKOUT_SERVICE_ADDR=otel-demo-checkoutservice:5050
+      - CURRENCY_SERVICE_ADDR=otel-demo-currencyservice:7000
+      - PRODUCT_CATALOG_SERVICE_ADDR=otel-demo-productcatalogservice:3550
+      - RECOMMENDATION_SERVICE_ADDR=otel-demo-recommendationservice:8080
+      - SHIPPING_SERVICE_ADDR=otel-demo-shippingservice:50051
+      - FEATURE_FLAG_SERVICE_ADDR=otel-demo-featureflagservice:50053
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=frontend
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=frontend,service.version=1.10.0,deployment.environment=development
+    ports:
+      - "8080:8080"
+    depends_on:
+      - otel-demo-adservice
+      - otel-demo-cartservice
+      - otel-demo-checkoutservice
+      - otel-demo-currencyservice
+      - otel-demo-productcatalogservice
+      - otel-demo-recommendationservice
+      - otel-demo-shippingservice
+      - otel-demo-featureflagservice
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Ad Service
+  otel-demo-adservice:
+    image: ghcr.io/open-telemetry/demo:1.10.0-adservice
+    container_name: otel-demo-adservice
+    environment:
+      - PORT=9555
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=adservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=adservice,service.version=1.10.0,deployment.environment=development
+    ports:
+      - "9555:9555"
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "/bin/grpc_health_probe", "-addr=:9555"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Cart Service
+  otel-demo-cartservice:
+    image: ghcr.io/open-telemetry/demo:1.10.0-cartservice
+    container_name: otel-demo-cartservice
+    environment:
+      - PORT=7070
+      - REDIS_ADDR=redis:6379
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=cartservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=cartservice,service.version=1.10.0,deployment.environment=development
+    ports:
+      - "7070:7070"
+    depends_on:
+      - redis
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "/bin/grpc_health_probe", "-addr=:7070"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Checkout Service
+  otel-demo-checkoutservice:
+    image: ghcr.io/open-telemetry/demo:1.10.0-checkoutservice
+    container_name: otel-demo-checkoutservice
+    environment:
+      - PORT=5050
+      - CART_SERVICE_ADDR=otel-demo-cartservice:7070
+      - CURRENCY_SERVICE_ADDR=otel-demo-currencyservice:7000
+      - EMAIL_SERVICE_ADDR=otel-demo-emailservice:8080
+      - PAYMENT_SERVICE_ADDR=otel-demo-paymentservice:50051
+      - PRODUCT_CATALOG_SERVICE_ADDR=otel-demo-productcatalogservice:3550
+      - SHIPPING_SERVICE_ADDR=otel-demo-shippingservice:50051
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=checkoutservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=checkoutservice,service.version=1.10.0,deployment.environment=development
+    ports:
+      - "5050:5050"
+    depends_on:
+      - otel-demo-cartservice
+      - otel-demo-currencyservice
+      - otel-demo-emailservice
+      - otel-demo-paymentservice
+      - otel-demo-productcatalogservice
+      - otel-demo-shippingservice
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "/bin/grpc_health_probe", "-addr=:5050"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Currency Service
+  otel-demo-currencyservice:
+    image: ghcr.io/open-telemetry/demo:1.10.0-currencyservice
+    container_name: otel-demo-currencyservice
+    environment:
+      - PORT=7000
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=currencyservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=currencyservice,service.version=1.10.0,deployment.environment=development
+    ports:
+      - "7002:7000"  # Different port to avoid conflict with Online Boutique
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "/bin/grpc_health_probe", "-addr=:7000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Email Service
+  otel-demo-emailservice:
+    image: ghcr.io/open-telemetry/demo:1.10.0-emailservice
+    container_name: otel-demo-emailservice
+    environment:
+      - PORT=8080
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=emailservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=emailservice,service.version=1.10.0,deployment.environment=development
+    ports:
+      - "8082:8080"  # Mapped to 8082 to avoid conflict
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "/bin/grpc_health_probe", "-addr=:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Payment Service
+  otel-demo-paymentservice:
+    image: ghcr.io/open-telemetry/demo:1.10.0-paymentservice
+    container_name: otel-demo-paymentservice
+    environment:
+      - PORT=50051
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=paymentservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=paymentservice,service.version=1.10.0,deployment.environment=development
+    ports:
+      - "50051:50051"
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "/bin/grpc_health_probe", "-addr=:50051"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Product Catalog Service
+  otel-demo-productcatalogservice:
+    image: ghcr.io/open-telemetry/demo:1.10.0-productcatalogservice
+    container_name: otel-demo-productcatalogservice
+    environment:
+      - PORT=3550
+      - PRODUCT_CATALOG_SERVICE_PORT=3550
+      - FEATURE_FLAG_GRPC_SERVICE_ADDR=otel-demo-featureflagservice:50053
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=productcatalogservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=productcatalogservice,service.version=1.10.0,deployment.environment=development
+    ports:
+      - "3550:3550"
+    depends_on:
+      - otel-demo-featureflagservice
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "/bin/grpc_health_probe", "-addr=:3550"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Recommendation Service
+  otel-demo-recommendationservice:
+    image: ghcr.io/open-telemetry/demo:1.10.0-recommendationservice
+    container_name: otel-demo-recommendationservice
+    environment:
+      - PORT=8080
+      - PRODUCT_CATALOG_SERVICE_ADDR=otel-demo-productcatalogservice:3550
+      - FEATURE_FLAG_GRPC_SERVICE_ADDR=otel-demo-featureflagservice:50053
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=recommendationservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=recommendationservice,service.version=1.10.0,deployment.environment=development
+    ports:
+      - "8083:8080"  # Mapped to 8083 to avoid conflict
+    depends_on:
+      - otel-demo-productcatalogservice
+      - otel-demo-featureflagservice
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "/bin/grpc_health_probe", "-addr=:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Shipping Service
+  otel-demo-shippingservice:
+    image: ghcr.io/open-telemetry/demo:1.10.0-shippingservice
+    container_name: otel-demo-shippingservice
+    environment:
+      - PORT=50051
+      - SHIPPING_SERVICE_PORT=50051
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=shippingservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=shippingservice,service.version=1.10.0,deployment.environment=development
+    ports:
+      - "50052:50051"  # Mapped to 50052 to avoid conflict
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "/bin/grpc_health_probe", "-addr=:50051"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Feature Flag Service (using flagd)
+  otel-demo-featureflagservice:
+    image: ghcr.io/open-feature/flagd:latest
+    container_name: otel-demo-featureflagservice
+    environment:
+      - FLAGD_OTEL_COLLECTOR_URI=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=featureflagservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=featureflagservice,service.version=1.10.0,deployment.environment=development
+    ports:
+      - "8081:8013"  # flagd default port
+      - "50053:8013"
+    command: ["start", "--uri", "file:./etc/flagd/demo.flagd.json"]
+    volumes:
+      - ./configs/feature-flags.json:/etc/flagd/demo.flagd.json:ro
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8013/schema.v1.Service/GetSchema"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Load Generator
+  otel-demo-loadgenerator:
+    image: ghcr.io/open-telemetry/demo:1.10.0-loadgenerator
+    container_name: otel-demo-loadgenerator
+    environment:
+      - FRONTEND_ADDR=otel-demo-frontend:8080
+      - LOCUST_WEB_PORT=8089
+      - LOCUST_USERS=10
+      - LOCUST_SPAWN_RATE=1
+      - LOCUST_HOST=http://otel-demo-frontend:8080
+      - LOCUST_HEADLESS=false
+      - LOCUST_AUTOSTART=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=loadgenerator
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=loadgenerator,service.version=1.10.0,deployment.environment=development
+    ports:
+      - "8087:8089"  # Mapped to 8087 to avoid conflict with main Locust
+    depends_on:
+      - otel-demo-frontend
+    networks:
+      - observability
+
+  # Redis for Cart Service
+  redis:
+    image: redis:7-alpine
+    container_name: otel-demo-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  observability:
+    driver: bridge

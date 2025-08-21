@@ -1,0 +1,147 @@
+# Health Check Configuration for OpenTelemetry Demo Services
+# This file defines health check endpoints and monitoring configuration
+
+health_checks:
+  # HTTP-based health checks
+  http_services:
+    frontend:
+      endpoint: "http://frontend:8080/health"
+      method: "GET"
+      expected_status: 200
+      timeout: "10s"
+      interval: "30s"
+      retries: 3
+      
+    featureflagservice:
+      endpoint: "http://featureflagservice:8081/health"
+      method: "GET"
+      expected_status: 200
+      timeout: "10s"
+      interval: "30s"
+      retries: 3
+
+  # gRPC-based health checks
+  grpc_services:
+    cartservice:
+      address: "cartservice:7070"
+      service: "hipstershop.CartService"
+      timeout: "10s"
+      interval: "30s"
+      retries: 3
+      
+    checkoutservice:
+      address: "checkoutservice:5050"
+      service: "hipstershop.CheckoutService"
+      timeout: "10s"
+      interval: "30s"
+      retries: 3
+      
+    currencyservice:
+      address: "currencyservice:7000"
+      service: "hipstershop.CurrencyService"
+      timeout: "10s"
+      interval: "30s"
+      retries: 3
+      
+    emailservice:
+      address: "emailservice:8080"
+      service: "hipstershop.EmailService"
+      timeout: "10s"
+      interval: "30s"
+      retries: 3
+      
+    paymentservice:
+      address: "paymentservice:50051"
+      service: "hipstershop.PaymentService"
+      timeout: "10s"
+      interval: "30s"
+      retries: 3
+      
+    productcatalogservice:
+      address: "productcatalogservice:3550"
+      service: "hipstershop.ProductCatalogService"
+      timeout: "10s"
+      interval: "30s"
+      retries: 3
+      
+    recommendationservice:
+      address: "recommendationservice:8080"
+      service: "hipstershop.RecommendationService"
+      timeout: "10s"
+      interval: "30s"
+      retries: 3
+      
+    shippingservice:
+      address: "shippingservice:50051"
+      service: "hipstershop.ShippingService"
+      timeout: "10s"
+      interval: "30s"
+      retries: 3
+      
+    adservice:
+      address: "adservice:9555"
+      service: "hipstershop.AdService"
+      timeout: "10s"
+      interval: "30s"
+      retries: 3
+
+  # Database health checks
+  databases:
+    redis:
+      type: "redis"
+      address: "redis:6379"
+      command: "PING"
+      expected_response: "PONG"
+      timeout: "5s"
+      interval: "30s"
+      retries: 3
+
+# Monitoring configuration for health checks
+monitoring:
+  # Prometheus metrics for health checks
+  metrics:
+    enabled: true
+    endpoint: "/metrics"
+    port: 9090
+    
+  # Health check dashboard configuration
+  dashboard:
+    enabled: true
+    refresh_interval: "5s"
+    
+  # Alerting rules for health check failures
+  alerts:
+    service_down:
+      threshold: 1  # Alert if any service is down
+      duration: "1m"
+      severity: "critical"
+      
+    service_degraded:
+      threshold: 0.8  # Alert if success rate < 80%
+      duration: "5m"
+      severity: "warning"
+
+# Health check aggregation
+aggregation:
+  overall_health:
+    calculation: "all_services_healthy"
+    endpoint: "/health/overall"
+    
+  service_groups:
+    core_services:
+      - frontend
+      - cartservice
+      - checkoutservice
+      - productcatalogservice
+      
+    payment_services:
+      - paymentservice
+      - currencyservice
+      
+    communication_services:
+      - emailservice
+      - recommendationservice
+      
+    infrastructure:
+      - redis
+      - featureflagservice

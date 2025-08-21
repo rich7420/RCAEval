@@ -1,0 +1,162 @@
+services:
+  # OpenTelemetry Collector
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./configs/otel-collector.yaml:/etc/otel-collector-config.yaml
+    ports:
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+      - "8888:8888"   # Prometheus metrics
+      - "14251:14251" # Jaeger gRPC receiver
+      - "14267:14267" # Jaeger HTTP receiver
+      - "13133:13133" # Health check endpoint
+    depends_on:
+      - prometheus
+      - loki
+      - jaeger
+    networks:
+      - observability
+
+  # Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+      - '--web.enable-remote-write-receiver'
+    volumes:
+      - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - observability
+
+  # Loki
+  loki:
+    image: grafana/loki:latest
+    container_name: loki
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./configs/loki.yml:/etc/loki/local-config.yaml
+      - loki_data:/loki
+    ports:
+      - "3100:3100"
+    networks:
+      - observability
+
+  # Promtail
+  promtail:
+    image: grafana/promtail:latest
+    container_name: promtail
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./configs/promtail.yml:/etc/promtail/config.yml
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    networks:
+      - observability
+
+  # Jaeger
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - SPAN_STORAGE_TYPE=memory
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14250:14250"  # Jaeger gRPC
+      - "6831:6831/udp"  # Jaeger Thrift Compact
+      - "6832:6832/udp"  # Jaeger Thrift Binary
+      - "14268:14268"  # Jaeger HTTP
+      - "14269:14269"  # Admin/Health check
+      - "4319:4317"    # OTLP gRPC (mapped to avoid conflict)
+      - "4320:4318"    # OTLP HTTP (mapped to avoid conflict)
+    volumes:
+      - ./configs/jaeger-ui-config.json:/etc/jaeger/ui-config.json
+    networks:
+      - observability
+
+  # Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_PATHS_CONFIG=/etc/grafana/grafana.ini
+    volumes:
+      - ./configs/grafana/grafana.ini:/etc/grafana/grafana.ini
+      - ./configs/grafana/provisioning:/etc/grafana/provisioning
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - loki
+      - jaeger
+    networks:
+      - observability
+
+  # Note: OpenTelemetry Demo Application is configured in docker-compose.otel-demo.yml
+  # Use: docker-compose -f docker-compose.yml -f docker-compose.otel-demo.yml up
+
+  # K6 Load Generator
+  k6:
+    image: grafana/k6:latest
+    container_name: k6-load-generator
+    volumes:
+      - ./traffic/k6:/scripts
+    command: ["sleep", "infinity"]  # Keep container running
+    networks:
+      - observability
+
+  # Locust Load Generator
+  locust:
+    image: locustio/locust:latest
+    container_name: locust-load-generator
+    volumes:
+      - ./traffic/locust:/mnt/locust
+    ports:
+      - "8089:8089"   # Locust Web UI
+    command: ["sleep", "infinity"]  # Keep container running
+    networks:
+      - observability
+
+  # Data Collector Service
+  data-collector:
+    build:
+      context: ./collectors
+      dockerfile: Dockerfile
+    container_name: data-collector
+    volumes:
+      - ./data:/app/data
+      - ./configs:/app/configs
+    environment:
+      - PROMETHEUS_URL=http://prometheus:9090
+      - LOKI_URL=http://loki:3100
+      - JAEGER_URL=http://jaeger:16686
+    depends_on:
+      - prometheus
+      - loki
+      - jaeger
+    networks:
+      - observability
+
+volumes:
+  prometheus_data:
+  loki_data:
+  jaeger_data:
+  grafana_data:
+
+networks:
+  observability:
+    driver: bridge

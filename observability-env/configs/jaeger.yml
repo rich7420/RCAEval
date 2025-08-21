@@ -1,0 +1,126 @@
+# Jaeger configuration for all-in-one deployment
+# This configuration is used when running Jaeger with environment variables
+
+# Collector configuration
+collector:
+  # OTLP receiver configuration
+  otlp:
+    grpc:
+      host-port: "0.0.0.0:4317"
+    http:
+      host-port: "0.0.0.0:4318"
+  
+  # Jaeger receiver configuration
+  jaeger:
+    grpc:
+      host-port: "0.0.0.0:14250"
+    thrift:
+      binary:
+        host-port: "0.0.0.0:6832"
+      compact:
+        host-port: "0.0.0.0:6831"
+      http:
+        host-port: "0.0.0.0:14268"
+
+  # Zipkin receiver configuration
+  zipkin:
+    http:
+      host-port: "0.0.0.0:9411"
+
+# Query service configuration
+query:
+  # Base path for Jaeger UI
+  base-path: /
+  
+  # Static files path
+  static-files: /go/jaeger-ui/
+  
+  # UI configuration
+  ui-config: /etc/jaeger/ui-config.json
+  
+  # Additional query options
+  query:
+    max-clock-skew-adjustment: 0s
+
+# Agent configuration (for jaeger-agent if used separately)
+agent:
+  jaeger:
+    grpc:
+      host-port: "0.0.0.0:14250"
+    thrift:
+      binary:
+        host-port: "0.0.0.0:6832"
+      compact:
+        host-port: "0.0.0.0:6831"
+
+# Storage configuration
+storage:
+  # Memory storage (for development/testing)
+  type: memory
+  memory:
+    max-traces: 50000
+  
+  # Badger storage (local file-based storage)
+  # type: badger
+  # badger:
+  #   ephemeral: false
+  #   directory-key: /badger/key
+  #   directory-value: /badger/data
+  #   consistency: false
+  #   maintenance-interval: 5m
+  #   metrics-update-interval: 10s
+
+# Sampling configuration
+sampling:
+  # Default sampling strategy
+  default_strategy:
+    type: probabilistic
+    param: 1.0  # Sample 100% of traces (for development)
+  
+  # Per-service sampling strategies
+  per_service_strategies:
+    - service: "frontend"
+      type: probabilistic
+      param: 1.0
+    - service: "cartservice"
+      type: probabilistic
+      param: 1.0
+    - service: "checkoutservice"
+      type: probabilistic
+      param: 1.0
+    - service: "currencyservice"
+      type: probabilistic
+      param: 0.5
+    - service: "emailservice"
+      type: probabilistic
+      param: 0.5
+    - service: "paymentservice"
+      type: probabilistic
+      param: 1.0
+    - service: "productcatalogservice"
+      type: probabilistic
+      param: 0.8
+    - service: "recommendationservice"
+      type: probabilistic
+      param: 0.8
+    - service: "shippingservice"
+      type: probabilistic
+      param: 1.0
+    - service: "adservice"
+      type: probabilistic
+      param: 0.3
+
+# Metrics configuration
+metrics:
+  backend: prometheus
+  http:
+    route: /metrics
+    port: 14269
+
+# Logging configuration
+log-level: info
+
+# Health check configuration
+admin:
+  http:
+    host-port: "0.0.0.0:14269"

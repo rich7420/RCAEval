@@ -1,0 +1,150 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # Docker container logs
+  - job_name: containers
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: containerlogs
+          __path__: /var/lib/docker/containers/*/*log
+
+    pipeline_stages:
+      - json:
+          expressions:
+            output: log
+            stream: stream
+            attrs:
+      - json:
+          expressions:
+            tag:
+          source: attrs
+      - regex:
+          expression: (?P<container_name>(?:[^|]*))\|
+          source: tag
+      - timestamp:
+          format: RFC3339Nano
+          source: time
+      - labels:
+          stream:
+          container_name:
+      - output:
+          source: output
+
+  # System logs
+  - job_name: syslog
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: syslog
+          __path__: /var/log/syslog
+
+  # Application specific logs
+  - job_name: otel-demo-logs
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: otel-demo
+          service: otel-demo
+          __path__: /var/log/otel-demo/*.log
+
+    pipeline_stages:
+      - json:
+          expressions:
+            level: level
+            message: msg
+            service: service_name
+            timestamp: timestamp
+      - labels:
+          level:
+          service:
+      - timestamp:
+          format: RFC3339
+          source: timestamp
+      - output:
+          source: message
+
+  # Observability stack logs
+  - job_name: observability-logs
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: observability
+          __path__: /var/log/observability/*.log
+
+    pipeline_stages:
+      - regex:
+          expression: '(?P<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z) (?P<level>\w+) (?P<component>\w+): (?P<message>.*)'
+      - labels:
+          level:
+          component:
+      - timestamp:
+          format: RFC3339
+          source: timestamp
+      - output:
+          source: message
+
+  # Chaos engineering logs
+  - job_name: chaos-logs
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: chaos
+          __path__: /var/log/chaos/*.log
+
+    pipeline_stages:
+      - json:
+          expressions:
+            level: level
+            message: message
+            fault_type: fault_type
+            target_service: target_service
+            experiment_id: experiment_id
+      - labels:
+          level:
+          fault_type:
+          target_service:
+          experiment_id:
+      - output:
+          source: message
+
+  # Error logs with special handling
+  - job_name: error-logs
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: errors
+          __path__: /var/log/*/error.log
+
+    pipeline_stages:
+      - multiline:
+          firstline: '^\d{4}-\d{2}-\d{2}'
+          max_wait_time: 3s
+      - regex:
+          expression: '(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \[(?P<level>\w+)\] (?P<message>.*)'
+      - labels:
+          level:
+      - timestamp:
+          format: '2006-01-02 15:04:05'
+          source: timestamp
+      - output:
+          source: message
+
+# Limits configuration
+limits_config:
+  readline_rate: 10000
+  readline_burst: 20000

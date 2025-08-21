@@ -1,0 +1,120 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'observability-env'
+    environment: 'development'
+
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 5s
+    metrics_path: /metrics
+
+  # OpenTelemetry Collector
+  - job_name: 'otel-collector'
+    static_configs:
+      - targets: ['otel-collector:8888']
+    scrape_interval: 5s
+    metrics_path: /metrics
+
+  # OpenTelemetry Demo Application
+  - job_name: 'otel-demo'
+    static_configs:
+      - targets: ['otel-demo:8080']
+    scrape_interval: 10s
+    metrics_path: /metrics
+    scrape_timeout: 5s
+
+  # Individual OTel Demo Services (if exposed separately)
+  - job_name: 'otel-demo-services'
+    static_configs:
+      - targets: 
+          - 'frontend:8080'
+          - 'cartservice:7070'
+          - 'checkoutservice:5050'
+          - 'currencyservice:7000'
+          - 'emailservice:8080'
+          - 'paymentservice:50051'
+          - 'productcatalogservice:3550'
+          - 'recommendationservice:8080'
+          - 'shippingservice:50051'
+          - 'adservice:9555'
+    scrape_interval: 15s
+    metrics_path: /metrics
+    scrape_timeout: 10s
+
+  # Grafana
+  - job_name: 'grafana'
+    static_configs:
+      - targets: ['grafana:3000']
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  # Loki
+  - job_name: 'loki'
+    static_configs:
+      - targets: ['loki:3100']
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  # Jaeger
+  - job_name: 'jaeger'
+    static_configs:
+      - targets: ['jaeger:14269']
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  # Docker containers (if Docker daemon metrics are exposed)
+  - job_name: 'docker'
+    static_configs:
+      - targets: ['host.docker.internal:9323']
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  # Node Exporter (if added later for system metrics)
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 15s
+    metrics_path: /metrics
+
+  # cAdvisor (if added later for container metrics)
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+    scrape_interval: 15s
+    metrics_path: /metrics
+
+# Service discovery configurations
+# Docker service discovery (commented out, can be enabled if needed)
+# - job_name: 'docker-services'
+#   docker_sd_configs:
+#     - host: unix:///var/run/docker.sock
+#       refresh_interval: 30s
+#   relabel_configs:
+#     - source_labels: [__meta_docker_container_name]
+#       target_label: container_name
+#     - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+#       target_label: service_name
+
+# Storage configuration is handled by command line arguments in docker-compose.yml
+
+# Remote write configuration (for external storage if needed)
+# remote_write:
+#   - url: "http://remote-storage:9201/write"
+#     queue_config:
+#       max_samples_per_send: 1000
+#       max_shards: 200
+#       capacity: 2500
+
+# Remote read configuration (for external storage if needed)
+# remote_read:
+#   - url: "http://remote-storage:9201/read"
+#     read_recent: true

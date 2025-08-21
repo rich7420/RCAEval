@@ -1,0 +1,190 @@
+# OpenTelemetry Demo Application Configuration
+# This file contains environment variables and service configurations for the OTel Demo
+
+# Global OpenTelemetry Configuration
+otelcol:
+  endpoint: "otel-collector:4317"
+  insecure: true
+
+# Service-specific configurations
+services:
+  # Frontend Service
+  frontend:
+    env:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=frontend
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=frontend,service.version=1.0.0,deployment.environment=development
+      - OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_TRACES_EXPORTER=otlp
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Cart Service
+  cartservice:
+    env:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=cartservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=cartservice,service.version=1.0.0,deployment.environment=development
+    ports:
+      - "7070:7070"
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=:7070"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Checkout Service
+  checkoutservice:
+    env:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=checkoutservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=checkoutservice,service.version=1.0.0,deployment.environment=development
+    ports:
+      - "5050:5050"
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=:5050"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Currency Service
+  currencyservice:
+    env:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=currencyservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=currencyservice,service.version=1.0.0,deployment.environment=development
+    ports:
+      - "7000:7000"
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=:7000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Email Service
+  emailservice:
+    env:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=emailservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=emailservice,service.version=1.0.0,deployment.environment=development
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Payment Service
+  paymentservice:
+    env:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=paymentservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=paymentservice,service.version=1.0.0,deployment.environment=development
+    ports:
+      - "50051:50051"
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=:50051"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Product Catalog Service
+  productcatalogservice:
+    env:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=productcatalogservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=productcatalogservice,service.version=1.0.0,deployment.environment=development
+    ports:
+      - "3550:3550"
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=:3550"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Recommendation Service
+  recommendationservice:
+    env:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=recommendationservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=recommendationservice,service.version=1.0.0,deployment.environment=development
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Shipping Service
+  shippingservice:
+    env:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=shippingservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=shippingservice,service.version=1.0.0,deployment.environment=development
+    ports:
+      - "50051:50051"
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=:50051"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Ad Service
+  adservice:
+    env:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=adservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=adservice,service.version=1.0.0,deployment.environment=development
+    ports:
+      - "9555:9555"
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=:9555"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+# Feature Flags Configuration
+featureflagservice:
+  env:
+    - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+    - OTEL_EXPORTER_OTLP_INSECURE=true
+    - OTEL_SERVICE_NAME=featureflagservice
+    - OTEL_RESOURCE_ATTRIBUTES=service.name=featureflagservice,service.version=1.0.0,deployment.environment=development
+  ports:
+    - "8081:8081"
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+
+# Load Generator Configuration
+loadgenerator:
+  env:
+    - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+    - OTEL_EXPORTER_OTLP_INSECURE=true
+    - OTEL_SERVICE_NAME=loadgenerator
+    - OTEL_RESOURCE_ATTRIBUTES=service.name=loadgenerator,service.version=1.0.0,deployment.environment=development
+    - FRONTEND_ADDR=frontend:8080
+    - USERS=10
+    - SPAWN_RATE=1
+    - HOST=http://frontend:8080

@@ -1,0 +1,46 @@
+apiVersion: 1
+
+providers:
+  # Observability stack dashboards
+  - name: 'observability'
+    orgId: 1
+    folder: 'Observability Stack'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/observability
+
+  # Application dashboards
+  - name: 'applications'
+    orgId: 1
+    folder: 'Applications'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/applications
+
+  # Chaos engineering dashboards
+  - name: 'chaos'
+    orgId: 1
+    folder: 'Chaos Engineering'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/chaos
+
+  # System monitoring dashboards
+  - name: 'system'
+    orgId: 1
+    folder: 'System Monitoring'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/system

@@ -1,0 +1,260 @@
+# Google Online Boutique Application Services
+# This file provides an alternative microservices demo application
+
+services:
+  # Frontend Service
+  online-boutique-frontend:
+    image: gcr.io/google-samples/microservices-demo/frontend:v0.10.1
+    container_name: online-boutique-frontend
+    environment:
+      - PORT=8080
+      - PRODUCT_CATALOG_SERVICE_ADDR=online-boutique-productcatalogservice:3550
+      - CURRENCY_SERVICE_ADDR=online-boutique-currencyservice:7000
+      - CART_SERVICE_ADDR=online-boutique-cartservice:7070
+      - RECOMMENDATION_SERVICE_ADDR=online-boutique-recommendationservice:8080
+      - SHIPPING_SERVICE_ADDR=online-boutique-shippingservice:50051
+      - CHECKOUT_SERVICE_ADDR=online-boutique-checkoutservice:5050
+      - AD_SERVICE_ADDR=online-boutique-adservice:9555
+      # OpenTelemetry Configuration
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=online-boutique-frontend
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=online-boutique-frontend,service.version=0.10.1,deployment.environment=development,application=online-boutique
+      - OTEL_PROPAGATORS=tracecontext,baggage,b3
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_TRACES_EXPORTER=otlp
+    ports:
+      - "8084:8080"  # Different port to avoid conflict with OTel Demo
+    depends_on:
+      - online-boutique-productcatalogservice
+      - online-boutique-currencyservice
+      - online-boutique-cartservice
+      - online-boutique-recommendationservice
+      - online-boutique-shippingservice
+      - online-boutique-checkoutservice
+      - online-boutique-adservice
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/_healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Product Catalog Service
+  online-boutique-productcatalogservice:
+    image: gcr.io/google-samples/microservices-demo/productcatalogservice:v0.10.1
+    container_name: online-boutique-productcatalogservice
+    environment:
+      - PORT=3550
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=online-boutique-productcatalogservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=online-boutique-productcatalogservice,service.version=0.10.1,deployment.environment=development,application=online-boutique
+    ports:
+      - "3551:3550"  # Different port to avoid conflict
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "/bin/grpc_health_probe", "-addr=:3550"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Currency Service
+  online-boutique-currencyservice:
+    image: gcr.io/google-samples/microservices-demo/currencyservice:v0.10.1
+    container_name: online-boutique-currencyservice
+    environment:
+      - PORT=7000
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=online-boutique-currencyservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=online-boutique-currencyservice,service.version=0.10.1,deployment.environment=development,application=online-boutique
+    ports:
+      - "7001:7000"  # Different port to avoid conflict
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "/bin/grpc_health_probe", "-addr=:7000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Cart Service
+  online-boutique-cartservice:
+    image: gcr.io/google-samples/microservices-demo/cartservice:v0.10.1
+    container_name: online-boutique-cartservice
+    environment:
+      - REDIS_ADDR=online-boutique-redis:6379
+      - PORT=7070
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=online-boutique-cartservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=online-boutique-cartservice,service.version=0.10.1,deployment.environment=development,application=online-boutique
+    ports:
+      - "7071:7070"  # Different port to avoid conflict
+    depends_on:
+      - online-boutique-redis
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "/bin/grpc_health_probe", "-addr=:7070"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Recommendation Service
+  online-boutique-recommendationservice:
+    image: gcr.io/google-samples/microservices-demo/recommendationservice:v0.10.1
+    container_name: online-boutique-recommendationservice
+    environment:
+      - PORT=8080
+      - PRODUCT_CATALOG_SERVICE_ADDR=online-boutique-productcatalogservice:3550
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=online-boutique-recommendationservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=online-boutique-recommendationservice,service.version=0.10.1,deployment.environment=development,application=online-boutique
+    ports:
+      - "8085:8080"  # Different port to avoid conflict
+    depends_on:
+      - online-boutique-productcatalogservice
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "/bin/grpc_health_probe", "-addr=:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Shipping Service
+  online-boutique-shippingservice:
+    image: gcr.io/google-samples/microservices-demo/shippingservice:v0.10.1
+    container_name: online-boutique-shippingservice
+    environment:
+      - PORT=50051
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=online-boutique-shippingservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=online-boutique-shippingservice,service.version=0.10.1,deployment.environment=development,application=online-boutique
+    ports:
+      - "50053:50051"  # Different port to avoid conflict
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "/bin/grpc_health_probe", "-addr=:50051"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Checkout Service
+  online-boutique-checkoutservice:
+    image: gcr.io/google-samples/microservices-demo/checkoutservice:v0.10.1
+    container_name: online-boutique-checkoutservice
+    environment:
+      - PORT=5050
+      - PRODUCT_CATALOG_SERVICE_ADDR=online-boutique-productcatalogservice:3550
+      - SHIPPING_SERVICE_ADDR=online-boutique-shippingservice:50051
+      - PAYMENT_SERVICE_ADDR=online-boutique-paymentservice:50051
+      - EMAIL_SERVICE_ADDR=online-boutique-emailservice:8080
+      - CURRENCY_SERVICE_ADDR=online-boutique-currencyservice:7000
+      - CART_SERVICE_ADDR=online-boutique-cartservice:7070
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=online-boutique-checkoutservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=online-boutique-checkoutservice,service.version=0.10.1,deployment.environment=development,application=online-boutique
+    ports:
+      - "5051:5050"  # Different port to avoid conflict
+    depends_on:
+      - online-boutique-productcatalogservice
+      - online-boutique-shippingservice
+      - online-boutique-paymentservice
+      - online-boutique-emailservice
+      - online-boutique-currencyservice
+      - online-boutique-cartservice
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "/bin/grpc_health_probe", "-addr=:5050"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Payment Service
+  online-boutique-paymentservice:
+    image: gcr.io/google-samples/microservices-demo/paymentservice:v0.10.1
+    container_name: online-boutique-paymentservice
+    environment:
+      - PORT=50051
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=online-boutique-paymentservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=online-boutique-paymentservice,service.version=0.10.1,deployment.environment=development,application=online-boutique
+    ports:
+      - "50054:50051"  # Different port to avoid conflict
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "/bin/grpc_health_probe", "-addr=:50051"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Email Service
+  online-boutique-emailservice:
+    image: gcr.io/google-samples/microservices-demo/emailservice:v0.10.1
+    container_name: online-boutique-emailservice
+    environment:
+      - PORT=8080
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=online-boutique-emailservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=online-boutique-emailservice,service.version=0.10.1,deployment.environment=development,application=online-boutique
+    ports:
+      - "8086:8080"  # Different port to avoid conflict
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "/bin/grpc_health_probe", "-addr=:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Ad Service
+  online-boutique-adservice:
+    image: gcr.io/google-samples/microservices-demo/adservice:v0.10.1
+    container_name: online-boutique-adservice
+    environment:
+      - PORT=9555
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=online-boutique-adservice
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=online-boutique-adservice,service.version=0.10.1,deployment.environment=development,application=online-boutique
+    ports:
+      - "9556:9555"  # Different port to avoid conflict
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "/bin/grpc_health_probe", "-addr=:9555"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis for Online Boutique Cart Service
+  online-boutique-redis:
+    image: redis:7-alpine
+    container_name: online-boutique-redis
+    ports:
+      - "6380:6379"  # Different port to avoid conflict with OTel Demo Redis
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  observability:
+    driver: bridge

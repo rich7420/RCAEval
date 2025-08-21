@@ -1,0 +1,127 @@
+# Health Check Configuration for Google Online Boutique Services
+
+health_checks:
+  # HTTP-based health checks
+  http_services:
+    online-boutique-frontend:
+      endpoint: "http://online-boutique-frontend:8080/_healthz"
+      method: "GET"
+      expected_status: 200
+      timeout: "10s"
+      interval: "30s"
+      retries: 3
+
+  # gRPC-based health checks
+  grpc_services:
+    online-boutique-productcatalogservice:
+      address: "online-boutique-productcatalogservice:3550"
+      service: "hipstershop.ProductCatalogService"
+      timeout: "10s"
+      interval: "30s"
+      retries: 3
+      
+    online-boutique-currencyservice:
+      address: "online-boutique-currencyservice:7000"
+      service: "hipstershop.CurrencyService"
+      timeout: "10s"
+      interval: "30s"
+      retries: 3
+      
+    online-boutique-cartservice:
+      address: "online-boutique-cartservice:7070"
+      service: "hipstershop.CartService"
+      timeout: "10s"
+      interval: "30s"
+      retries: 3
+      
+    online-boutique-recommendationservice:
+      address: "online-boutique-recommendationservice:8080"
+      service: "hipstershop.RecommendationService"
+      timeout: "10s"
+      interval: "30s"
+      retries: 3
+      
+    online-boutique-shippingservice:
+      address: "online-boutique-shippingservice:50051"
+      service: "hipstershop.ShippingService"
+      timeout: "10s"
+      interval: "30s"
+      retries: 3
+      
+    online-boutique-checkoutservice:
+      address: "online-boutique-checkoutservice:5050"
+      service: "hipstershop.CheckoutService"
+      timeout: "10s"
+      interval: "30s"
+      retries: 3
+      
+    online-boutique-paymentservice:
+      address: "online-boutique-paymentservice:50051"
+      service: "hipstershop.PaymentService"
+      timeout: "10s"
+      interval: "30s"
+      retries: 3
+      
+    online-boutique-emailservice:
+      address: "online-boutique-emailservice:8080"
+      service: "hipstershop.EmailService"
+      timeout: "10s"
+      interval: "30s"
+      retries: 3
+      
+    online-boutique-adservice:
+      address: "online-boutique-adservice:9555"
+      service: "hipstershop.AdService"
+      timeout: "10s"
+      interval: "30s"
+      retries: 3
+
+  # Database health checks
+  databases:
+    online-boutique-redis:
+      type: "redis"
+      address: "online-boutique-redis:6379"
+      command: "PING"
+      expected_response: "PONG"
+      timeout: "5s"
+      interval: "30s"
+      retries: 3
+
+# Service dependencies mapping
+dependencies:
+  online-boutique-frontend:
+    - online-boutique-productcatalogservice
+    - online-boutique-currencyservice
+    - online-boutique-cartservice
+    - online-boutique-recommendationservice
+    - online-boutique-shippingservice
+    - online-boutique-checkoutservice
+    - online-boutique-adservice
+    
+  online-boutique-cartservice:
+    - online-boutique-redis
+    
+  online-boutique-checkoutservice:
+    - online-boutique-productcatalogservice
+    - online-boutique-shippingservice
+    - online-boutique-paymentservice
+    - online-boutique-emailservice
+    - online-boutique-currencyservice
+    - online-boutique-cartservice
+    
+  online-boutique-recommendationservice:
+    - online-boutique-productcatalogservice
+
+# Port mappings for external access
+port_mappings:
+  online-boutique-frontend: 8084
+  online-boutique-productcatalogservice: 3551
+  online-boutique-currencyservice: 7001
+  online-boutique-cartservice: 7071
+  online-boutique-recommendationservice: 8085
+  online-boutique-shippingservice: 50053
+  online-boutique-checkoutservice: 5051
+  online-boutique-paymentservice: 50054
+  online-boutique-emailservice: 8086
+  online-boutique-adservice: 9556
+  online-boutique-redis: 6380

@@ -1,0 +1,70 @@
+{
+  "browse_weight": 70,
+  "cart_weight": 20,
+  "checkout_weight": 8,
+  "error_weight": 2,
+  "think_time_min": 1,
+  "think_time_max": 10,
+  "products": [
+    "0PUK6V6EV0",
+    "1YMWWN1N4O", 
+    "2ZYFJ3GM2N",
+    "66VCHSJNUP",
+    "6E92ZMYYFZ",
+    "9SIQT8TOJO",
+    "L9ECAV7KIM",
+    "LS4PSXUNUM",
+    "OLJCESPC7Z"
+  ],
+  "currencies": ["USD", "EUR", "CAD", "JPY"],
+  "load_patterns": {
+    "light": {
+      "users": 10,
+      "spawn_rate": 1,
+      "think_time_min": 5,
+      "think_time_max": 15
+    },
+    "normal": {
+      "users": 50,
+      "spawn_rate": 5,
+      "think_time_min": 1,
+      "think_time_max": 10
+    },
+    "heavy": {
+      "users": 100,
+      "spawn_rate": 10,
+      "think_time_min": 0.5,
+      "think_time_max": 3
+    },
+    "burst": {
+      "users": 200,
+      "spawn_rate": 20,
+      "burst_duration": 30,
+      "rest_duration": 60
+    }
+  },
+  "endpoints": {
+    "otel_demo": "http://localhost:8080",
+    "online_boutique": "http://localhost:80"
+  },
+  "scenarios": {
+    "browse_only": {
+      "browse_weight": 100,
+      "cart_weight": 0,
+      "checkout_weight": 0,
+      "error_weight": 0
+    },
+    "shopping_focused": {
+      "browse_weight": 40,
+      "cart_weight": 40,
+      "checkout_weight": 18,
+      "error_weight": 2
+    },
+    "error_testing": {
+      "browse_weight": 20,
+      "cart_weight": 20,
+      "checkout_weight": 10,
+      "error_weight": 50
+    }
+  }
+}

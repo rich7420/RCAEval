@@ -1,0 +1,54 @@
+{
+  "monitor": {
+    "menuEnabled": true
+  },
+  "dependencies": {
+    "dagMaxNumServices": 200,
+    "menuEnabled": true
+  },
+  "archiveEnabled": true,
+  "tracking": {
+    "gaID": null,
+    "trackErrors": true
+  },
+  "menu": [
+    {
+      "label": "About Jaeger",
+      "items": [
+        {
+          "label": "Documentation",
+          "url": "https://www.jaegertracing.io/docs/"
+        },
+        {
+          "label": "GitHub",
+          "url": "https://github.com/jaegertracing/jaeger"
+        }
+      ]
+    }
+  ],
+  "linkPatterns": [
+    {
+      "type": "logs",
+      "key": "logsLink",
+      "url": "http://localhost:3000/explore?orgId=1&left=%5B%22now-1h%22,%22now%22,%22Loki%22,%7B%22expr%22:%22%7Bcontainer_name%3D%5C%22#{service}%5C%22%7D%20%7C%3D%20%5C%22#{traceID}%5C%22%22%7D%5D",
+      "text": "View Logs for this Trace"
+    },
+    {
+      "type": "metrics",
+      "key": "metricsLink", 
+      "url": "http://localhost:3000/explore?orgId=1&left=%5B%22now-1h%22,%22now%22,%22Prometheus%22,%7B%22expr%22:%22rate%28http_requests_total%7Bservice%3D%5C%22#{service}%5C%22%7D%5B5m%5D%29%22%7D%5D",
+      "text": "View Metrics for #{service}"
+    }
+  ],
+  "search": {
+    "maxLookback": {
+      "label": "2 Days",
+      "value": "2d"
+    },
+    "maxLimit": 1500
+  },
+  "scripts": [],
+  "criticalPath": {
+    "enabled": true
+  }
+}
