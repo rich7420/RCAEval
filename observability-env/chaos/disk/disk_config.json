@@ -1,0 +1,12 @@
+{
+  "duration": 300,
+  "workers": 2,
+  "file_size": "1G",
+  "temp_path": "/tmp",
+  "safety_threshold": 90,
+  "monitoring_interval": 1,
+  "method": "sync",
+  "iops_limit": null,
+  "bandwidth_limit": null,
+  "target_container": null
+}

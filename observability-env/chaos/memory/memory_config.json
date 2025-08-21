@@ -1,0 +1,11 @@
+{
+  "size": "50%",
+  "duration": 300,
+  "workers": 2,
+  "safety_threshold": 90,
+  "monitoring_interval": 1,
+  "method": "all",
+  "vm_flags": ["populate"],
+  "oom_score_adj": null,
+  "target_container": null
+}

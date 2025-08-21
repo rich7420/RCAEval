@@ -1,0 +1,10 @@
+{
+  "intensity": "80%",
+  "duration": 300,
+  "safety_threshold": 95,
+  "monitoring_interval": 1,
+  "ramp_up_time": 0,
+  "method": "all",
+  "load_percent": 100,
+  "target_container": null
+}

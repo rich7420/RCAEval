@@ -1,0 +1,11 @@
+{
+  "duration": 300,
+  "failure_pattern": "selective",
+  "target_ports": [80, 443, 8080],
+  "target_ips": [],
+  "protocols": ["tcp"],
+  "block_incoming": true,
+  "block_outgoing": true,
+  "monitoring_interval": 1,
+  "target_container": null
+}

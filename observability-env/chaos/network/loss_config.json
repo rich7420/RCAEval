@@ -1,0 +1,12 @@
+{
+  "loss_percent": 5.0,
+  "correlation": 25,
+  "duration": 300,
+  "interface": "eth0",
+  "direction": "both",
+  "pattern": "random",
+  "target_ports": [],
+  "target_ips": [],
+  "monitoring_interval": 1,
+  "target_container": null
+}

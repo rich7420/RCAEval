@@ -1,0 +1,11 @@
+{
+  "delay": "100ms",
+  "jitter": "10ms",
+  "duration": 300,
+  "interface": "eth0",
+  "direction": "both",
+  "target_ports": [],
+  "target_ips": [],
+  "monitoring_interval": 1,
+  "target_container": null
+}
