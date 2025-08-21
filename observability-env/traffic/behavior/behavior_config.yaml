@@ -1,0 +1,153 @@
+# User Behavior Simulator Configuration
+# This file defines configurable behavior patterns for e-commerce scenarios
+
+# Default behavior configuration
+default:
+  # Traffic distribution (must sum to 100%)
+  traffic_distribution:
+    browse_percentage: 70.0    # 70% browsing behavior
+    cart_percentage: 20.0      # 20% cart operations
+    checkout_percentage: 8.0   # 8% checkout process
+    error_percentage: 2.0      # 2% error scenarios
+  
+  # Timing configuration (seconds)
+  timing:
+    min_think_time: 1.0        # Minimum time between actions
+    max_think_time: 10.0       # Maximum time between actions
+    session_duration_min: 60.0 # Minimum session duration
+    session_duration_max: 600.0 # Maximum session duration
+  
+  # Journey configuration
+  journey:
+    max_products_per_session: 10  # Maximum products viewed per session
+    max_cart_items: 5            # Maximum items in cart
+    checkout_completion_rate: 0.6 # 60% of checkout attempts complete
+  
+  # Error configuration
+  errors:
+    retry_attempts: 2            # Number of retry attempts for errors
+    scenarios_enabled: true      # Enable error scenario generation
+  
+  # Application settings
+  application:
+    type: "otel_demo"           # otel_demo or online_boutique
+    base_url: "http://localhost:8080"
+
+# Mobile user behavior pattern
+mobile:
+  traffic_distribution:
+    browse_percentage: 80.0     # Higher browsing on mobile
+    cart_percentage: 15.0       # Lower cart conversion
+    checkout_percentage: 3.0    # Much lower checkout completion
+    error_percentage: 2.0
+  
+  timing:
+    min_think_time: 0.5         # Faster interactions on mobile
+    max_think_time: 5.0
+    session_duration_min: 30.0  # Shorter mobile sessions
+    session_duration_max: 300.0
+  
+  journey:
+    max_products_per_session: 8
+    max_cart_items: 3           # Smaller carts on mobile
+    checkout_completion_rate: 0.3 # Lower completion rate
+  
+  application:
+    type: "online_boutique"
+    base_url: "http://localhost:8080"
+
+# High-value customer behavior pattern
+high_value:
+  traffic_distribution:
+    browse_percentage: 50.0     # Less browsing, more focused
+    cart_percentage: 30.0       # Higher cart usage
+    checkout_percentage: 18.0   # Much higher checkout rate
+    error_percentage: 2.0
+  
+  timing:
+    min_think_time: 2.0         # More deliberate actions
+    max_think_time: 15.0
+    session_duration_min: 120.0 # Longer sessions
+    session_duration_max: 900.0
+  
+  journey:
+    max_products_per_session: 15
+    max_cart_items: 10          # Larger carts
+    checkout_completion_rate: 0.8 # Higher completion rate
+  
+  application:
+    type: "otel_demo"
+    base_url: "http://localhost:8080"
+
+# Error-focused behavior for testing
+error_testing:
+  traffic_distribution:
+    browse_percentage: 40.0
+    cart_percentage: 20.0
+    checkout_percentage: 10.0
+    error_percentage: 30.0      # High error rate for testing
+  
+  timing:
+    min_think_time: 0.1         # Quick error generation
+    max_think_time: 2.0
+    session_duration_min: 60.0
+    session_duration_max: 300.0
+  
+  journey:
+    max_products_per_session: 5
+    max_cart_items: 3
+    checkout_completion_rate: 0.2
+  
+  errors:
+    retry_attempts: 1           # Fewer retries for error testing
+    scenarios_enabled: true
+  
+  application:
+    type: "otel_demo"
+    base_url: "http://localhost:8080"
+
+# Burst traffic pattern
+burst_traffic:
+  traffic_distribution:
+    browse_percentage: 85.0     # Heavy browsing during bursts
+    cart_percentage: 10.0
+    checkout_percentage: 3.0
+    error_percentage: 2.0
+  
+  timing:
+    min_think_time: 0.1         # Very fast interactions during burst
+    max_think_time: 1.0
+    session_duration_min: 30.0  # Short burst sessions
+    session_duration_max: 120.0
+  
+  journey:
+    max_products_per_session: 20 # High product viewing during burst
+    max_cart_items: 2
+    checkout_completion_rate: 0.1 # Low completion during burst
+  
+  application:
+    type: "online_boutique"
+    base_url: "http://localhost:8080"
+
+# Load testing pattern
+load_testing:
+  traffic_distribution:
+    browse_percentage: 60.0
+    cart_percentage: 25.0
+    checkout_percentage: 12.0
+    error_percentage: 3.0
+  
+  timing:
+    min_think_time: 0.5         # Consistent moderate timing
+    max_think_time: 3.0
+    session_duration_min: 90.0
+    session_duration_max: 300.0
+  
+  journey:
+    max_products_per_session: 8
+    max_cart_items: 4
+    checkout_completion_rate: 0.5
+  
+  application:
+    type: "otel_demo"
+    base_url: "http://localhost:8080"

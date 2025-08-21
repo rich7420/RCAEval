@@ -1,0 +1,16 @@
+# Locust traffic generation requirements
+locust>=2.17.0
+requests>=2.31.0
+urllib3>=2.0.0
+
+# Additional utilities
+pyyaml>=6.0
+psutil>=5.9.0
+numpy>=1.24.0
+
+# For advanced scenarios
+faker>=19.0.0
+jsonschema>=4.19.0
+
+# Monitoring and metrics
+prometheus-client>=0.17.0

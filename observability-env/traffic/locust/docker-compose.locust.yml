@@ -1,0 +1,133 @@
+version: '3.8'
+
+services:
+  locust-master:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: locust-master
+    ports:
+      - "8089:8089"
+    environment:
+      - LOCUST_MODE=master
+      - LOCUST_EXPECT_WORKERS=2
+      - LOCUST_HOST=${TARGET_HOST:-http://otel-demo-frontend:8080}
+    command: >
+      locust 
+      --master 
+      --web-host=0.0.0.0 
+      --web-port=8089
+      --expect-workers=2
+      --locustfile=otel_demo_users.py
+    volumes:
+      - .:/app
+    networks:
+      - locust-network
+      - observability-network
+    depends_on:
+      - locust-worker-1
+      - locust-worker-2
+
+  locust-worker-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: locust-worker-1
+    environment:
+      - LOCUST_MODE=worker
+      - LOCUST_MASTER_HOST=locust-master
+      - LOCUST_WORKER_ID=worker-1
+    command: >
+      locust 
+      --worker 
+      --master-host=locust-master
+      --locustfile=otel_demo_users.py
+    volumes:
+      - .:/app
+    networks:
+      - locust-network
+      - observability-network
+    depends_on:
+      - locust-worker-2
+
+  locust-worker-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: locust-worker-2
+    environment:
+      - LOCUST_MODE=worker
+      - LOCUST_MASTER_HOST=locust-master
+      - LOCUST_WORKER_ID=worker-2
+    command: >
+      locust 
+      --worker 
+      --master-host=locust-master
+      --locustfile=otel_demo_users.py
+    volumes:
+      - .:/app
+    networks:
+      - locust-network
+      - observability-network
+
+  # Alternative configuration for Online Boutique
+  locust-boutique-master:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: locust-boutique-master
+    ports:
+      - "8090:8089"
+    environment:
+      - LOCUST_MODE=master
+      - LOCUST_EXPECT_WORKERS=1
+      - LOCUST_HOST=${BOUTIQUE_HOST:-http://online-boutique-frontend:80}
+    command: >
+      locust 
+      --master 
+      --web-host=0.0.0.0 
+      --web-port=8089
+      --expect-workers=1
+      --locustfile=online_boutique_users.py
+    volumes:
+      - .:/app
+    networks:
+      - locust-network
+      - observability-network
+    profiles:
+      - boutique
+    depends_on:
+      - locust-boutique-worker
+
+  locust-boutique-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: locust-boutique-worker
+    environment:
+      - LOCUST_MODE=worker
+      - LOCUST_MASTER_HOST=locust-boutique-master
+      - LOCUST_WORKER_ID=boutique-worker-1
+    command: >
+      locust 
+      --worker 
+      --master-host=locust-boutique-master
+      --locustfile=online_boutique_users.py
+    volumes:
+      - .:/app
+    networks:
+      - locust-network
+      - observability-network
+    profiles:
+      - boutique
+
+networks:
+  locust-network:
+    driver: bridge
+  observability-network:
+    external: true
+    name: observability-env_observability-network
+
+volumes:
+  locust-data:
+    driver: local
