@@ -1,0 +1,99 @@
+# Prometheus Configuration for OpenTelemetry Demo v2.0.0+
+# Comprehensive metrics collection from all microservices
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'otel-demo'
+    environment: 'local'
+
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # OpenTelemetry Collector
+  - job_name: 'otelcol'
+    static_configs:
+      - targets: ['otelcol:8888', 'otelcol:8889']
+    scrape_interval: 10s
+    metrics_path: /metrics
+
+  # OpenTelemetry Demo Services
+  - job_name: 'otel-demo-services'
+    static_configs:
+      - targets:
+          # Core microservices
+          - 'accountingservice:8080'
+          - 'adservice:9555'
+          - 'cartservice:7070'
+          - 'checkoutservice:5050'
+          - 'currencyservice:7001'
+          - 'emailservice:8080'
+          - 'featureflagservice:8081'
+          - 'frontend:8080'
+          - 'paymentservice:50051'
+          - 'productcatalogservice:3550'
+          - 'quoteservice:8090'
+          - 'recommendationservice:8080'
+          - 'shippingservice:50051'
+          # Infrastructure
+          - 'loadgenerator:8089'
+          - 'frontendproxy:10000'
+    scrape_interval: 5s
+    metrics_path: /metrics
+    scrape_timeout: 10s
+
+  # Infrastructure Services
+  - job_name: 'infrastructure'
+    static_configs:
+      - targets:
+          - 'kafka:9092'
+          - 'valkey:6379'
+          - 'postgres:5432'
+    scrape_interval: 15s
+    metrics_path: /metrics
+
+  # Jaeger metrics
+  - job_name: 'jaeger'
+    static_configs:
+      - targets: ['jaeger:14269']
+    scrape_interval: 15s
+    metrics_path: /metrics
+
+  # Grafana metrics
+  - job_name: 'grafana'
+    static_configs:
+      - targets: ['grafana:3000']
+    scrape_interval: 15s
+    metrics_path: /metrics
+
+  # Node exporter (if available)
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 15s
+
+  # cAdvisor (if available)
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+    scrape_interval: 15s
+    metrics_path: /metrics
+
+# Alerting configuration (optional)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           # - alertmanager:9093
+
+# Load rules once and periodically evaluate them according to the global 'evaluation_interval'.
+# rule_files:
+#   - "alert_rules.yml"

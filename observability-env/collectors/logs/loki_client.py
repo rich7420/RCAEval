@@ -59,8 +59,8 @@ class LokiClient:
             DataFrame with timestamp, service, level, message, labels columns
         """
         # Convert to nanosecond timestamps for Loki
-        start_ns = int(start_time.timestamp() * 1e9)
-        end_ns = int(end_time.timestamp() * 1e9)
+        start_ns = int(start_time.timestamp() * 1000000000)
+        end_ns = int(end_time.timestamp() * 1000000000)
         
         params = {
             'query': query,

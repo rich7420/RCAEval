@@ -268,18 +268,30 @@ class MetricsCollector:
         Returns:
             DataFrame with processed metrics data
         """
-        # Define key system metrics queries
+        # Define key system metrics queries - fallback to available metrics
         queries = {
-            'cpu_usage_percent': 'rate(container_cpu_usage_seconds_total[1m]) * 100',
-            'memory_usage_bytes': 'container_memory_usage_bytes',
-            'memory_usage_percent': '(container_memory_usage_bytes / container_spec_memory_limit_bytes) * 100',
-            'disk_io_read_bytes': 'rate(container_fs_reads_bytes_total[1m])',
-            'disk_io_write_bytes': 'rate(container_fs_writes_bytes_total[1m])',
+            # Try container metrics first, fallback to process metrics
+            'cpu_usage_seconds': 'rate(container_cpu_usage_seconds_total[1m]) or rate(process_cpu_seconds_total[1m])',
+            'memory_usage_bytes': 'container_memory_usage_bytes or process_resident_memory_bytes',
             'network_rx_bytes': 'rate(container_network_receive_bytes_total[1m])',
             'network_tx_bytes': 'rate(container_network_transmit_bytes_total[1m])',
+            
+            # Process-level metrics (more likely to be available)
+            'process_cpu_seconds': 'rate(process_cpu_seconds_total[1m])',
+            'process_memory_bytes': 'process_resident_memory_bytes',
+            'process_open_fds': 'process_open_fds',
+            
+            # Go runtime metrics (for Go services)
+            'go_memstats_alloc_bytes': 'go_memstats_alloc_bytes',
+            'go_goroutines': 'go_goroutines',
+            'go_gc_duration': 'rate(go_gc_duration_seconds_sum[1m])',
+            
+            # HTTP metrics (if available)
             'http_requests_total': 'rate(http_requests_total[1m])',
             'http_request_duration': 'histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[1m]))',
-            'error_rate': 'rate(http_requests_total{status=~"5.."}[1m])'
+            
+            # Generic up metric
+            'service_up': 'up'
         }
         
         all_metrics = []

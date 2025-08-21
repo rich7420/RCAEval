@@ -1,0 +1,33 @@
+{
+  "services": [
+    "jaeger",
+    "productcatalogservice",
+    "shippingservice",
+    "otelcol-contrib",
+    "node-exporter",
+    "emailservice",
+    "docker",
+    "otel-collector",
+    "cadvisor",
+    "redis",
+    "otel-demo-services",
+    "loki",
+    "currencyservice",
+    "loadgenerator",
+    "frontend",
+    "cartservice",
+    "adservice",
+    "paymentservice",
+    "recommendationservice",
+    "grafana",
+    "checkoutservice",
+    "otel-demo",
+    "prometheus",
+    "containerlogs"
+  ],
+  "metrics_count": 520,
+  "logs_count": 500,
+  "traces_count": 720,
+  "collection_time": "2025-08-22T02:04:41.579298",
+  "format": "RE2-compatible"
+}

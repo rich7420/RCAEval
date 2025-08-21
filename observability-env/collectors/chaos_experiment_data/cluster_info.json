@@ -1,0 +1,33 @@
+{
+  "services": [
+    "otel-demo-services",
+    "checkoutservice",
+    "containerlogs",
+    "adservice",
+    "grafana",
+    "otelcol-contrib",
+    "cartservice",
+    "paymentservice",
+    "recommendationservice",
+    "otel-demo",
+    "otel-collector",
+    "node-exporter",
+    "jaeger",
+    "loadgenerator",
+    "emailservice",
+    "cadvisor",
+    "shippingservice",
+    "productcatalogservice",
+    "docker",
+    "currencyservice",
+    "loki",
+    "redis",
+    "frontend",
+    "prometheus"
+  ],
+  "metrics_count": 520,
+  "logs_count": 500,
+  "traces_count": 720,
+  "collection_time": "2025-08-22T02:20:42.031807",
+  "format": "RE2-compatible"
+}
