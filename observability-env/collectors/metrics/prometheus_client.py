@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class PrometheusClient:
     """Client for collecting metrics from Prometheus with advanced processing capabilities."""
     
-    def __init__(self, base_url: str = "http://prometheus:9090", timeout: int = 30):
+    def __init__(self, base_url: str = "http://localhost:9090", timeout: int = 30):
         """
         Initialize Prometheus client.
         
@@ -250,7 +250,7 @@ class MetricsProcessor:
 class MetricsCollector:
     """High-level metrics collector with built-in processing."""
     
-    def __init__(self, prometheus_url: str = "http://prometheus:9090"):
+    def __init__(self, prometheus_url: str = "http://localhost:9090"):
         """Initialize metrics collector."""
         self.client = PrometheusClient(prometheus_url)
         self.processor = MetricsProcessor()

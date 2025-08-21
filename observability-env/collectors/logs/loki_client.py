@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 class LokiClient:
     """Client for collecting logs from Loki with advanced processing capabilities."""
     
-    def __init__(self, base_url: str = "http://loki:3100", timeout: int = 30):
+    def __init__(self, base_url: str = "http://localhost:3100", timeout: int = 30):
         """
         Initialize Loki client.
         
@@ -426,7 +426,7 @@ class LogCorrelator:
 class LogsCollector:
     """High-level logs collector with built-in processing."""
     
-    def __init__(self, loki_url: str = "http://loki:3100"):
+    def __init__(self, loki_url: str = "http://localhost:3100"):
         """Initialize logs collector."""
         self.client = LokiClient(loki_url)
         self.template_extractor = LogTemplateExtractor()

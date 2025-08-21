@@ -11,10 +11,10 @@ import asyncio
 import concurrent.futures
 from pathlib import Path
 
-from .metrics import MetricsCollector, MetricsAggregator, SamplingStrategy, MetricsQualityAnalyzer
-from .logs import LogsCollector, LogClusterer, LogPatternAnalyzer
-from .traces import TracesCollector, TraceAnalyzer, TraceFlowAnalyzer
-from .exporters import ClusterInfoGenerator
+from metrics import MetricsCollector, MetricsAggregator, SamplingStrategy, MetricsQualityAnalyzer
+from logs import LogsCollector, LogClusterer, LogPatternAnalyzer
+from traces import TracesCollector, TraceAnalyzer, TraceFlowAnalyzer
+from exporters import ClusterInfoGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +22,9 @@ logger = logging.getLogger(__name__)
 class ObservabilityDataCollector:
     """Main collector that orchestrates all data collection components."""
     
-    def __init__(self, prometheus_url: str = "http://prometheus:9090",
-                 loki_url: str = "http://loki:3100",
-                 jaeger_url: str = "http://jaeger:16686"):
+    def __init__(self, prometheus_url: str = "http://localhost:9090",
+                 loki_url: str = "http://localhost:3100",
+                 jaeger_url: str = "http://localhost:16686"):
         """
         Initialize the main data collector.
         

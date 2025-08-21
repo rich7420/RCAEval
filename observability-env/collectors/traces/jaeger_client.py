@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class JaegerClient:
     """Client for collecting traces from Jaeger with advanced processing capabilities."""
     
-    def __init__(self, base_url: str = "http://jaeger:16686", timeout: int = 30):
+    def __init__(self, base_url: str = "http://localhost:16686", timeout: int = 30):
         """
         Initialize Jaeger client.
         
@@ -485,7 +485,7 @@ class TraceCorrelator:
 class TracesCollector:
     """High-level traces collector with built-in processing."""
     
-    def __init__(self, jaeger_url: str = "http://jaeger:16686"):
+    def __init__(self, jaeger_url: str = "http://localhost:16686"):
         """Initialize traces collector."""
         self.client = JaegerClient(jaeger_url)
         self.processor = TraceProcessor()
