@@ -210,7 +210,7 @@ def test_requirement_3_4_network_delay():
             "delay": "10ms",
             "jitter": "2ms",
             "duration": 3,
-            "interface": "lo"  # Use loopback for testing
+            "interface": "eth0"  # Use standard container interface
         }
         
         injector = NetworkDelayInjector(config)
@@ -255,7 +255,7 @@ def test_requirement_3_5_packet_loss():
             "loss_percent": 2.0,
             "correlation": 25,
             "duration": 3,
-            "interface": "lo",  # Use loopback for testing
+            "interface": "eth0",  # Use standard container interface
             "pattern": "random"
         }
         
@@ -363,7 +363,8 @@ def test_requirement_3_7_monitoring():
         injector = CPUStressInjector(config)
         
         # Test timestamp recording
-        injector.start_time = time.time()
+        from datetime import datetime, timezone
+        injector.start_time = datetime.now(timezone.utc)
         status = injector.get_status()
         
         if 'start_time' in status and status['start_time']:

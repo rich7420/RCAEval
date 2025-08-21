@@ -132,8 +132,8 @@ def quick_test_network_delay():
     try:
         from network_delay import NetworkDelayInjector
         
-        # Test configuration validation
-        config = {"delay": "50ms", "duration": 5, "interface": "lo"}
+        # Test configuration validation (use generic interface for testing)
+        config = {"delay": "50ms", "duration": 5, "interface": "eth0"}
         injector = NetworkDelayInjector(config)
         
         # Test command building
@@ -161,8 +161,8 @@ def quick_test_packet_loss():
     try:
         from packet_loss import PacketLossInjector
         
-        # Test configuration validation
-        config = {"loss_percent": 5.0, "duration": 5, "interface": "lo"}
+        # Test configuration validation (use generic interface for testing)
+        config = {"loss_percent": 5.0, "duration": 5, "interface": "eth0"}
         injector = PacketLossInjector(config)
         
         # Test command building
@@ -266,7 +266,8 @@ def test_monitoring_and_logging():
         injector = CPUStressInjector(config)
         
         # Test monitoring data structure
-        injector.start_time = time.time()
+        from datetime import datetime, timezone
+        injector.start_time = datetime.now(timezone.utc)
         injector.injection_log = [
             {
                 "timestamp": "2024-01-01T00:00:00Z",

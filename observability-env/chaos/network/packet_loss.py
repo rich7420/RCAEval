@@ -85,37 +85,63 @@ class PacketLossInjector:
             raise ValueError("Pattern must be 'random', 'burst', or 'periodic'")
     
     def _get_network_interface(self) -> str:
-        """Get the appropriate network interface."""
+        """Get the appropriate network interface for container or host environment."""
         interface = self.config['interface']
         
-        # Check if interface exists
-        try:
-            result = subprocess.run(['ip', 'link', 'show', interface], 
-                                  capture_output=True, text=True, check=True)
+        # If targeting a container, we'll use the container's network interface
+        if self.config.get('target_container'):
+            # For container targeting, we typically use eth0 (standard container interface)
+            return 'eth0'
+        
+        # For host-level chaos, try to detect the appropriate interface
+        # First try the configured interface
+        if self._interface_exists(interface):
             return interface
-        except subprocess.CalledProcessError:
-            # Try to find a suitable interface
-            try:
-                result = subprocess.run(['ip', 'route', 'show', 'default'], 
-                                      capture_output=True, text=True, check=True)
-                # Extract interface from default route
-                match = re.search(r'dev\s+(\w+)', result.stdout)
-                if match:
-                    return match.group(1)
-            except subprocess.CalledProcessError:
-                pass
-            
-            # Fallback to common interface names
-            for fallback in ['eth0', 'ens33', 'enp0s3', 'docker0']:
-                try:
-                    subprocess.run(['ip', 'link', 'show', fallback], 
-                                 capture_output=True, text=True, check=True)
-                    self.logger.warning(f"Using fallback interface: {fallback}")
-                    return fallback
-                except subprocess.CalledProcessError:
-                    continue
-            
-            raise ValueError(f"Network interface {interface} not found and no suitable fallback available")
+        
+        # Try to find Docker bridge interface (common for container networking)
+        docker_interfaces = ['docker0', 'br-docker0']
+        for docker_if in docker_interfaces:
+            if self._interface_exists(docker_if):
+                self.logger.info(f"Using Docker bridge interface: {docker_if}")
+                return docker_if
+        
+        # Fallback to common interfaces (prioritize container-friendly ones)
+        fallback_interfaces = ['eth0', 'ens33', 'enp0s3', 'lo']
+        for fallback in fallback_interfaces:
+            if self._interface_exists(fallback):
+                self.logger.warning(f"Using fallback interface: {fallback}")
+                return fallback
+        
+        # If nothing works, return the original interface (let tc handle the error)
+        self.logger.warning(f"Could not verify interface {interface}, proceeding anyway")
+        return interface
+    
+    def _interface_exists(self, interface: str) -> bool:
+        """Check if a network interface exists (cross-platform)."""
+        try:
+            # Try using ip command (Linux)
+            result = subprocess.run(['ip', 'link', 'show', interface], 
+                                  capture_output=True, text=True, timeout=5)
+            return result.returncode == 0
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+        
+        try:
+            # Try using ifconfig (Unix-like systems)
+            result = subprocess.run(['ifconfig', interface], 
+                                  capture_output=True, text=True, timeout=5)
+            return result.returncode == 0
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+        
+        # Try checking /sys/class/net (Linux)
+        try:
+            import os
+            return os.path.exists(f'/sys/class/net/{interface}')
+        except:
+            pass
+        
+        return False
     
     def _build_tc_commands(self) -> List[List[str]]:
         """Build traffic control commands for packet loss injection."""

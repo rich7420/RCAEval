@@ -13,6 +13,25 @@ The chaos engineering module supports the following fault injection types:
 - **Packet Loss** (`network/`) - Network packet loss simulation
 - **Socket/Connection Failures** (`socket/`) - Connection blocking and socket failures
 
+## Current Status & Limitations
+
+**✅ Completed (Task 5):**
+- All chaos injection capabilities are implemented and tested
+- Can inject faults into Docker containers and host system
+- Comprehensive monitoring and logging of injection events
+- Safety mechanisms and automatic cleanup
+
+**⏳ Pending (Task 6):**
+- Automated data collection system
+- Integration with observability data streams
+- Automated experiment orchestration
+- RE2-compatible dataset generation
+
+**Current Usage:**
+- Manual chaos injection with observability through existing tools (Grafana, Prometheus, Jaeger)
+- Chaos injection logs are saved locally for analysis
+- Visual verification through monitoring dashboards
+
 ## Architecture
 
 Each fault injection type follows a consistent architecture:
@@ -45,15 +64,21 @@ All chaos injection modules provide:
 
 ## Quick Start
 
+### Target Environment
+This chaos engineering module is designed to work with:
+- **Docker containers** (primary target - microservices from task 3)
+- **Host system** (affects entire Docker environment)
+- **Container networks** (Docker bridge networks)
+
 ### 1. CPU Stress Injection
 
 ```bash
-# Start CPU stress with 80% intensity for 5 minutes
+# Target specific microservice container (recommended)
 cd chaos/cpu
-./inject_cpu_stress.sh -i 80% -d 300 start
+./inject_cpu_stress.sh -t checkoutservice -i 80% -d 300 start
 
-# Target specific container
-./inject_cpu_stress.sh -t checkoutservice -i 50% start
+# Host-level CPU stress (affects all containers)
+./inject_cpu_stress.sh -i 50% -d 180 start
 
 # Check status
 ./inject_cpu_stress.sh status
@@ -65,11 +90,11 @@ cd chaos/cpu
 ### 2. Memory Stress Injection
 
 ```bash
-# Start memory stress with 1GB allocation
+# Target specific microservice container
 cd chaos/memory
-./inject_memory_stress.sh -s 1G -d 300 start
+./inject_memory_stress.sh -t paymentservice -s 512M -d 300 start
 
-# Use percentage-based allocation
+# Host-level memory stress
 ./inject_memory_stress.sh -s 30% -w 4 start
 ```
 
@@ -87,8 +112,13 @@ cd chaos/disk
 ### 4. Network Delay Injection
 
 ```bash
-# Add 100ms delay with 10ms jitter
+# Add delay to specific microservice container
 cd chaos/network
+# Edit delay_config.json to set target_container: "checkoutservice"
+python3 network_delay.py --config delay_config.json --action start
+
+# Add delay to Docker bridge network (affects container communication)
+# Edit delay_config.json to set interface: "docker0"
 python3 network_delay.py --config delay_config.json --action start
 ```
 
