@@ -1,0 +1,22 @@
+{
+  "services": [
+    "cadvisor",
+    "docker",
+    "grafana",
+    "jaeger",
+    "loki",
+    "node-exporter",
+    "otel-collector",
+    "otel-demo",
+    "otel-demo-services",
+    "otelcol-contrib",
+    "prometheus"
+  ],
+  "microservices": [],
+  "metrics_count": 756,
+  "logs_count": 0,
+  "traces_count": 0,
+  "collection_time": "2025-08-22T09:29:06.057046",
+  "demo_version": "2.0.0+",
+  "format": "RE2-compatible"
+}

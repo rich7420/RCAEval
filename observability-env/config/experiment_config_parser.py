@@ -35,6 +35,9 @@ class ChaosConfig:
         
         if self.duration <= 0:
             raise ValueError("Duration must be positive")
+        
+        if not self.target_services:
+            raise ValueError("Target services cannot be empty")
 
 
 @dataclass
