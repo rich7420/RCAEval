@@ -1,5 +1,5 @@
-# OpenTelemetry Demo Application Services
-# Complete microservices from https://github.com/open-telemetry/opentelemetry-demo
+# Minimal OpenTelemetry Demo - Core Services Only
+# This includes only the essential services that are working properly
 
 services:
   # Frontend Service
@@ -10,12 +10,11 @@ services:
       - PORT=8080
       - FRONTEND_ADDR=0.0.0.0:8080
       - AD_SERVICE_ADDR=adservice:9555
-      - CART_SERVICE_ADDR=cartservice:7070
-      - CHECKOUT_SERVICE_ADDR=checkoutservice:5050
-      - CURRENCY_SERVICE_ADDR=currencyservice:7000
       - PRODUCT_CATALOG_SERVICE_ADDR=productcatalogservice:3550
       - RECOMMENDATION_SERVICE_ADDR=recommendationservice:8080
       - SHIPPING_SERVICE_ADDR=shippingservice:50051
+      - EMAIL_SERVICE_ADDR=emailservice:8080
+      - PAYMENT_SERVICE_ADDR=paymentservice:50051
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
       - OTEL_EXPORTER_OTLP_INSECURE=true
       - OTEL_SERVICE_NAME=frontend
@@ -24,12 +23,11 @@ services:
       - "8080:8080"
     depends_on:
       - adservice
-      - cartservice
-      - checkoutservice
-      - currencyservice
       - productcatalogservice
       - recommendationservice
       - shippingservice
+      - emailservice
+      - paymentservice
     networks:
       - observability
 
@@ -48,73 +46,6 @@ services:
       - "9555:9555"
     networks:
       - observability
-
-  # Cart Service
-  cartservice:
-    image: ghcr.io/open-telemetry/demo:1.10.0-cartservice
-    container_name: cartservice
-    environment:
-      - PORT=7070
-      - CART_SERVICE_PORT=7070
-      - REDIS_ADDR=redis:6379
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
-      - OTEL_EXPORTER_OTLP_INSECURE=true
-      - OTEL_SERVICE_NAME=cartservice
-      - OTEL_RESOURCE_ATTRIBUTES=service.name=cartservice,service.version=1.10.0
-    ports:
-      - "7070:7070"
-    depends_on:
-      - redis
-    networks:
-      - observability
-    restart: on-failure
-
-  # Checkout Service
-  checkoutservice:
-    image: ghcr.io/open-telemetry/demo:1.10.0-checkoutservice
-    container_name: checkoutservice
-    environment:
-      - PORT=5050
-      - CHECKOUT_SERVICE_PORT=5050
-      - CART_SERVICE_ADDR=cartservice:7070
-      - CURRENCY_SERVICE_ADDR=currencyservice:7000
-      - EMAIL_SERVICE_ADDR=emailservice:8080
-      - PAYMENT_SERVICE_ADDR=paymentservice:50051
-      - PRODUCT_CATALOG_SERVICE_ADDR=productcatalogservice:3550
-      - SHIPPING_SERVICE_ADDR=shippingservice:50051
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
-      - OTEL_EXPORTER_OTLP_INSECURE=true
-      - OTEL_SERVICE_NAME=checkoutservice
-      - OTEL_RESOURCE_ATTRIBUTES=service.name=checkoutservice,service.version=1.10.0
-    ports:
-      - "5050:5050"
-    depends_on:
-      - cartservice
-      - currencyservice
-      - emailservice
-      - paymentservice
-      - productcatalogservice
-      - shippingservice
-    networks:
-      - observability
-    restart: on-failure
-
-  # Currency Service
-  currencyservice:
-    image: ghcr.io/open-telemetry/demo:1.10.0-currencyservice
-    container_name: currencyservice
-    environment:
-      - PORT=7000
-      - CURRENCY_SERVICE_PORT=7000
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
-      - OTEL_EXPORTER_OTLP_INSECURE=true
-      - OTEL_SERVICE_NAME=currencyservice
-      - OTEL_RESOURCE_ATTRIBUTES=service.name=currencyservice,service.version=1.10.0
-    ports:
-      - "7001:7000"
-    networks:
-      - observability
-    restart: on-failure
 
   # Email Service
   emailservice:
@@ -143,7 +74,7 @@ services:
       - OTEL_SERVICE_NAME=paymentservice
       - OTEL_RESOURCE_ATTRIBUTES=service.name=paymentservice,service.version=1.10.0
     ports:
-      - "50053:50051"  # 改端口避免衝突
+      - "50053:50051"
     networks:
       - observability
 
@@ -195,15 +126,6 @@ services:
       - OTEL_RESOURCE_ATTRIBUTES=service.name=shippingservice,service.version=1.10.0
     ports:
       - "50052:50051"
-    networks:
-      - observability
-
-  # Redis for Cart Service
-  redis:
-    image: redis:6.2
-    container_name: redis
-    ports:
-      - "6379:6379"
     networks:
       - observability
 
