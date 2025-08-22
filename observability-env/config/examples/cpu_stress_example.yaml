@@ -1,0 +1,55 @@
+# Example CPU stress test configuration
+name: "frontend_cpu_stress_test"
+description: "CPU stress test targeting frontend services to evaluate performance under load"
+
+chaos:
+  fault_type: "cpu"
+  duration: 300  # 5 minutes
+  intensity: "medium"
+  target_services:
+    - "frontend"
+    - "backend"
+  parameters:
+    cpu_percent: 50
+
+data_collection:
+  collection_duration: 420  # 7 minutes total
+  pre_chaos_duration: 60    # 1 minute baseline
+  post_chaos_duration: 60   # 1 minute recovery
+  sampling_interval: 15     # 15 second intervals
+  
+  # Observability backend URLs
+  prometheus_url: "http://localhost:9090"
+  loki_url: "http://localhost:3100"
+  jaeger_url: "http://localhost:16686"
+  
+  # Optional filters
+  services_filter:
+    - "frontend"
+    - "backend"
+    - "database"
+  metrics_filter:
+    - "cpu_usage"
+    - "memory_usage"
+    - "request_latency"
+    - "error_rate"
+
+traffic:
+  enabled: true
+  traffic_type: "normal"
+  users: 15
+  spawn_rate: 1.5  # users per second
+  duration: 360    # 6 minutes
+  target_services:
+    - "frontend"
+
+export:
+  output_directory: "data/collected"
+  export_format: "re2"
+  compress_output: false
+  include_raw_data: false
+
+tags:
+  - "cpu_stress"
+  - "frontend"
+  - "performance_test"
