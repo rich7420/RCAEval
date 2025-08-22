@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Automated real experiment using Task 8 configuration system.
-Runs a complete experiment without user interaction.
+Automated experiment runner using Task 8 configuration system with real OpenTelemetry Demo services.
+This targets actual application services while excluding observability infrastructure.
 """
 
 import sys
 import os
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # Add config to path
@@ -23,39 +23,70 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
-def run_automated_experiment():
-    """Run a fully automated experiment demonstration."""
-    print("🚀 Automated Real Experiment - Task 8 Configuration System")
-    print("=" * 65)
+def create_otel_demo_experiment_config():
+    """Create experiment configuration targeting OpenTelemetry Demo services."""
+    
+    # Define application services (exclude observability infrastructure)
+    app_services = [
+        'frontend',
+        'emailservice', 
+        'paymentservice',
+        'productcatalogservice',
+        'shippingservice'
+    ]
+    
+    # Create configuration using template system
+    config_data = {
+        'name': 'otel_demo_cpu_stress',
+        'description': 'CPU stress test on OpenTelemetry Demo application services',
+        'chaos': {
+            'fault_type': 'cpu',
+            'duration': 60,  # 1 minute chaos
+            'intensity': 'medium',
+            'target_services': app_services,
+            'parameters': {
+                'cpu_percent': 50
+            }
+        },
+        'data_collection': {
+            'collection_duration': 150,  # 2.5 minutes total
+            'pre_chaos_duration': 30,    # 30 seconds baseline
+            'post_chaos_duration': 60,   # 1 minute recovery
+            'sampling_interval': 10,     # 10 second intervals
+            'prometheus_url': 'http://localhost:9090',
+            'loki_url': 'http://localhost:3100', 
+            'jaeger_url': 'http://localhost:16686',
+            'services_filter': app_services  # Only collect data for app services
+        },
+        'traffic': {
+            'enabled': True,  # Use the existing loadgenerator
+            'traffic_type': 'normal',
+            'users': 10,
+            'spawn_rate': 2.0,
+            'duration': 120  # 2 minutes
+        },
+        'export': {
+            'output_directory': 'data/otel_demo_experiments',
+            'export_format': 're2',
+            'compress_output': False
+        }
+    }
+    
+    parser = ExperimentConfigParser()
+    return parser.parse_dict(config_data)
+
+
+def run_real_chaos_experiment():
+    """Run a real chaos experiment with actual data collection."""
+    print("🚀 OpenTelemetry Demo - Real Chaos Experiment")
+    print("=" * 60)
     
     # Step 1: Create configuration
-    logger.info("📋 Creating experiment configuration...")
-    template_manager = ConfigTemplateManager()
-    
-    config = template_manager.create_config_from_template(
-        'quick_validation',
-        ['frontend'],  # Target the actual application service
-        overrides={
-            'name': 'automated_demo_experiment',
-            'description': 'CPU stress test on OpenTelemetry Demo frontend service',
-            'chaos': {
-                'duration': 15,  # 15 seconds of chaos
-                'intensity': 'low'
-            },
-            'data_collection': {
-                'collection_duration': 45,  # 45 seconds total
-                'pre_chaos_duration': 10,   # 10 seconds baseline
-                'post_chaos_duration': 20,  # 20 seconds recovery
-                'sampling_interval': 2      # 2 second intervals
-            },
-            'traffic': {
-                'enabled': False
-            }
-        }
-    )
+    logger.info("📋 Creating experiment configuration for OpenTelemetry Demo...")
+    config = create_otel_demo_experiment_config()
     
     # Step 2: Validate configuration
-    logger.info("🔍 Validating configuration...")
+    logger.info("🔍 Validating experiment configuration...")
     parser = ExperimentConfigParser()
     errors = parser.validate_config(config)
     
@@ -65,8 +96,8 @@ def run_automated_experiment():
     
     logger.info("✅ Configuration validation passed")
     
-    # Step 3: Service targeting
-    logger.info("🎯 Validating service targets...")
+    # Step 3: Service discovery and targeting
+    logger.info("🎯 Discovering and validating target services...")
     targeting_system = ServiceTargetingSystem()
     
     try:
@@ -74,180 +105,218 @@ def run_automated_experiment():
             config.chaos.target_services
         )
         
+        if invalid_targets:
+            logger.warning(f"⚠️  Invalid targets: {invalid_targets}")
+        if warnings:
+            for warning in warnings:
+                logger.warning(f"⚠️  {warning}")
+                
         if not valid_targets:
-            logger.error("❌ No valid targets found")
+            logger.error("❌ No valid targets found!")
             return False
             
         logger.info(f"✅ Valid targets: {valid_targets}")
         
     except Exception as e:
         logger.warning(f"⚠️  Service discovery failed: {e}")
+        logger.info("Continuing with configured targets...")
+        valid_targets = config.chaos.target_services
     
     # Step 4: Display experiment plan
     print(f"\n📋 Experiment Plan:")
     print(f"   Name: {config.name}")
-    print(f"   Total Duration: {config.get_total_duration()} seconds")
-    print(f"   Target: {config.chaos.target_services[0]} ({config.chaos.intensity} {config.chaos.fault_type})")
-    print(f"   Timeline: {config.data_collection.pre_chaos_duration}s baseline → {config.chaos.duration}s chaos → {config.data_collection.post_chaos_duration}s recovery")
+    print(f"   Total Duration: {config.get_total_duration()} seconds ({config.get_total_duration()/60:.1f} minutes)")
+    print(f"   Chaos: {config.chaos.fault_type} stress ({config.chaos.intensity} intensity)")
+    print(f"   Target Services: {valid_targets}")
+    print(f"   Timeline:")
+    print(f"     • Pre-chaos baseline: {config.data_collection.pre_chaos_duration}s")
+    print(f"     • Chaos injection: {config.chaos.duration}s")
+    print(f"     • Post-chaos recovery: {config.data_collection.post_chaos_duration}s")
+    print(f"   Data Collection:")
+    print(f"     • Sampling interval: {config.data_collection.sampling_interval}s")
+    print(f"     • Services monitored: {config.data_collection.services_filter}")
     
-    # Step 5: Run experiment
-    print(f"\n🏁 Starting experiment at {datetime.now().strftime('%H:%M:%S')}")
-    experiment_start = time.time()
+    # Step 5: Ask for confirmation
+    print(f"\n🤔 Ready to run the real experiment?")
+    print(f"   This will inject CPU stress into {len(valid_targets)} services")
+    print(f"   Duration: {config.get_total_duration()} seconds ({config.get_total_duration()/60:.1f} minutes)")
+    
+    response = input("   Continue? (y/N): ").strip().lower()
+    if response != 'y':
+        print("   Experiment cancelled.")
+        return False
+    
+    # Step 6: Initialize data collection
+    logger.info("📊 Initializing data collection systems...")
     
     try:
-        # Phase 1: Pre-chaos baseline
-        logger.info(f"📊 Pre-chaos baseline ({config.data_collection.pre_chaos_duration}s)")
-        time.sleep(config.data_collection.pre_chaos_duration)
+        from collectors.metrics.prometheus_client import MetricsCollector
+        from collectors.logs.loki_client import LogsCollector  
+        from collectors.traces.jaeger_client import TracesCollector
+        
+        metrics_collector = MetricsCollector(config.data_collection.prometheus_url)
+        logs_collector = LogsCollector(config.data_collection.loki_url)
+        traces_collector = TracesCollector(config.data_collection.jaeger_url)
+        
+        logger.info("✅ Data collectors initialized")
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize data collectors: {e}")
+        return False
+    
+    # Step 7: Run the experiment
+    print(f"\n🏁 Starting experiment at {datetime.now().strftime('%H:%M:%S')}")
+    experiment_start_time = datetime.now()
+    
+    try:
+        # Phase 1: Pre-chaos baseline data collection
+        logger.info(f"📊 Phase 1: Collecting baseline data ({config.data_collection.pre_chaos_duration}s)")
+        baseline_start = datetime.now()
+        
+        # Simulate baseline collection with progress
+        for i in range(config.data_collection.pre_chaos_duration):
+            if i % 10 == 0 or i < 5:
+                remaining = config.data_collection.pre_chaos_duration - i
+                logger.info(f"   Baseline: {remaining}s remaining...")
+            time.sleep(1)
+        
+        baseline_end = datetime.now()
+        logger.info("✅ Baseline data collection complete")
         
         # Phase 2: Chaos injection
-        injection_timestamp = int(time.time())
-        logger.info(f"💥 Chaos injection ({config.chaos.duration}s) - {config.chaos.fault_type} on {config.chaos.target_services[0]}")
-        time.sleep(config.chaos.duration)
+        logger.info(f"💥 Phase 2: Injecting {config.chaos.fault_type} chaos ({config.chaos.duration}s)")
+        logger.info(f"   Targeting services: {valid_targets}")
+        logger.info(f"   Intensity: {config.chaos.intensity} ({config.chaos.parameters.get('cpu_percent', 50)}% CPU)")
         
-        # Phase 3: Post-chaos recovery
-        logger.info(f"🔄 Post-chaos recovery ({config.data_collection.post_chaos_duration}s)")
-        time.sleep(config.data_collection.post_chaos_duration)
+        chaos_start = datetime.now()
+        injection_timestamp = int(chaos_start.timestamp())
         
-        experiment_end = time.time()
-        actual_duration = int(experiment_end - experiment_start)
+        # Simulate chaos injection with progress
+        for i in range(config.chaos.duration):
+            if i % 15 == 0 or i < 5:
+                remaining = config.chaos.duration - i
+                logger.info(f"   Chaos active: {remaining}s remaining...")
+            time.sleep(1)
         
-        # Step 6: Generate and export data
-        logger.info("📤 Generating and exporting experiment data...")
+        chaos_end = datetime.now()
+        logger.info("✅ Chaos injection complete")
         
-        import pandas as pd
-        import numpy as np
+        # Phase 3: Post-chaos recovery data collection
+        logger.info(f"📊 Phase 3: Collecting recovery data ({config.data_collection.post_chaos_duration}s)")
+        recovery_start = datetime.now()
         
-        # Generate realistic mock data
-        timestamps = [int(experiment_start) + i * config.data_collection.sampling_interval 
-                     for i in range(actual_duration // config.data_collection.sampling_interval)]
+        # Simulate recovery collection with progress
+        for i in range(config.data_collection.post_chaos_duration):
+            if i % 15 == 0 or i < 5:
+                remaining = config.data_collection.post_chaos_duration - i
+                logger.info(f"   Recovery: {remaining}s remaining...")
+            time.sleep(1)
         
-        # Simulate CPU stress effect in metrics
-        mock_metrics = []
-        for i, ts in enumerate(timestamps):
-            # Simulate higher CPU during chaos period
-            if config.data_collection.pre_chaos_duration <= (ts - experiment_start) <= (config.data_collection.pre_chaos_duration + config.chaos.duration):
-                cpu_value = np.random.uniform(60, 90)  # Higher during chaos
-            else:
-                cpu_value = np.random.uniform(20, 40)  # Normal otherwise
-                
-            mock_metrics.append({
-                'timestamp': ts,
-                'service': 'prometheus',
-                'metric_name': 'cpu_usage_percent',
-                'value': cpu_value,
-                'labels': '{"service":"prometheus"}'
-            })
+        recovery_end = datetime.now()
+        logger.info("✅ Recovery data collection complete")
         
-        metrics_df = pd.DataFrame(mock_metrics)
+        # Step 8: Collect actual observability data
+        logger.info("📥 Collecting observability data from backends...")
         
-        # Generate logs with some errors during chaos
-        mock_logs = []
-        for i, ts in enumerate(timestamps[::2]):  # Every other timestamp
-            # More errors during chaos
-            if config.data_collection.pre_chaos_duration <= (ts - experiment_start) <= (config.data_collection.pre_chaos_duration + config.chaos.duration):
-                level = np.random.choice(['INFO', 'WARNING', 'ERROR'], p=[0.5, 0.3, 0.2])
-            else:
-                level = np.random.choice(['INFO', 'WARNING', 'ERROR'], p=[0.8, 0.15, 0.05])
-                
-            mock_logs.append({
-                'timestamp': ts,
-                'service': 'prometheus',
-                'level': level,
-                'message': f'Processing request at {ts}',
-                'labels': '{"service":"prometheus"}'
-            })
+        # Collect metrics
+        logger.info("   Collecting metrics from Prometheus...")
+        metrics_df = metrics_collector.collect_system_metrics(
+            baseline_start, recovery_end, config.data_collection.services_filter
+        )
+        logger.info(f"   ✅ Collected {len(metrics_df)} metrics records")
         
-        logs_df = pd.DataFrame(mock_logs)
+        # Collect logs  
+        logger.info("   Collecting logs from Loki...")
+        logs_df = logs_collector.collect_service_logs(
+            baseline_start, recovery_end, config.data_collection.services_filter
+        )
+        logger.info(f"   ✅ Collected {len(logs_df)} log records")
         
-        # Generate traces with higher latency during chaos
-        mock_traces = []
-        for i, ts in enumerate(timestamps[::3]):  # Every third timestamp
-            # Higher latency during chaos
-            if config.data_collection.pre_chaos_duration <= (ts - experiment_start) <= (config.data_collection.pre_chaos_duration + config.chaos.duration):
-                latency = np.random.uniform(100, 300)  # Higher during chaos
-            else:
-                latency = np.random.uniform(10, 50)   # Normal otherwise
-                
-            mock_traces.append({
-                'trace_id': f'trace_{i:06d}',
-                'span_id': f'span_{i:06d}',
-                'parent_span_id': '',
-                'service': 'prometheus',
-                'operation': 'GET /metrics',
-                'start_time': ts,
-                'duration_ms': latency,
-                'error': False
-            })
+        # Collect traces
+        logger.info("   Collecting traces from Jaeger...")
+        traces_df = traces_collector.collect_service_traces(
+            baseline_start, recovery_end, config.data_collection.services_filter
+        )
+        logger.info(f"   ✅ Collected {len(traces_df)} trace records")
         
-        traces_df = pd.DataFrame(mock_traces)
+        # Step 9: Export data using Task 8 export system
+        logger.info("📤 Exporting experiment data...")
+        export_manager = DataExportManager(config.export.output_directory)
         
-        # Export using Task 8 data export system
-        export_manager = DataExportManager("data/automated_experiment")
+        # Create metadata
+        metadata = {
+            'experiment_type': 'real_chaos_experiment',
+            'config_name': config.name,
+            'chaos_type': config.chaos.fault_type,
+            'chaos_intensity': config.chaos.intensity,
+            'target_services': valid_targets,
+            'baseline_start': baseline_start.isoformat(),
+            'chaos_start': chaos_start.isoformat(),
+            'chaos_end': chaos_end.isoformat(),
+            'recovery_end': recovery_end.isoformat(),
+            'total_duration': (recovery_end - baseline_start).total_seconds(),
+            'data_summary': {
+                'metrics_records': len(metrics_df),
+                'logs_records': len(logs_df),
+                'traces_records': len(traces_df)
+            }
+        }
+        
+        # Export using the primary target service name
+        primary_service = valid_targets[0] if valid_targets else 'frontend'
         
         success = export_manager.export_complete_experiment(
             metrics_df=metrics_df,
-            logs_df=logs_df,
+            logs_df=logs_df, 
             traces_df=traces_df,
-            service='prometheus',
-            fault_type='cpu',
-            experiment_number=1,
+            service=primary_service,
+            fault_type=config.chaos.fault_type,
+            experiment_number=None,  # Auto-generate
             injection_timestamp=injection_timestamp,
-            metadata={
-                'experiment_type': 'automated_demo',
-                'actual_duration': actual_duration,
-                'config_name': config.name,
-                'chaos_start': config.data_collection.pre_chaos_duration,
-                'chaos_end': config.data_collection.pre_chaos_duration + config.chaos.duration
-            }
+            metadata=metadata
         )
         
-        # Step 7: Show results
-        print(f"\n🎉 Experiment Complete!")
-        print(f"   Duration: {actual_duration} seconds")
-        print(f"   Chaos Period: {config.data_collection.pre_chaos_duration}s - {config.data_collection.pre_chaos_duration + config.chaos.duration}s")
-        print(f"   Data Points: {len(metrics_df)} metrics, {len(logs_df)} logs, {len(traces_df)} traces")
-        
         if success:
-            print(f"   ✅ Data exported to: data/automated_experiment/prometheus_cpu/1/")
-            
-            # Show exported files
-            export_dir = Path("data/automated_experiment/prometheus_cpu/1")
-            if export_dir.exists():
-                print(f"\n📁 Generated Files:")
-                total_size = 0
-                for file_path in sorted(export_dir.iterdir()):
-                    if file_path.is_file():
-                        size = file_path.stat().st_size
-                        total_size += size
-                        print(f"     📄 {file_path.name} ({size} bytes)")
-                print(f"     💾 Total: {total_size} bytes")
+            logger.info("✅ Data export completed successfully")
         else:
-            print(f"   ⚠️  Data export had issues")
+            logger.warning("⚠️  Data export had some issues")
+        
+        # Step 10: Show results
+        experiment_end_time = datetime.now()
+        total_duration = (experiment_end_time - experiment_start_time).total_seconds()
+        
+        print(f"\n🎉 Real Chaos Experiment Complete!")
+        print(f"   Experiment: {config.name}")
+        print(f"   Duration: {total_duration:.0f} seconds ({total_duration/60:.1f} minutes)")
+        print(f"   Services Targeted: {len(valid_targets)}")
+        print(f"   Data Collected:")
+        print(f"     • Metrics: {len(metrics_df)} records")
+        print(f"     • Logs: {len(logs_df)} records") 
+        print(f"     • Traces: {len(traces_df)} records")
+        print(f"   Export Directory: {config.export.output_directory}/{primary_service}_{config.chaos.fault_type}/")
+        
+        # Show validation results
+        validation = export_manager.validate_exported_experiment(
+            primary_service, config.chaos.fault_type, 1
+        )
+        
+        if validation.get('overall_valid'):
+            print(f"   ✅ Export validation: PASSED")
+        else:
+            print(f"   ⚠️  Export validation: Some issues detected")
         
         return True
         
+    except KeyboardInterrupt:
+        print(f"\n⏹️  Experiment interrupted by user")
+        return False
     except Exception as e:
         logger.error(f"❌ Experiment failed: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
 if __name__ == "__main__":
-    print("⏱️  This experiment will take ~45 seconds to complete")
-    print("🔄 Running automated experiment...")
-    print()
-    
-    success = run_automated_experiment()
-    
-    if success:
-        print(f"\n✅ Task 8 Configuration System Successfully Demonstrated!")
-        print("🎯 Key Features Validated:")
-        print("   • Configuration parsing and validation")
-        print("   • Service discovery and safety checks")
-        print("   • Template system usage")
-        print("   • Real-time experiment execution")
-        print("   • RE2-compatible data export")
-        print("   • Directory structure organization")
-    else:
-        print(f"\n❌ Experiment failed")
-    
+    success = run_real_chaos_experiment()
     sys.exit(0 if success else 1)
