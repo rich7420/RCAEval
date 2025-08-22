@@ -1,5 +1,6 @@
 # OpenTelemetry Demo Application Services
 # Complete microservices from https://github.com/open-telemetry/opentelemetry-demo
+# Fixed configuration for all services
 
 services:
   # Frontend Service
@@ -75,7 +76,6 @@ services:
     container_name: checkoutservice
     environment:
       - PORT=5050
-      - CHECKOUT_SERVICE_PORT=5050
       - CART_SERVICE_ADDR=cartservice:7070
       - CURRENCY_SERVICE_ADDR=currencyservice:7000
       - EMAIL_SERVICE_ADDR=emailservice:8080
@@ -86,6 +86,7 @@ services:
       - OTEL_EXPORTER_OTLP_INSECURE=true
       - OTEL_SERVICE_NAME=checkoutservice
       - OTEL_RESOURCE_ATTRIBUTES=service.name=checkoutservice,service.version=1.10.0
+      - GOGC=100
     ports:
       - "5050:5050"
     depends_on:
@@ -97,7 +98,12 @@ services:
       - shippingservice
     networks:
       - observability
-    restart: on-failure
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+        reservations:
+          memory: 64M
 
   # Currency Service
   currencyservice:
@@ -105,7 +111,6 @@ services:
     container_name: currencyservice
     environment:
       - PORT=7000
-      - CURRENCY_SERVICE_PORT=7000
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
       - OTEL_EXPORTER_OTLP_INSECURE=true
       - OTEL_SERVICE_NAME=currencyservice
@@ -114,7 +119,13 @@ services:
       - "7001:7000"
     networks:
       - observability
-    restart: on-failure
+    platform: linux/amd64
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+        reservations:
+          memory: 64M
 
   # Email Service
   emailservice:
