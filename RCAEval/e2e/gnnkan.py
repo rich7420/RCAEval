@@ -50,8 +50,8 @@ from RCAEval.gnn_kan_module.feature_processing import (
 from RCAEval.graph_heads.page_rank import page_rank
 
 def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False, 
-                config_type='simplified', feature_method='simplified', 
-                use_optimized_input=True, sparsity_lambda=None, **kwargs):
+                config_type='simplified', feature_method='kpca', 
+                use_optimized_input=True, sparsity_lambda=1e-5, **kwargs):
     """
     🚨 ISSUE 3: 多階段處理複雜度質疑
     
@@ -116,16 +116,33 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
         print("🚀 啟用簡化3階段模式，跳過不必要的處理步驟")
         return simplified_gnn_kan_rca(data, inject_time, dataset, config_type, feature_method, **kwargs)
     
-    # 🎯 如果在比較場景中，則強制使用優化超參數
-    is_comparison_run = dataset is not None
-    if is_comparison_run:
-        print("🚀 Detected comparison run, forcing optimized hyperparameters...")
-        kwargs['learning_rate'] = kwargs.get('learning_rate', 1e-5)
-        kwargs['num_epochs'] = kwargs.get('num_epochs', 250)
-        # 如果外部未提供，則使用強稀疏性
-        if sparsity_lambda is None:
-            sparsity_lambda = 5e-4 
-        print(f"  - LR: {kwargs['learning_rate']}, Epochs: {kwargs['num_epochs']}, Sparsity: {sparsity_lambda}")
+    # 🎯 應用 comparison.py 中的最優超參數作為默認值
+    # 這些參數在 comparison.py 中已經證明能達到優異性能
+    print("🚀 Applying optimized hyperparameters from comparison.py...")
+    
+    # 核心優化參數（來自 comparison.py 的 optimized_config）
+    kwargs.setdefault('graph_head', 'pagerank')
+    kwargs.setdefault('kpca_kernel', 'rbf')  
+    kwargs.setdefault('learning_rate', 8e-7)         # 高性能基礎學習率
+    kwargs.setdefault('num_epochs', 200)             # 高性能基礎訓練輪數
+    kwargs.setdefault('use_cuda', True)              # 啟用 CUDA 加速
+    kwargs.setdefault('cpu_fallback', True)          # CPU 回退支援
+    kwargs.setdefault('similarity_threshold', 0.15)  # 效率/準確性平衡
+    kwargs.setdefault('max_edges_per_node', 12)      # 高效配置
+    kwargs.setdefault('target_feature_dim', 64)      # 高效配置
+    kwargs.setdefault('hidden_dim', 64)              # 高效配置
+    kwargs.setdefault('force_node_expansion', True)  # 強制節點擴展
+    
+    # 穩健性參數
+    kwargs.setdefault('kan_grid_size', 10)              # 平衡的模型容量
+    kwargs.setdefault('input_clamp_range', [-3.0, 3.0]) # 穩健的數值範圍
+    kwargs.setdefault('gradient_clipping', 1.0)         # 標準的梯度裁剪
+    kwargs.setdefault('numerical_stability', True)      # 必要的穩定性保障
+    
+    print(f"  🔧 核心參數: LR={kwargs['learning_rate']}, Epochs={kwargs['num_epochs']}, Sparsity={sparsity_lambda}")
+    print(f"  🔧 特徵參數: Method={feature_method}, Kernel={kwargs.get('kpca_kernel', 'rbf')}")
+    print(f"  🔧 圖參數: Threshold={kwargs['similarity_threshold']}, Max_edges={kwargs['max_edges_per_node']}")
+    print(f"  🔧 模型參數: Grid_size={kwargs['kan_grid_size']}, Hidden_dim={kwargs['hidden_dim']}")
 
     # 0. 動態GPU配置檢測
     try:
