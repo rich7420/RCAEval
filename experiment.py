@@ -273,8 +273,14 @@ class SingleMethodExperiment:
         else:
             print(f"📁 Using existing dataset: {self.dataset_name}")
     
-    def get_data_paths(self, limit: Optional[int] = None) -> List[str]:
-        """Get data file paths from the dataset"""
+    def get_data_paths(self, limit: Optional[int] = None, split_type: str = "all") -> List[str]:
+        """
+        Get data file paths from the dataset with train/val/test split support
+        
+        Args:
+            limit: Maximum number of cases to return
+            split_type: "all", "train", "val", "test" - which split to return
+        """
         dataset_path = self.dataset_config["path"]
         
         if not os.path.exists(dataset_path):
@@ -296,6 +302,10 @@ class SingleMethodExperiment:
             return []
         
         data_paths = sorted(data_paths)
+        
+        # 🔧 階段1：實現train/val/test split
+        if split_type != "all":
+            data_paths = self._split_data_paths(data_paths, split_type)
         
         if limit and len(data_paths) > limit:
             # Even sampling across different fault types
@@ -326,8 +336,73 @@ class SingleMethodExperiment:
                 
                 data_paths = selected_paths[:limit]
         
-        print(f"📊 Found {len(data_paths)} data files for {self.dataset_name}")
+        print(f"📊 Found {len(data_paths)} data files for {self.dataset_name} ({split_type} split)")
         return data_paths
+    
+    def _split_data_paths(self, data_paths: List[str], split_type: str) -> List[str]:
+        """
+        Split data paths into train/val/test sets
+        
+        Args:
+            data_paths: All available data paths
+            split_type: "train", "val", "test"
+            
+        Returns:
+            List of paths for the specified split
+        """
+        from collections import defaultdict
+        from sklearn.model_selection import train_test_split
+        
+        # Group paths by fault type for stratified splitting
+        paths_by_fault = defaultdict(list)
+        fault_types = []
+        
+        for path in data_paths:
+            parts = path.split(os.sep)
+            if len(parts) >= 3:
+                service_fault = parts[-3]
+                if "_" in service_fault:
+                    fault_type = service_fault.split("_")[-1]
+                    paths_by_fault[fault_type].append(path)
+                    fault_types.append(fault_type)
+                else:
+                    paths_by_fault["unknown"].append(path)
+                    fault_types.append("unknown")
+            else:
+                paths_by_fault["unknown"].append(path)
+                fault_types.append("unknown")
+        
+        # Convert to arrays for sklearn
+        all_paths = np.array(data_paths)
+        fault_types_array = np.array(fault_types)
+        
+        # 80/10/10 split: train/val/test
+        if len(data_paths) < 10:
+            # For small datasets, use all for training
+            if split_type == "train":
+                return data_paths
+            else:
+                return []
+        
+        # First split: 80% train, 20% temp
+        train_paths, temp_paths, train_faults, temp_faults = train_test_split(
+            all_paths, fault_types_array, test_size=0.2, random_state=42, stratify=fault_types_array
+        )
+        
+        # Second split: 10% val, 10% test from temp
+        val_paths, test_paths, val_faults, test_faults = train_test_split(
+            temp_paths, temp_faults, test_size=0.5, random_state=42, stratify=temp_faults
+        )
+        
+        # Return the requested split
+        if split_type == "train":
+            return train_paths.tolist()
+        elif split_type == "val":
+            return val_paths.tolist()
+        elif split_type == "test":
+            return test_paths.tolist()
+        else:
+            return data_paths
     
     def extract_case_info(self, data_path: str) -> Dict[str, str]:
         """Extract case information from data path"""

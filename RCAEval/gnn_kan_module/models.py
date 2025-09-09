@@ -20,7 +20,10 @@ from .kan_components import (
 )
 
 # Import configuration classes for type checking
-from .config import HighCapacityGNNKANConfig
+from .config import GNNKANConfig
+
+
+# AttentionGraphDecoder已移除 - 使用KNN Baseline替代
 
 
 class GNNKANModel(nn.Module):
@@ -36,7 +39,7 @@ class GNNKANModel(nn.Module):
         self.feature_projection = nn.Linear(input_feature_dim, config.input_dim)
         
         # 根據配置選擇適當的編碼器
-        if isinstance(config, HighCapacityGNNKANConfig):
+        if hasattr(config, 'high_capacity_mode') and config.high_capacity_mode:
             self.gnn_encoder = HighCapacityGNNKANEncoder(
                 input_dim=config.input_dim,
                 hidden_dims=config.hidden_dims,
@@ -68,189 +71,30 @@ class GNNKANModel(nn.Module):
         except ImportError:
             self.temporal_attention = TemporalAttention(config.output_dim)
         
-        # 🎯 圖解碼器 - 支持 KAN/MLP 切換
-        self.use_kan_decoder = getattr(config, 'use_kan_decoder', False)
-        
-        if self.use_kan_decoder:
-            # 🚀 使用 KAN 解碼器
-            from .kan_components.kan_layers import KANEdgeDecoder
-            
-            kan_hidden_dim = getattr(config, 'kan_decoder_hidden_dim', None) or (config.output_dim // 2)
-            kan_num_basis = getattr(config, 'kan_decoder_num_basis', 4)
-            kan_spline_order = getattr(config, 'kan_decoder_spline_order', 3)
-            kan_dropout = getattr(config, 'kan_decoder_dropout', config.dropout)
-            kan_stability = getattr(config, 'kan_decoder_stability_mode', True)
-            
-            self.graph_decoder = KANEdgeDecoder(
-                input_dim=config.output_dim * 2,
-                hidden_dim=kan_hidden_dim,
-                num_basis=kan_num_basis,
-                spline_order=kan_spline_order,
-                dropout=kan_dropout,
-                stability_mode=kan_stability
-            )
-            print(f"✓ 使用 KAN Graph Decoder: {config.output_dim * 2} → {kan_hidden_dim} → 1")
-        else:
-            # 🔧 使用傳統 MLP 解碼器
-            self.graph_decoder = nn.Sequential(
-                nn.Linear(config.output_dim * 2, config.output_dim),
-                # nn.LeakyReLU(negative_slope=0.01),
-                nn.Dropout(config.dropout),
-                nn.Linear(config.output_dim, 1)
-            )
-            print(f"✓ 使用 MLP Graph Decoder: {config.output_dim * 2} → {config.output_dim} → 1")
+        # 🎯 Graph Decoder已移除 - 使用KNN Baseline替代
+        print("✓ 使用KNN Baseline替代Graph Decoder")
         
         # Dropout
         self.dropout = nn.Dropout(config.dropout)
     
     def forward(self, node_features, edge_index):
-        """GNN-KAN前向傳播 - 🚨 存在計算複雜度問題"""
-        
-        # 🔧 TODO: 改良建議 1 - 分塊計算
-        # def compute_adjacency_in_chunks(embeddings, chunk_size=32):
-        #     """分塊計算鄰接矩陣，降低記憶體峰值"""
-        #     num_nodes = embeddings.size(0)
-        #     adj_matrix = torch.zeros(num_nodes, num_nodes)
-        #     for i in range(0, num_nodes, chunk_size):
-        #         for j in range(0, num_nodes, chunk_size):
-        #             chunk_adj = self._compute_chunk_adjacency(...)
-        #             adj_matrix[i:i+chunk_size, j:j+chunk_size] = chunk_adj
-        #     return adj_matrix
-        
-        # 🔧 TODO: 改良建議 2 - 稀疏化策略
-        # 只計算Top-K個最相似的節點對，避免全矩陣計算
-        # top_k_edges = select_top_k_edges(embeddings, k=min(50, num_nodes*2))
-        # sparse_adj = build_sparse_adjacency(top_k_edges)
-        
-        # 🔧 TODO: 改良建議 3 - 近似算法
-        # 使用LSH(Locality Sensitive Hashing)快速找到相似節點
-        # similar_pairs = lsh_approximate_similarity(embeddings, threshold=0.3)
+        """GNN-KAN前向傳播 - 只返回embeddings，鄰接矩陣由KNN Baseline構建"""
         
         try:
-            # Current implementation - potentially problematic for large graphs
+            # 只計算embeddings，鄰接矩陣由KNN Baseline構建
             embeddings = self.gnn_encoder(node_features, edge_index)
-            adj_scores = self._compute_adjacency_scores_batch(embeddings)
-            return embeddings, adj_scores
+            # 返回None作為adj_scores，因為我們使用KNN Baseline
+            return embeddings, None
         except RuntimeError as e:
             if "out of memory" in str(e):
-                print("🚨 GPU記憶體不足，建議使用分塊計算或稀疏化策略")
+                print("🚨 GPU記憶體不足，使用簡化結果")
                 # 🔧 緊急回退：返回簡化結果
                 embeddings = self.gnn_encoder(node_features, edge_index) 
-                num_nodes = embeddings.size(0)
-                adj_scores = torch.eye(num_nodes)  # 簡化為單位矩陣
-                return embeddings, adj_scores
+                return embeddings, None
+            else:
                 raise e
     
-    def _compute_adjacency_scores_batch(self, embeddings):
-        """批量化計算鄰接矩陣分數 - 🔧 優化版本，解決複雜度問題"""
-        num_nodes = embeddings.size(0)
-        
-        # 🔧 修正1：根據節點數量選擇計算策略
-        if num_nodes > 50:  # 大圖使用分塊計算
-            return self._compute_adjacency_chunked(embeddings, chunk_size=32)
-        elif num_nodes > 20:  # 中圖使用稀疏化策略
-            return self._compute_adjacency_sparse(embeddings, top_k=min(20, num_nodes-1))
-        else:  # 小圖使用原始方法
-            return self._compute_adjacency_original(embeddings)
-    
-    def _compute_adjacency_original(self, embeddings):
-        """原始方法：適用於小圖(<20節點)"""
-        num_nodes = embeddings.size(0)
-        
-        # 創建所有可能的邊對
-        i_indices = torch.arange(num_nodes, device=embeddings.device).repeat_interleave(num_nodes)
-        j_indices = torch.arange(num_nodes, device=embeddings.device).repeat(num_nodes)
-        
-        # 批量計算邊特徵
-        edge_features = torch.cat([
-            embeddings[i_indices], 
-            embeddings[j_indices]
-        ], dim=1)
-        
-        # 批量通過 KAN 解碼器
-        scores = self.graph_decoder(edge_features)
-        adj_scores = scores.view(num_nodes, num_nodes)
-        
-        return adj_scores
-    
-    def _compute_adjacency_chunked(self, embeddings, chunk_size=32):
-        """分塊計算：適用於大圖，降低記憶體峰值"""
-        num_nodes = embeddings.size(0)
-        adj_matrix = torch.zeros(num_nodes, num_nodes, device=embeddings.device)
-        
-        print(f"🔧 使用分塊計算策略，chunk_size={chunk_size}")
-        
-        for i in range(0, num_nodes, chunk_size):
-            end_i = min(i + chunk_size, num_nodes)
-            for j in range(0, num_nodes, chunk_size):
-                end_j = min(j + chunk_size, num_nodes)
-                
-                # 計算當前塊的邊特徵
-                chunk_embeddings_i = embeddings[i:end_i]  # (chunk_i, embed_dim)
-                chunk_embeddings_j = embeddings[j:end_j]  # (chunk_j, embed_dim)
-                
-                # 創建當前塊的所有節點對
-                chunk_i_size = end_i - i
-                chunk_j_size = end_j - j
-                
-                i_indices = torch.arange(chunk_i_size, device=embeddings.device).repeat_interleave(chunk_j_size)
-                j_indices = torch.arange(chunk_j_size, device=embeddings.device).repeat(chunk_i_size)
-                
-                edge_features = torch.cat([
-                    chunk_embeddings_i[i_indices],
-                    chunk_embeddings_j[j_indices]
-                ], dim=1)
-                
-                # 通過解碼器計算分數
-                scores = self.graph_decoder(edge_features)
-                chunk_adj = scores.view(chunk_i_size, chunk_j_size)
-                
-                # 存儲到總矩陣
-                adj_matrix[i:end_i, j:end_j] = chunk_adj
-        
-        return adj_matrix
-    
-    def _compute_adjacency_sparse(self, embeddings, top_k=20):
-        """稀疏計算：只計算最相似的Top-K連接"""
-        num_nodes = embeddings.size(0)
-        
-        print(f"🔧 使用稀疏化策略，top_k={top_k}")
-        
-        # 計算節點相似度矩陣（使用餘弦相似度）
-        embeddings_norm = F.normalize(embeddings, p=2, dim=1)
-        similarity_matrix = torch.mm(embeddings_norm, embeddings_norm.t())
-        
-        # 為每個節點選擇Top-K最相似的節點
-        topk_values, topk_indices = torch.topk(similarity_matrix, k=min(top_k, num_nodes), dim=1, largest=True)
-        
-        # 創建稀疏邊列表
-        edge_pairs = []
-        for i in range(num_nodes):
-            for j_idx in range(topk_indices.size(1)):
-                j = topk_indices[i, j_idx].item()
-                if i != j:  # 避免自環
-                    edge_pairs.append((i, j))
-        
-        # 批量計算選中邊的分數
-        if edge_pairs:
-            i_list, j_list = zip(*edge_pairs)
-            i_tensor = torch.tensor(i_list, device=embeddings.device)
-            j_tensor = torch.tensor(j_list, device=embeddings.device)
-            
-            edge_features = torch.cat([
-                embeddings[i_tensor],
-                embeddings[j_tensor]
-            ], dim=1)
-            
-            scores = self.graph_decoder(edge_features).squeeze()
-            
-            # 構建稀疏鄰接矩陣
-            adj_matrix = torch.zeros(num_nodes, num_nodes, device=embeddings.device)
-            adj_matrix[i_tensor, j_tensor] = scores
-        else:
-            adj_matrix = torch.eye(num_nodes, device=embeddings.device)
-        
-        return adj_matrix
+    # Graph Decoder相關方法已移除 - 使用KNN Baseline替代
 
 
 class TemporalAttention(nn.Module):

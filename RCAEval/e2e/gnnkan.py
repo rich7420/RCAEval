@@ -13,6 +13,93 @@ import torch.nn as nn
 
 warnings.filterwarnings("ignore")
 
+# 🎯 KNN Baseline 函數（永久替換Graph Decoder）
+def knn_fallback(embeddings, node_names, k=5, similarity_threshold=0.3):
+    """
+    KNN Baseline 函數 - 永久替換Graph Decoder
+    
+    優化策略：
+    1. 動態調整k值基於節點數量
+    2. 自適應相似度閾值
+    3. 確保圖連通性
+    4. 優化稀疏性
+    """
+    from sklearn.metrics.pairwise import cosine_similarity
+    from sklearn.neighbors import NearestNeighbors
+    import numpy as np
+    
+    n_nodes = embeddings.shape[0]
+    
+    # 動態調整k值：小圖用較小的k，大圖用較大的k
+    if n_nodes <= 10:
+        k = min(3, n_nodes-1)
+    elif n_nodes <= 20:
+        k = min(5, n_nodes-1)
+    else:
+        k = min(8, n_nodes-1)
+    
+    # 自適應相似度閾值：基於節點數量調整
+    if n_nodes <= 10:
+        similarity_threshold = 0.2
+    elif n_nodes <= 20:
+        similarity_threshold = 0.3
+    else:
+        similarity_threshold = 0.4
+    
+    # 計算余弦相似度
+    embeddings_np = embeddings.cpu().numpy()
+    similarity_matrix = cosine_similarity(embeddings_np)
+    
+    # 創建KNN鄰接矩陣
+    knn = NearestNeighbors(n_neighbors=k+1, metric='cosine')
+    knn.fit(embeddings_np)
+    
+    # 獲取每個節點的k個最近鄰
+    distances, indices = knn.kneighbors(embeddings_np)
+    
+    # 創建鄰接矩陣
+    adj_matrix = torch.zeros((n_nodes, n_nodes))
+    
+    for i in range(n_nodes):
+        for j, neighbor_idx in enumerate(indices[i]):
+            if j > 0:  # 跳過自己
+                similarity = similarity_matrix[i, neighbor_idx]
+                if similarity > similarity_threshold:
+                    adj_matrix[i, neighbor_idx] = similarity
+                    adj_matrix[neighbor_idx, i] = similarity  # 對稱
+    
+    # 確保圖連通性：如果圖不連通，添加最小生成樹
+    if adj_matrix.sum() == 0:
+        print("⚠️ 圖不連通，添加最小生成樹連接")
+        # 使用最小生成樹確保連通性
+        from scipy.sparse.csgraph import minimum_spanning_tree
+        from scipy.sparse import csr_matrix
+        
+        # 創建距離矩陣（1 - 相似度）
+        distance_matrix = 1 - similarity_matrix
+        distance_matrix[distance_matrix < 0] = 0
+        
+        # 計算最小生成樹
+        mst = minimum_spanning_tree(csr_matrix(distance_matrix))
+        mst_dense = mst.toarray()
+        
+        # 將MST邊添加到鄰接矩陣
+        for i in range(n_nodes):
+            for j in range(n_nodes):
+                if mst_dense[i, j] > 0:
+                    similarity = similarity_matrix[i, j]
+                    adj_matrix[i, j] = max(adj_matrix[i, j], similarity)
+                    adj_matrix[j, i] = max(adj_matrix[j, i], similarity)
+    
+    # 優化稀疏性：移除弱連接
+    final_adj = torch.zeros_like(adj_matrix)
+    for i in range(n_nodes):
+        for j in range(n_nodes):
+            if adj_matrix[i, j] > similarity_threshold:
+                final_adj[i, j] = adj_matrix[i, j]
+    
+    return final_adj
+
 # 🎯 從模組化組件導入所需的類和函數
 import sys
 import os
@@ -25,16 +112,13 @@ if parent_dir not in sys.path:
 
 # 模組化導入 - 確保功能完整性
 from RCAEval.gnn_kan_module import (
+    GNNKANConfig,
     SimplifiedGNNKANConfig,
-    HighCapacityGNNKANConfig,
-    FastGNNKANConfig,
-    MultiModalFeatureExtractor,
-    SimplifiedGraphConstructor,
     GNNKANModel,
     train_gnn_kan_model,
-    ConfigFactory
+    create_config
 )
-from RCAEval.gnn_kan_module.dimension_adapters import TemporalAttentionAdapter
+# 維度適配器已移除，使用簡化版本
 
 # 🚀 導入優化的輸入處理器
 from RCAEval.gnn_kan_module.optimized_input_processor import optimize_gnn_kan_input, GNNKANInputOptimizer
@@ -49,8 +133,162 @@ from RCAEval.gnn_kan_module.feature_processing import (
 # 導入正確的page_rank函數
 from RCAEval.graph_heads.page_rank import page_rank
 
+def gnn_kan_rca_multimodal(data_dict, inject_time=None, dataset=None, with_bg=False, 
+                          config_type='simplified', use_optimized_input=True, 
+                          sparsity_lambda=1e-5, **kwargs):
+    """
+    多模態 GNN-KAN RCA 分析
+    基於 GNN_KAN_Current_Analysis.md 的實現計畫
+    
+    Args:
+        data_dict: 包含 'metrics', 'logs', 'traces' 的字典
+        inject_time: 故障注入時間
+        dataset: 數據集名稱
+        with_bg: 是否使用背景數據
+        config_type: 配置類型
+        use_optimized_input: 是否使用優化輸入處理
+        sparsity_lambda: 稀疏性權重
+        **kwargs: 其他參數
+        
+    Returns:
+        RCA 分析結果
+    """
+    print("🔥 使用多模態 GNN-KAN 架構進行 RCA 分析")
+    print("🎯 目標：建構平衡圖結構，密度控制在 0.3-0.5")
+    print("📊 模態：metrics + logs + traces 融合")
+    
+    start_time = time.time()
+    
+    # 清理 GPU 快取
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    import gc
+    gc.collect()
+    
+    # 設置多模態優化參數
+    kwargs.setdefault('graph_head', 'pagerank')
+    kwargs.setdefault('learning_rate', 1e-4)  # 多模態需要更高學習率
+    kwargs.setdefault('num_epochs', 150)      # 減少訓練輪數
+    kwargs.setdefault('use_cuda', True)
+    kwargs.setdefault('cpu_fallback', True)
+    kwargs.setdefault('target_feature_dim', 64)
+    kwargs.setdefault('hidden_dim', 64)
+    kwargs.setdefault('kan_grid_size', 8)
+    kwargs.setdefault('input_clamp_range', [-2.0, 2.0])
+    kwargs.setdefault('gradient_clipping', 1.0)
+    kwargs.setdefault('numerical_stability', True)
+    
+    print(f"  🔧 多模態參數: LR={kwargs['learning_rate']}, Epochs={kwargs['num_epochs']}")
+    print(f"  🔧 稀疏性權重: {sparsity_lambda}")
+    
+    try:
+        # 1. 多模態特徵提取和圖構建
+        print("📊 步驟1: 多模態特徵提取與融合...")
+        optimizer = GNNKANInputOptimizer(
+            feature_method='multimodal_fusion',
+            target_dim=kwargs['target_feature_dim']
+        )
+        
+        # 確保在推理模式下進行特徵提取
+        with torch.no_grad():
+            optimized_data = optimizer.optimize_input_multimodal(data_dict, inject_time)
+        
+        print(f"  ✅ 特徵提取完成: {optimized_data.metadata['num_nodes']} 節點, {optimized_data.metadata['num_edges']} 邊")
+        print(f"  ⏱️ 處理時間: {optimized_data.metadata['processing_time']:.3f}s")
+        
+        # 2. 配置模型
+        print("🔧 步驟2: 配置 GNN-KAN 模型...")
+        config = create_config(
+            input_dim=optimized_data.node_features.shape[1],
+            output_dim=kwargs['hidden_dim'],
+            config_type=config_type,
+            **kwargs
+        )
+        
+        # 3. 訓練模型
+        print("🚀 步驟3: 訓練 GNN-KAN 模型...")
+        model = GNNKANModel(config, optimized_data.metadata['num_nodes'])
+        
+        if torch.cuda.is_available() and kwargs.get('use_cuda', True):
+            model = model.cuda()
+            optimized_data = optimized_data.to_device('cuda')
+        
+        # 訓練模型
+        training_results = train_gnn_kan_model(
+            model, 
+            optimized_data.node_features, 
+            optimized_data.edge_index, 
+            config, 
+            sparsity_lambda=sparsity_lambda
+        )
+        
+        print(f"  ✅ 訓練完成: {training_results[0]:.6f}")
+        
+        # 4. 推理和排序
+        print("🔍 步驟4: 推理與根因排序...")
+        model.eval()
+        with torch.no_grad():
+            embeddings, adj_scores = model(optimized_data.node_features, optimized_data.edge_index)
+            
+            # 計算圖密度
+            adj_probs = torch.sigmoid(adj_scores)
+            graph_density = (adj_probs > 0.1).float().mean().item()
+            print(f"  📊 圖密度: {graph_density:.3f} (目標: 0.3-0.5)")
+            
+            # PageRank 排序
+            try:
+                ranks = page_rank(adj_probs.cpu().numpy())
+            except Exception as e:
+                print(f"  ⚠️ PageRank 失敗: {e}, 使用度中心性")
+                ranks = adj_probs.sum(dim=1).cpu().numpy()
+            
+            # 排序節點
+            sorted_indices = np.argsort(ranks)[::-1]
+            sorted_nodes = [optimized_data.node_names[i] for i in sorted_indices]
+            sorted_scores = ranks[sorted_indices]
+            
+        # 5. 結果統計
+        total_time = time.time() - start_time
+        
+        # 計算分數差異
+        score_diff = np.max(sorted_scores) - np.min(sorted_scores) if len(sorted_scores) > 1 else 0.0
+        
+        print(f"🎯 多模態 RCA 分析完成!")
+        print(f"  ⏱️ 總時間: {total_time:.3f}s")
+        print(f"  📊 圖密度: {graph_density:.3f}")
+        print(f"  📈 分數差異: {score_diff:.4f}")
+        print(f"  🏆 Top-3 根因: {sorted_nodes[:3]}")
+        
+        return {
+            'root_causes': sorted_nodes,
+            'scores': sorted_scores,
+            'graph_density': graph_density,
+            'score_difference': score_diff,
+            'processing_time': total_time,
+            'num_nodes': optimized_data.metadata['num_nodes'],
+            'num_edges': optimized_data.metadata['num_edges'],
+            'training_loss': training_results[0],
+            'attention_weights': optimized_data.metadata.get('attention_weights'),
+            'method': 'gnn_kan_multimodal'
+        }
+        
+    except Exception as e:
+        print(f"❌ 多模態 RCA 分析失敗: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            'root_causes': [],
+            'scores': [],
+            'graph_density': 0.0,
+            'score_difference': 0.0,
+            'processing_time': time.time() - start_time,
+            'error': str(e),
+            'method': 'gnn_kan_multimodal'
+        }
+
+
 def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False, 
-                config_type='simplified', feature_method='kpca', 
+                config_type='simplified', feature_method='enhanced_ica', 
                 use_optimized_input=True, sparsity_lambda=1e-5, **kwargs):
     """
     🚨 ISSUE 3: 多階段處理複雜度質疑
@@ -116,22 +354,28 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
         print("🚀 啟用簡化3階段模式，跳過不必要的處理步驟")
         return simplified_gnn_kan_rca(data, inject_time, dataset, config_type, feature_method, **kwargs)
     
-    # 🎯 應用 comparison.py 中的最優超參數作為默認值
-    # 這些參數在 comparison.py 中已經證明能達到優異性能
-    print("🚀 Applying optimized hyperparameters from comparison.py...")
+    # 🎯 階段1改進：應用反過擬合參數 / Apply anti-overfitting parameters
+    # 這些參數專門設計來解決過度凝合問題 / These parameters are specifically designed to solve over-density issues
+    print("🚀 Applying Stage 1 anti-overfitting hyperparameters...")
     
-    # 核心優化參數（來自 comparison.py 的 optimized_config）
+    # 🔧 階段1：核心優化參數（解決過度凝合）/ Core optimization parameters (solve over-condensation)
     kwargs.setdefault('graph_head', 'pagerank')
     kwargs.setdefault('kpca_kernel', 'rbf')  
-    kwargs.setdefault('learning_rate', 8e-7)         # 高性能基礎學習率
-    kwargs.setdefault('num_epochs', 200)             # 高性能基礎訓練輪數
-    kwargs.setdefault('use_cuda', True)              # 啟用 CUDA 加速
-    kwargs.setdefault('cpu_fallback', True)          # CPU 回退支援
-    kwargs.setdefault('similarity_threshold', 0.15)  # 效率/準確性平衡
-    kwargs.setdefault('max_edges_per_node', 12)      # 高效配置
-    kwargs.setdefault('target_feature_dim', 64)      # 高效配置
-    kwargs.setdefault('hidden_dim', 64)              # 高效配置
-    kwargs.setdefault('force_node_expansion', True)  # 強制節點擴展
+    kwargs.setdefault('learning_rate', 1e-6)         # 降低學習率防止過擬合 / Lower learning rate to prevent overfitting
+    kwargs.setdefault('num_epochs', 100)             # 減少訓練輪數 / Reduce training epochs
+    kwargs.setdefault('use_cuda', True)              # 啟用 CUDA 加速 / Enable CUDA acceleration
+    kwargs.setdefault('cpu_fallback', True)          # CPU 回退支援 / CPU fallback support
+    kwargs.setdefault('similarity_threshold', 0.5)   # 提高相似性閾值 / Increase similarity threshold
+    kwargs.setdefault('max_edges_per_node', 4)       # 減少每節點最大邊數 / Reduce max edges per node
+    kwargs.setdefault('target_feature_dim', 64)      # 高效配置 / Efficient configuration
+    kwargs.setdefault('hidden_dim', 64)              # 高效配置 / Efficient configuration
+    kwargs.setdefault('force_node_expansion', False) # 關閉強制節點擴展 / Disable forced node expansion
+    
+    # 🔧 階段1：Early Stopping參數 / Early Stopping parameters
+    kwargs.setdefault('early_stopping', True)        # 啟用早停 / Enable early stopping
+    kwargs.setdefault('patience', 10)                # 耐心值 / Patience value
+    kwargs.setdefault('min_delta', 0.001)            # 最小改善閾值 / Minimum improvement threshold
+    kwargs.setdefault('monitor_metric', 'val_precision')  # 監控驗證精度 / Monitor validation precision
     
     # 穩健性參數
     kwargs.setdefault('kan_grid_size', 10)              # 平衡的模型容量
@@ -172,8 +416,8 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
         use_gpu = False
         cuda_available = False
     
-    # 1. 創建配置並強制啟用GPU
-    config = ConfigFactory.create_config(config_type, **kwargs)
+    # 1. 創建配置
+    config = create_config(**kwargs)
     config.feature_method = feature_method
     config.use_cuda = use_gpu  # 強制設定GPU使用
     
@@ -295,12 +539,33 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
 
     # 4. 訓練純粹KAN模型
     print("💪 開始訓練純粹KAN模型...")
+    
+    # 🔧 階段1：準備驗證數據 / Prepare validation data
+    val_data = None
+    val_ground_truth = None
+    if kwargs.get('early_stopping', True):
+        # 從數據中隨機選擇20%作為驗證集
+        num_nodes = node_features.size(0)
+        if num_nodes > 4:  # 確保有足夠的節點進行驗證
+            val_indices = torch.randperm(num_nodes)[:max(2, num_nodes // 5)]  # 20%驗證
+            train_indices = torch.tensor([i for i in range(num_nodes) if i not in val_indices])
+            
+            val_data = {
+                'node_features': node_features[val_indices],
+                'edge_index': edge_index  # 使用相同的邊結構
+            }
+            val_ground_truth = kwargs.get('val_ground_truth', None)
+            print(f"✓ 驗證數據準備: {len(val_indices)}個節點用於驗證")
+    
     model, training_history = train_gnn_kan_model(
         model, 
         node_features, 
         edge_index, 
         config,
-        sparsity_lambda=sparsity_lambda  # 傳遞稀疏性參數
+        sparsity_lambda=sparsity_lambda,  # 傳遞稀疏性參數
+        val_data=val_data,  # 傳遞驗證數據
+        val_ground_truth=val_ground_truth,  # 傳遞驗證真實標籤
+        **kwargs  # 傳遞其他參數
     )
     
     # 提取訓練過程中的稀疏性信息
@@ -346,9 +611,20 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
     
     with torch.no_grad():
         try:
-            # GPU/CPU 兼容的推理
-            embeddings, adj_matrix = model(node_features, edge_index)
-            print(f"✓ KAN推理成功: 輸入{node_features.shape} -> 嵌入{embeddings.shape}, 鄰接{adj_matrix.shape}")
+
+            # 🎯 使用KNN Baseline進行鄰接矩陣構建（永久替換Graph Decoder）
+            print("🎯 使用KNN Baseline進行鄰接矩陣構建...")
+            
+            # 只獲取embeddings，不使用Graph Decoder
+            embeddings, _ = model(node_features, edge_index)
+            print(f"✓ 獲取embeddings成功: 輸入{node_features.shape} -> 嵌入{embeddings.shape}")
+            
+            # 使用KNN構建鄰接矩陣
+            adj_matrix = knn_fallback(embeddings, node_names, k=5, similarity_threshold=0.3)
+            print(f"✓ KNN鄰接矩陣構建成功: {adj_matrix.shape}, 密度: {adj_matrix.mean().item():.3f}")
+            
+            import torch.nn.functional as F
+            embeddings = F.normalize(embeddings, p=2, dim=-1)
             
             # 移動結果到CPU進行後續處理
             if device == 'cuda':
@@ -412,9 +688,39 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
     print(f"✓ 構建鄰接矩陣: {numpy_adj.shape}, 密度: {numpy_adj.mean():.3f}")
     
     print("📊 計算PageRank重要性排名...")
+    
+    def safe_pagerank(adj_matrix, node_names):
+        """安全的PageRank計算，包含軟閾值和空圖保護"""
+        import torch
+        import networkx as nx
+        
+        # 轉換為torch tensor進行軟閾值處理
+        adj_tensor = torch.tensor(adj_matrix, dtype=torch.float32)
+        
+        # 軟閾值：使用溫度softmax處理連續權重
+        adj_soft = torch.softmax(adj_tensor / 0.1, dim=1)  # 溫度=0.1用於銳化
+        
+        # 檢查並修復空圖/接近空圖
+        if adj_soft.sum() < 1e-3:  # 空圖檢測
+            print("⚠️ 空圖檢測，添加最小環形連接")
+            n = adj_soft.shape[0]
+            for i in range(n):
+                j = (i + 1) % n  # 環形：連接i到i+1
+                adj_soft[i, j] = 0.2
+                adj_soft[j, i] = 0.2
+        
+        # 標準化並計算PageRank
+        adj_norm = adj_soft / (adj_soft.sum(dim=1, keepdim=True) + 1e-8)
+        
+        # 使用networkx計算PageRank
+        G = nx.from_numpy_array(adj_norm.numpy(), create_using=nx.DiGraph)
+        pr_scores = nx.pagerank(G)
+        sorted_nodes = sorted(pr_scores.items(), key=lambda x: x[1], reverse=True)
+        return [(node_names[idx], score) for idx, score in sorted_nodes]
+    
     try:
-        # 調用RCAEval的page_rank函數，返回[(node_name, score), ...]格式
-        page_rank_results = page_rank(numpy_adj, node_names)
+        # 使用安全的PageRank函數
+        page_rank_results = safe_pagerank(numpy_adj, node_names)
         # 提取節點名稱列表（按重要性排序）
         pagerank_ranks = [result[0] for result in page_rank_results]
         pagerank_scores = {result[0]: result[1] for result in page_rank_results}
@@ -804,7 +1110,7 @@ def simplified_gnn_kan_rca(data, inject_time=None, dataset=None, config_type='si
     print("📊 階段1：統一特徵處理")
     
     # 創建簡化配置
-    config = ConfigFactory.create_config(config_type, **kwargs)
+    config = create_config(**kwargs)
     config.update_for_kan_purity()
     
     # 設備配置
@@ -865,16 +1171,20 @@ def simplified_gnn_kan_rca(data, inject_time=None, dataset=None, config_type='si
         sparsity_lambda=kwargs.get('sparsity_lambda', 1e-4)
     )
     
-    # 快速推理（跳過故障時間增強等複雜處理）
+    # 🎯 快速推理（使用Graph Decoder进行邻接矩阵预测）
     model.eval()
     with torch.no_grad():
-        embeddings, adj_matrix = model(node_features, edge_index)
+        # 使用KNN Baseline進行鄰接矩陣構建（永久替換Graph Decoder）
+        embeddings, _ = model(node_features, edge_index)
         
-        # 簡單的數值穩定化（不進行複雜的故障時間分析）
+        # 使用KNN構建鄰接矩陣
+        adj_matrix = knn_fallback(embeddings, node_names, k=5, similarity_threshold=0.3)
+        print(f"✓ KNN鄰接矩陣構建成功: {adj_matrix.shape}, 密度: {adj_matrix.mean().item():.3f}")
+        
+        # 简单的数值稳定化
         adj_matrix = torch.clamp(adj_matrix, 0, 1)
         adj_matrix = adj_matrix / (adj_matrix.max() + 1e-8)
-        adj_matrix = (adj_matrix + adj_matrix.T) / 2  # 對稱化
-        adj_matrix.fill_diagonal_(1.0)  # 添加自環
+        adj_matrix = (adj_matrix + adj_matrix.T) / 2  # 对称化
     
     stage2_time = time.time() - stage2_start  
     print(f"✅ 階段2完成: {stage2_time:.2f}秒")
@@ -886,9 +1196,9 @@ def simplified_gnn_kan_rca(data, inject_time=None, dataset=None, config_type='si
     # 轉換到CPU進行後續處理
     numpy_adj = adj_matrix.cpu().detach().numpy()
     
-    # 快速PageRank（減少迭代次數）
+    # 快速PageRank（使用安全函數）
     try:
-        page_rank_results = page_rank(numpy_adj, node_names)
+        page_rank_results = safe_pagerank(numpy_adj, node_names)
         pagerank_ranks = [result[0] for result in page_rank_results]
         pagerank_scores = {result[0]: result[1] for result in page_rank_results}
     except Exception as pagerank_error:

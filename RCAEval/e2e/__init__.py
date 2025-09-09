@@ -21,7 +21,7 @@ def _lazy_import_gnn_kan():
         # 🔧 從gnn_kan_module導入依賴組件
         from ..gnn_kan_module import (
             SimplifiedGNNKANConfig,
-            HighCapacityGNNKANConfig, 
+            # HighCapacityGNNKANConfig,  # 已移除 
             FastGNNKANConfig,
             MultiModalFeatureExtractor,
             SimplifiedGraphConstructor,
@@ -34,7 +34,6 @@ def _lazy_import_gnn_kan():
             'gnn_kan_rca': gnn_kan_rca,
             'GNNKANEndToEnd': GNNKANEndToEnd,
             'SimplifiedGNNKANConfig': SimplifiedGNNKANConfig,
-            'HighCapacityGNNKANConfig': HighCapacityGNNKANConfig,
             'FastGNNKANConfig': FastGNNKANConfig,
             'MultiModalFeatureExtractor': MultiModalFeatureExtractor,
             'SimplifiedGraphConstructor': SimplifiedGraphConstructor,
@@ -163,7 +162,6 @@ def get_gnn_kan_components():
             'gnn_kan_rca': get_gnn_kan_rca(),
             'GNNKANEndToEnd': None,
             'SimplifiedGNNKANConfig': None,
-            'HighCapacityGNNKANConfig': None,
             'FastGNNKANConfig': None,
             'MultiModalFeatureExtractor': None,
             'SimplifiedGraphConstructor': None,

@@ -15,18 +15,12 @@ from .kan_layers import (
 # 確保向後兼容性
 KANLayer = SimplifiedKANLayer
 
-# 高容量穩定KAN (可選)
-try:
-    from .high_capacity_stable_kan import (
-        HighCapacityGNNKANEncoder,
-        HighCapacityStableKANLayer
-    )
-except ImportError:
-    HighCapacityGNNKANEncoder = None
-    HighCapacityStableKANLayer = None
+# 高容量穩定KAN - 已刪除，簡化版本
+HighCapacityGNNKANEncoder = None
+HighCapacityStableKANLayer = None
 
-# 梯度穩定器
-from .gradient_stabilizer import GradientStabilizer
+# 梯度穩定器 - 已刪除，使用簡化版本
+GradientStabilizer = None
 
 # 確保所有組件都可以被導入
 __all__ = [

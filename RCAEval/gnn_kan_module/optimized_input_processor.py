@@ -7,6 +7,7 @@ GNN+KAN 優化輸入處理器
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn as nn
 from typing import Dict, List, Tuple, Union, Optional, Any
 from dataclasses import dataclass
 import time
@@ -401,39 +402,32 @@ class FastServiceExtractor:
 
 
 class KANFeatureProcessor:
-    """專為KAN優化的特徵處理器"""
+    """專為KAN優化的特徵處理器 - 簡化版本"""
     
-    def __init__(self, method='ica', target_dim=64):
+    def __init__(self, method='enhanced_ica', target_dim=64):
         self.method = method
         self.target_dim = target_dim
         self.service_extractor = FastServiceExtractor()
         
-    def process_features_optimized(self, data: pd.DataFrame, force_expansion=False) -> Tuple[np.ndarray, List[str]]:
-        """優化的特徵處理 + 強制擴展支持"""
-        service_columns = self.service_extractor.extract_services_batch(data.columns.tolist(), force_expansion)
+    def process_features_optimized(self, data: pd.DataFrame, force_expansion=False, inject_time=None) -> Tuple[np.ndarray, List[str]]:
+        """簡化的特徵處理 - 使用增強版 ICA"""
         
-        if not service_columns:
-            return self._global_feature_processing(data)
+        # 🚀 直接使用增強版特徵處理
+        if self.method == 'enhanced_ica':
+            from .feature_processing import enhanced_ica_with_temporal_contrast
+            features, node_names = enhanced_ica_with_temporal_contrast(
+                data, inject_time=inject_time, target_dim=self.target_dim
+            )
+        elif self.method == 'ica':
+            from .feature_processing import ica_metric_processing
+            features, node_names = ica_metric_processing(
+                data, inject_time=inject_time, target_dim=self.target_dim
+            )
+        else:
+            from .feature_processing import simplified_metric_processing
+            features, node_names = simplified_metric_processing(data, target_dim=self.target_dim)
         
-        service_features = []
-        service_names = []
-        
-        for service_name, cols in service_columns.items():
-            service_data = data[cols].fillna(0).replace([np.inf, -np.inf], 0)
-            
-            if service_data.shape[1] == 0:
-                continue
-                
-            if self.method == 'ica' and service_data.shape[1] >= 2:
-                features = self._fast_ica_processing(service_data)
-            else:
-                features = self._fast_statistical_processing(service_data)
-            
-            service_features.append(features)
-            service_names.append(service_name)
-        
-        aligned_features = self._fast_feature_alignment(service_features)
-        return aligned_features, service_names
+        return features, node_names
     
     def _fast_ica_processing(self, service_data: pd.DataFrame) -> np.ndarray:
         """快速ICA處理"""
@@ -507,10 +501,118 @@ class KANFeatureProcessor:
                 print(f"[WARN] 統計處理失敗: {e}，返回零向量")
             return np.zeros(self.target_dim)
     
-    def _global_feature_processing(self, data: pd.DataFrame) -> Tuple[np.ndarray, List[str]]:
-        """全局特徵處理"""
-        features = self._fast_statistical_processing(data)
-        return np.array([features]), ['global_service']
+    def _extract_baro_style_features(self, service_data: pd.DataFrame, inject_time: float) -> np.ndarray:
+        """提取 BARO 風格的異常檢測特徵"""
+        from sklearn.preprocessing import RobustScaler
+        
+        try:
+            # 檢查是否有時間列
+            if 'time' not in service_data.columns:
+                # 如果沒有時間列，使用行索引作為時間代理
+                service_data = service_data.copy()
+                service_data['time'] = range(len(service_data))
+                inject_time = int(inject_time) if inject_time < len(service_data) else len(service_data) // 2
+            
+            # 分離故障前後數據（BARO 核心思想）
+            normal_df = service_data[service_data['time'] < inject_time]
+            anomal_df = service_data[service_data['time'] >= inject_time]
+            
+            # 如果數據量太少，使用簡單分割
+            if len(normal_df) == 0 or len(anomal_df) == 0:
+                mid_point = len(service_data) // 2
+                normal_df = service_data.iloc[:mid_point]
+                anomal_df = service_data.iloc[mid_point:]
+            
+            baro_scores = []
+            
+            # 對每列進行 BARO 風格異常檢測
+            for col in service_data.columns:
+                if col == 'time':
+                    continue
+                
+                try:
+                    # 正常時期數據
+                    normal_values = normal_df[col].dropna().values
+                    # 異常時期數據
+                    anomal_values = anomal_df[col].dropna().values
+                    
+                    if len(normal_values) == 0 or len(anomal_values) == 0:
+                        baro_scores.append(0.0)
+                        continue
+                    
+                    # 使用 RobustScaler（BARO 的核心）
+                    scaler = RobustScaler()
+                    scaler.fit(normal_values.reshape(-1, 1))
+                    
+                    # 計算異常分數
+                    z_scores = scaler.transform(anomal_values.reshape(-1, 1))[:, 0]
+                    max_anomaly_score = np.max(np.abs(z_scores))
+                    
+                    baro_scores.append(max_anomaly_score)
+                    
+                except Exception as e:
+                    baro_scores.append(0.0)
+            
+            # 擴展到目標維度
+            current_len = len(baro_scores)
+            if current_len >= self.target_dim:
+                return np.array(baro_scores[:self.target_dim])
+            else:
+                # 添加統計特徵
+                additional_features = []
+                if current_len > 0:
+                    additional_features.extend([
+                        np.mean(baro_scores),
+                        np.std(baro_scores),
+                        np.max(baro_scores),
+                        np.percentile(baro_scores, 90) if len(baro_scores) > 1 else baro_scores[0]
+                    ])
+                
+                # 填充到目標維度
+                total_features = baro_scores + additional_features
+                if len(total_features) >= self.target_dim:
+                    return np.array(total_features[:self.target_dim])
+                else:
+                    padding = np.zeros(self.target_dim - len(total_features))
+                    return np.concatenate([total_features, padding])
+                    
+        except Exception as e:
+            print(f"⚠️ BARO 特徵提取失敗: {e}，返回零向量")
+            return np.zeros(self.target_dim)
+    
+    def _combine_features(self, baro_features: np.ndarray, original_features: np.ndarray) -> np.ndarray:
+        """融合 BARO 特徵和原始特徵"""
+        try:
+            # 確保兩個特徵向量維度一致
+            if len(baro_features) != len(original_features):
+                min_len = min(len(baro_features), len(original_features))
+                baro_features = baro_features[:min_len]
+                original_features = original_features[:min_len]
+            
+            # 加權融合
+            combined = self.baro_weight * baro_features + (1 - self.baro_weight) * original_features
+            
+            # 確保最終維度正確
+            if len(combined) >= self.target_dim:
+                return combined[:self.target_dim]
+            else:
+                padding = np.zeros(self.target_dim - len(combined))
+                return np.concatenate([combined, padding])
+                
+        except Exception as e:
+            print(f"⚠️ 特徵融合失敗: {e}，使用原始特徵")
+            return original_features
+    
+    def _global_feature_processing(self, data: pd.DataFrame, inject_time=None) -> Tuple[np.ndarray, List[str]]:
+        """全局特徵處理 + BARO 風格增強"""
+        if self.use_baro_features and inject_time is not None:
+            baro_features = self._extract_baro_style_features(data, inject_time)
+            stat_features = self._fast_statistical_processing(data)
+            combined_features = self._combine_features(baro_features, stat_features)
+            return np.array([combined_features]), ['global_service']
+        else:
+            features = self._fast_statistical_processing(data)
+            return np.array([features]), ['global_service']
     
     def _fast_feature_alignment(self, service_features: List[np.ndarray]) -> np.ndarray:
         """快速特徵對齊"""
@@ -529,14 +631,16 @@ class KANFeatureProcessor:
 
 
 class OptimizedGraphBuilder:
-    """優化的圖構建器"""
+    """優化的圖構建器 - 修復空圖問題"""
     
-    def __init__(self, similarity_threshold=0.3, max_edges_per_node=5):
+    def __init__(self, similarity_threshold=0.5, max_edges_per_node=4):  # 提高閾值降低密度 / Increase threshold to reduce density
+        # 🔧 降低相似性閾值，避免空圖
         self.similarity_threshold = similarity_threshold
         self.max_edges_per_node = max_edges_per_node
+        print(f"🔧 圖構建器初始化: 閾值={similarity_threshold}, 最大邊數={max_edges_per_node}")
     
     def build_graph_fast(self, node_features: np.ndarray, node_names: List[str]) -> Tuple[torch.Tensor, torch.Tensor]:
-        """快速圖構建"""
+        """修復版圖構建 - 確保圖連通性 (改進方案3.3.1)"""
         num_nodes = len(node_names)
         
         if num_nodes <= 1:
@@ -544,58 +648,257 @@ class OptimizedGraphBuilder:
             edge_weights = torch.tensor([1.0]) if num_nodes == 1 else torch.empty(0)
             return edge_index, edge_weights
         
-        # 快速相似性計算
+        print(f"🔧 修復版圖構建: {num_nodes} 個節點, 閾值={self.similarity_threshold}")
+        
+        # 🎯 改進1: 增強特徵處理
+        if node_features.shape[1] < 3:
+            # 特徵維度太低，添加統計特徵
+            mean_feat = np.mean(node_features, axis=1, keepdims=True)
+            std_feat = np.std(node_features, axis=1, keepdims=True) + 1e-8
+            node_features = np.hstack([node_features, mean_feat, std_feat])
+        
+        # 標準化特徵
         node_features_norm = node_features / (np.linalg.norm(node_features, axis=1, keepdims=True) + 1e-8)
         similarity_matrix = np.dot(node_features_norm, node_features_norm.T)
+        
+        # 🎯 改進方案3.3.1: 自適應閾值計算
+        threshold = self._adaptive_threshold_calculation(similarity_matrix)
         
         edges = []
         weights = []
         
+        # 🎯 改進3: 嚴格閾值執行與小圖規則
+        # 更嚴格的度數限制：大幅減少最大連接數
+        max_edges_per_node = 1 if num_nodes <= 4 else min(2, num_nodes // 3)
+        
         for i in range(num_nodes):
-            similarities = similarity_matrix[i]
+            similarities = similarity_matrix[i].copy()
             similarities[i] = -1  # 排除自環
             
-            if np.max(similarities) > self.similarity_threshold:
-                top_indices = np.argsort(similarities)[-self.max_edges_per_node:]
-                for j in top_indices:
-                    if similarities[j] > self.similarity_threshold:
-                        edges.append([i, j])
-                        weights.append(similarities[j])
+            # 獲取最相似的節點
+            top_indices = np.argsort(similarities)[-max_edges_per_node:]
+            connected = False
             
-            # 添加自環
-            edges.append([i, i])
-            weights.append(1.0)
+            for j in top_indices:
+                if similarities[j] > threshold:  # 🎯 嚴格: 移除 or not connected 繞過
+                    # Sigmoid 平滑權重，避免硬閾值造成的突變
+                    sim_val = float(similarities[j])
+                    smooth_weight = 1.0 / (1.0 + np.exp(-(sim_val - threshold) * 10.0))
+                    weight = max(smooth_weight, 0.2)
+                    # 添加雙向邊
+                    edges.extend([[i, j], [j, i]])
+                    weights.extend([weight, weight])
+                    connected = True
+            
+            # 僅在完全孤立時才強制連接最相似的節點
+            if not connected:
+                j = int(np.argmax(similarities))
+                edges.extend([[i, j], [j, i]])
+                weights.extend([0.2, 0.2])  # 使用最小權重
         
-        if not edges:
-            edges = [[i, (i + 1) % num_nodes] for i in range(num_nodes)]
-            weights = [0.5] * num_nodes
+        # 🎯 改進方案3.3.2: 結構驗證與調整
+        adj_matrix = np.zeros((num_nodes, num_nodes))
+        for edge, weight in zip(edges, weights):
+            adj_matrix[edge[0], edge[1]] = weight
         
-        edge_index = torch.tensor(edges, dtype=torch.long).T
-        edge_weights = torch.tensor(weights, dtype=torch.float)
+        # 檢查圖密度 - 目標密度範圍 [0.25, 0.5]，迭代調整
+        def compute_density(e):
+            # 🎯 修正: 對於無向圖，最大邊數應該是 n*(n-1)/2
+            max_possible = num_nodes * (num_nodes - 1) / 2 if num_nodes > 1 else 0
+            return len(e) / 2 / max_possible if max_possible > 0 else 0  # 除以2因為雙向邊
+
+        density = compute_density(edges)
+        target_min, target_max = 0.25, 0.5
+        iter_limit = 4
+        it = 0
+        while (density < target_min or density > target_max) and it < iter_limit:
+            if density < target_min:
+                print("⚠️ 圖密度過低，降低閾值並重建")
+                threshold *= 0.8
+            else:
+                print("⚠️ 圖密度過高，提升閾值並重建")
+                threshold *= 1.25
+            edges, weights = self._rebuild_edges(similarity_matrix, threshold, num_nodes)
+            density = compute_density(edges)
+            it += 1
+        
+        # 檢查連通性
+        if not self._is_connected(edges, num_nodes):
+            print("⚠️ 圖不連通，添加最小連接")
+            edges, weights = self._add_minimal_connections(edges, weights, num_nodes)
+        
+        # 去重
+        edge_set = set()
+        final_edges = []
+        final_weights = []
+        
+        for edge, weight in zip(edges, weights):
+            edge_tuple = tuple(edge)
+            if edge_tuple not in edge_set:
+                edge_set.add(edge_tuple)
+                final_edges.append(edge)
+                final_weights.append(weight)
+        
+        # 最終檢查
+        if not final_edges:
+            print("❌ 圖構建失敗，創建星形圖")
+            for i in range(1, num_nodes):
+                final_edges.extend([[0, i], [i, 0]])
+                final_weights.extend([0.8, 0.8])
+        
+        edge_index = torch.tensor(final_edges, dtype=torch.long).T
+        edge_weights = torch.tensor(final_weights, dtype=torch.float)
+        
+        final_density = len(final_edges) / (num_nodes * (num_nodes - 1)) if num_nodes > 1 else 0
+        print(f"✅ 圖構建完成: {len(final_edges)} 條邊, 密度={final_density:.3f}")
         
         return edge_index, edge_weights
+    
+    def _adaptive_threshold_calculation(self, similarity_matrix):
+        """自適應閾值計算（更激進的分位數 + 方差調整）"""
+        upper_tri = similarity_matrix[np.triu_indices_from(similarity_matrix, k=1)]
+        if len(upper_tri) == 0:
+            return 0.3
+        # 更激進的分位數：大幅提高閾值降低密度
+        num_nodes = similarity_matrix.shape[0]
+        if num_nodes <= 4:
+            percentile = 95  # 從90提升到95
+        elif num_nodes <= 8:
+            percentile = 92  # 從85提升到92
+        else:
+            percentile = 88  # 從80提升到88
+        threshold = np.percentile(upper_tri, percentile)
+        # 依據分佈方差微調
+        std = np.std(upper_tri)
+        if std < 0.1:
+            threshold *= 0.8
+        elif std > 0.3:
+            threshold *= 1.2
+        # 邊界保護
+        return max(0.1, min(0.9, threshold))
+    
+    def _rebuild_edges(self, similarity_matrix, threshold, num_nodes):
+        """重新構建邊 - 嚴格閾值執行 + 度數限制"""
+        edges = []
+        weights = []
+        # 更嚴格的度數限制：大幅減少最大連接數
+        max_edges_per_node = 1 if num_nodes <= 4 else min(2, num_nodes // 3)
+        
+        for i in range(num_nodes):
+            similarities = similarity_matrix[i].copy()
+            similarities[i] = -1
+            # 獲取候選節點（過採樣後修剪）
+            candidate_indices = np.argsort(similarities)[-max_edges_per_node * 2:]
+            connected = False
+            selected = []
+            
+            for j in candidate_indices:
+                if similarities[j] > threshold and len(selected) < max_edges_per_node:
+                    # 修剪過於相似的節點（避免平行邊）
+                    if all(np.abs(similarities[j] - similarities[k]) > 0.02 for k in selected):
+                        # Sigmoid 平滑權重，避免硬閾值造成的突變
+                        sim_val = float(similarities[j])
+                        smooth_weight = 1.0 / (1.0 + np.exp(-(sim_val - threshold) * 10.0))
+                        weight = max(smooth_weight, 0.2)
+                        # 添加雙向邊
+                        edges.extend([[i, j], [j, i]])
+                        weights.extend([weight, weight])
+                        selected.append(j)
+                        connected = True
+            
+            # 僅在完全孤立時才強制連接最相似的節點
+            if not connected:
+                j = int(np.argmax(similarities))
+                edges.extend([[i, j], [j, i]])
+                weights.extend([0.2, 0.2])  # 使用最小權重
+        return edges, weights
+    
+    def _is_connected(self, edges, num_nodes):
+        """檢查圖是否連通"""
+        if not edges:
+            return num_nodes <= 1
+        
+        # 使用並查集檢查連通性
+        parent = list(range(num_nodes))
+        
+        def find(x):
+            if parent[x] != x:
+                parent[x] = find(parent[x])
+            return parent[x]
+        
+        def union(x, y):
+            px, py = find(x), find(y)
+            if px != py:
+                parent[px] = py
+        
+        for edge in edges:
+            union(edge[0], edge[1])
+        
+        return len(set(find(i) for i in range(num_nodes))) == 1
+    
+    def _add_minimal_connections(self, edges, weights, num_nodes):
+        """添加最小連接確保連通性"""
+        if num_nodes <= 1:
+            return edges, weights
+        
+        # 添加環形連接
+        for i in range(num_nodes):
+            j = (i + 1) % num_nodes
+            edges.extend([[i, j], [j, i]])
+            weights.extend([0.5, 0.5])
+        
+        return edges, weights
+
+
+class EnhancedFusion(nn.Module):
+    """增強融合模組 - 改進方案3.2.3"""
+    
+    def __init__(self, input_dim, num_heads=4):
+        super(EnhancedFusion, self).__init__()
+        self.attention = nn.MultiheadAttention(input_dim, num_heads=num_heads, batch_first=True)
+        self.norm = nn.LayerNorm(input_dim)
+        
+    def forward(self, features_list):
+        """融合多個特徵列表"""
+        if len(features_list) == 1:
+            return features_list[0]
+        
+        # 拼接特徵
+        fused = torch.cat(features_list, dim=1)
+        
+        # 注意力融合
+        attn_output, _ = self.attention(fused, fused, fused)
+        
+        # 殘差連接和歸一化
+        output = self.norm(attn_output + fused)
+        
+        return output
 
 
 class GNNKANInputOptimizer:
-    """GNN+KAN 輸入優化器"""
+    """GNN+KAN 輸入優化器 - 支援 BARO 風格特徵"""
     
     def __init__(self, 
-                 feature_method='ica',
+                 feature_method='enhanced_ica',
                  target_dim=64,
-                 similarity_threshold=0.3,
-                 max_edges_per_node=5,
+                 similarity_threshold=0.5,  # 提高相似性閾值以降低圖密度 / Increase similarity threshold to reduce graph density
+                 max_edges_per_node=4,      # 減少每節點最大邊數 / Reduce max edges per node
                  force_node_expansion=False):
         
-        self.feature_processor = KANFeatureProcessor(feature_method, target_dim)
+        self.feature_processor = KANFeatureProcessor(
+            feature_method, target_dim
+        )
         self.graph_builder = OptimizedGraphBuilder(similarity_threshold, max_edges_per_node)
         self.force_node_expansion = force_node_expansion
     
     def optimize_input(self, data: Any, inject_time: Optional[float] = None) -> KANOptimizedData:
-        """優化輸入處理 + 強制節點擴展支持"""
+        """優化輸入處理 + 強制節點擴展支持 + BARO 風格特徵"""
         start_time = time.time()
         
         df = self._fast_data_standardization(data)
-        node_features, node_names = self.feature_processor.process_features_optimized(df, self.force_node_expansion)
+        node_features, node_names = self.feature_processor.process_features_optimized(
+            df, self.force_node_expansion, inject_time
+        )
         edge_index, edge_weights = self.graph_builder.build_graph_fast(node_features, node_names)
         
         node_features_tensor = torch.tensor(node_features, dtype=torch.float32)
@@ -727,6 +1030,259 @@ class GNNKANInputOptimizer:
                 print(f"[DEBUG] 最終列名: {df.columns.tolist()}")
 
         return df
+    
+    def compute_multi_modal_similarity(self, fused_embeds: torch.Tensor) -> torch.Tensor:
+        """
+        跨模態相似度計算
+        基於融合特徵計算節點間相似度，避免單一模態偏誤
+        
+        Args:
+            fused_embeds: 融合後的特徵嵌入 [nodes, embed_dim]
+            
+        Returns:
+            similarity_matrix: 相似度矩陣 [nodes, nodes]
+        """
+        # 餘弦相似度計算
+        norm_emb = fused_embeds / (fused_embeds.norm(dim=1, keepdim=True) + 1e-8)
+        S = norm_emb @ norm_emb.T  # [nodes, nodes]
+        
+        # 正則化：懲罰過高相似度（避免密集聚類）
+        S = torch.clamp(S, max=0.9)  # 避免 >0.9 以防止密集聚類
+        S.fill_diagonal_(0)  # 無自環
+        
+        # 可選：模態特定增強（基於數據方差推斷）
+        if torch.std(S) < 0.1:  # 低方差 → 增強對比度
+            S = (S - S.mean()) / (S.std() + 1e-8) * 1.5
+            S = torch.clamp(S, min=-1.0, max=1.0)
+            
+        return S
+    
+    def build_balanced_graph(self, fused_embeds: torch.Tensor, 
+                           target_density: float = 0.35, 
+                           k_out: int = 3) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        建構平衡圖結構 - 修復過度凝合問題 
+        Build Balanced Graph Structure - Fix Over-Dense Graph Issue
+        使用增強特徵區分性 + 嚴格閾值控制 + 結構化稀疏性
+        Using Enhanced Feature Discrimination + Strict Threshold Control + Structural Sparsity
+        
+        Args:
+            fused_embeds: 融合後的特徵嵌入 [nodes, embed_dim] / Fused feature embeddings
+            target_density: 目標圖密度 (降低到0.35) / Target graph density (reduced to 0.35)
+            k_out: 每個節點的最大出度 (增加到3) / Max out-degree per node (increased to 3)
+            
+        Returns:
+            edge_index: 邊索引 [2, num_edges] / Edge indices
+            edge_weights: 邊權重 [num_edges] / Edge weights
+        """
+        S = self.compute_enhanced_similarity(fused_embeds)
+        n = S.shape[0]
+        
+        print(f"🔧 圖構建開始 / Graph Construction Start: {n}個節點 / nodes，目標密度 / target density={target_density:.2f}")
+        
+        # 🔧 步驟2: 動態k值和嚴格互惠過濾 / Step 2: Dynamic k-value and Strict Reciprocal Filtering
+        adaptive_k = max(1, min(k_out, n // 4))  # 動態調整k值 / Dynamically adjust k-value
+        topk_values, topk_indices = torch.topk(S, adaptive_k + 1, dim=1)  # 獲取top-k和分數 / Get top-k and scores
+        topk_indices = topk_indices[:, 1:]  # 排除自身 / Exclude self
+        topk_values = topk_values[:, 1:]   # 排除自身分數 / Exclude self scores
+        
+        # 🔧 步驟3: 強化互惠過濾 + 分數門檻 / Step 3: Enhanced Reciprocal Filtering + Score Threshold
+        adj = torch.zeros_like(S)
+        connection_count = 0
+        
+        for i in range(n):
+            for idx, j in enumerate(topk_indices[i]):
+                j = j.item()
+                # 嚴格互惠檢查 + 分數門檻 / Strict reciprocal check + score threshold
+                if (i in topk_indices[j] and 
+                    topk_values[i, idx] > 0.7 and  # 提高分數門檻 / Raise score threshold
+                    S[i, j] > 0.6):  # 額外相似性檢查 / Additional similarity check
+                    weight = float(S[i, j])
+                    adj[i, j] = weight
+                    adj[j, i] = weight  # 確保對稱性 / Ensure symmetry
+                    connection_count += 1
+        
+        print(f"   互惠過濾後 / After Reciprocal Filtering: {connection_count}個連接 / connections")
+        
+        # 🔧 步驟4: 自適應閾值和結構化剪枝 / Step 4: Adaptive Threshold and Structural Pruning
+        current_density = (adj > 0).float().mean().item()
+        print(f"   當前密度 / Current Density: {current_density:.3f}")
+        
+        # 如果密度仍然過高，進行結構化剪枝 / If density is still too high, perform structural pruning
+        if current_density > target_density:
+            # 基於邊權重進行全局Top-k選擇 / Global Top-k selection based on edge weights
+            edge_weights_flat = adj[adj > 0]
+            if len(edge_weights_flat) > 0:
+                num_target_edges = int(target_density * n * (n-1))
+                threshold_idx = max(0, len(edge_weights_flat) - num_target_edges)
+                weight_threshold = torch.sort(edge_weights_flat, descending=True)[0][threshold_idx]
+                adj[adj < weight_threshold] = 0
+                print(f"   權重剪枝閾值 / Weight Pruning Threshold: {weight_threshold:.3f}")
+        
+        # 🔧 步驟5: 連通性保證（最小生成樹）/ Step 5: Connectivity Guarantee (MST)
+        final_density = (adj > 0).float().mean().item()
+        if final_density < 0.1:  # 如果過於稀疏，確保連通性 / If too sparse, ensure connectivity
+            print("   密度過低，添加最小連通結構 / Density too low, adding minimal connectivity structure")
+            # 添加環形連接確保連通性 / Add ring connections to ensure connectivity
+            for i in range(n):
+                j = (i + 1) % n
+                if adj[i, j] == 0:
+                    adj[i, j] = 0.3
+                    adj[j, i] = 0.3
+        
+        final_density = (adj > 0).float().mean().item()
+        print(f"✅ 圖構建完成 / Graph Construction Complete: 最終密度 / final density={final_density:.3f}")
+        
+        # 轉換為稀疏格式 / Convert to sparse format
+        edge_index, edge_weights = self._dense_to_sparse(adj)
+        
+        return edge_index, edge_weights
+    
+    def compute_enhanced_similarity(self, embeddings: torch.Tensor) -> torch.Tensor:
+        """
+        计算增强的相似性矩阵，提高特征区分度
+        """
+        # 标准化嵌入
+        embeddings_norm = F.normalize(embeddings, p=2, dim=1)
+        
+        # 余弦相似性
+        cos_sim = torch.mm(embeddings_norm, embeddings_norm.t())
+        
+        # 欧几里得距离相似性
+        dist_matrix = torch.cdist(embeddings, embeddings, p=2)
+        max_dist = dist_matrix.max()
+        euclidean_sim = 1.0 - (dist_matrix / (max_dist + 1e-8))
+        
+        # 皮尔逊相关系数相似性
+        embeddings_centered = embeddings - embeddings.mean(dim=1, keepdim=True)
+        std = embeddings_centered.std(dim=1, keepdim=True)
+        embeddings_standardized = embeddings_centered / (std + 1e-8)
+        pearson_sim = torch.mm(embeddings_standardized, embeddings_standardized.t()) / embeddings.shape[1]
+        
+        # 加权组合多种相似性度量
+        combined_sim = (0.5 * cos_sim + 0.3 * euclidean_sim + 0.2 * pearson_sim)
+        
+        # 应用非线性变换增强区分度
+        combined_sim = torch.sigmoid(5 * (combined_sim - 0.5))  # 增强对比度
+        
+        return combined_sim
+    
+    def _dense_to_sparse(self, adj_matrix: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        将稠密邻接矩阵转换为稀疏格式
+        """
+        nonzero_indices = torch.nonzero(adj_matrix, as_tuple=False)
+        if len(nonzero_indices) == 0:
+            # 空图，返回自环
+            n = adj_matrix.shape[0]
+            edge_index = torch.stack([torch.arange(n), torch.arange(n)])
+            edge_weights = torch.ones(n) * 0.1
+            return edge_index, edge_weights
+        
+        edge_index = nonzero_indices.t()
+        edge_weights = adj_matrix[nonzero_indices[:, 0], nonzero_indices[:, 1]]
+        
+        return edge_index, edge_weights
+
+
+class MultiModalGraphBuilder:
+    """
+    多模态图构建器 / Multi-modal Graph Builder
+    专门处理metrics + logs + traces的融合图构建
+    """
+    
+    def __init__(self, target_density=0.35):
+        self.target_density = target_density
+    
+    def build_multimodal_graph(self, data_dict, inject_time=None):
+        """
+        构建多模态融合图 / Build multi-modal fusion graph
+        """
+        # 这里可以添加多模态图构建逻辑
+        pass
+
+
+# 修复后的剩余代码应该从这里开始:
+def _check_function_placeholder():
+    pass  # 占位符函数，清理错误代码
+    
+    def _adaptive_threshold_calculation(self, similarity_matrix: torch.Tensor) -> float:
+        """
+        自適應閾值計算（更激進的分位數 + 方差調整）
+        """
+        upper_tri = similarity_matrix[torch.triu_indices(similarity_matrix.shape[0], similarity_matrix.shape[1], offset=1)]
+        if len(upper_tri) == 0:
+            return 0.3
+            
+        num_nodes = similarity_matrix.shape[0]
+        
+        # 更激進的分位數：大幅提高閾值降低密度
+        if num_nodes <= 4:
+            percentile = 98  # 從95提升到98
+        elif num_nodes <= 8:
+            percentile = 96  # 從92提升到96
+        else:
+            percentile = 94  # 從88提升到94
+            
+        threshold = np.percentile(upper_tri.detach().cpu().numpy(), percentile)
+        
+        # 依據分佈方差微調
+        std = torch.std(upper_tri).item()
+        if std < 0.1:
+            threshold *= 0.8
+        elif std > 0.3:
+            threshold *= 1.2
+            
+        return max(0.2, min(0.8, threshold))
+    
+    def optimize_input_multimodal(self, data_dict: Dict[str, Any], 
+                                inject_time: Optional[float] = None) -> KANOptimizedData:
+        """
+        多模態輸入優化處理
+        
+        Args:
+            data_dict: 包含 'metrics', 'logs', 'traces' 的字典
+            inject_time: 故障注入時間
+            
+        Returns:
+            KANOptimizedData: 優化後的數據
+        """
+        from .feature_processing import MultiModalFeatureExtractor
+        
+        start_time = time.time()
+        
+        # 初始化多模態特徵提取器
+        multimodal_extractor = MultiModalFeatureExtractor(embed_dim=64, num_heads=4)
+        
+        # 提取融合特徵 - 確保在推理模式下
+        multimodal_extractor.eval()
+        with torch.no_grad():
+            fused_embeds, attention_weights = multimodal_extractor(data_dict)
+        
+        # 建構平衡圖
+        edge_index, edge_weights = self.build_balanced_graph(fused_embeds, target_density=0.4)
+        
+        # 生成節點名稱
+        num_nodes = fused_embeds.shape[0]
+        node_names = [f'node_{i}' for i in range(num_nodes)]
+        
+        processing_time = time.time() - start_time
+        
+        return KANOptimizedData(
+            node_features=fused_embeds,
+            edge_index=edge_index,
+            edge_weights=edge_weights,
+            node_names=node_names,
+            feature_names=[f'feature_{i}' for i in range(fused_embeds.shape[1])],
+            metadata={
+                'processing_time': processing_time,
+                'num_nodes': num_nodes,
+                'num_edges': edge_index.size(1),
+                'feature_method': 'multimodal_fusion',
+                'inject_time': inject_time,
+                'attention_weights': attention_weights.detach().cpu().numpy() if attention_weights is not None else None
+            }
+        )
 
 
 def optimize_gnn_kan_input(data: Any, 
