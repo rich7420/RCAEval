@@ -97,38 +97,79 @@ except ImportError as e:
         def __hash__(self):
             return hash(self.name)
 
+# 延遲導入 GNN-KAN，只在需要時載入
+def _lazy_import_gnn_kan():
+    """延遲導入 GNN-KAN 方法，只在需要時載入"""
+    try:
+        from RCAEval.e2e.gnnkan import gnn_kan_rca
+        return gnn_kan_rca
+    except ImportError as e:
+        print(f"❌ GNN-KAN 載入失敗: {e}")
+        return None
+
+# 重寫 AVAILABLE_METHODS 的 getitem 方法來實現延遲載入
+class LazyMethodDict(dict):
+    def __getitem__(self, key):
+        if key == 'gnn_kan':
+            if 'gnn_kan' not in super().__iter__():
+                gnn_kan_func = _lazy_import_gnn_kan()
+                if gnn_kan_func is not None:
+                    self['gnn_kan'] = gnn_kan_func
+                    return gnn_kan_func
+                else:
+                    raise KeyError(f"Method {key} not available")
+            else:
+                return super().__getitem__(key)
+        return super().__getitem__(key)
+    
+    def __contains__(self, key):
+        if key == 'gnn_kan':
+            return True  # 總是返回 True，讓延遲載入處理
+        return super().__contains__(key)
+    
+    def __iter__(self):
+        # 確保 gnn_kan 在迭代中出現
+        for key in super().__iter__():
+            yield key
+        if 'gnn_kan' not in self:
+            yield 'gnn_kan'
+    
+    def keys(self):
+        # 包含 gnn_kan 在可用方法列表中
+        base_keys = list(super().keys())
+        if 'gnn_kan' not in base_keys:
+            base_keys.append('gnn_kan')
+        return base_keys
+
 # Import available RCA methods based on Python version
 AVAILABLE_METHODS = {}
 
 if is_py310() if 'is_py310' in globals() else False:
     try:
-        from RCAEval.e2e import (
-            baro, circa, cloudranger, dummy, e_diagnosis, easyrca,
-            granger_pagerank, lingam_pagerank, micro_diag, microcause,
-            microrank, mscred, nsigma, pc_pagerank, tracerca
-        )
-        # Import GNN-KAN separately to avoid bias
-        try:
-            from RCAEval.e2e.gnnkan import gnn_kan_rca
-            AVAILABLE_METHODS['gnn_kan'] = gnn_kan_rca
-        except ImportError:
-            pass
+        # Import methods individually to avoid triggering GNN-KAN imports
+        from RCAEval.e2e.baro import baro
+        from RCAEval.e2e.circa import circa
+        from RCAEval.e2e.cloudranger import cloudranger
+        from RCAEval.e2e.easyrca import easyrca
+        from RCAEval.e2e.granger_pagerank import granger_pagerank
+        from RCAEval.e2e.lingam_pagerank import lingam_pagerank
+        from RCAEval.e2e.microcause import microcause
+        from RCAEval.e2e.microrank import microrank
+        from RCAEval.e2e.mscred import mscred
+        from RCAEval.e2e.pc_pagerank import pc_pagerank
+        from RCAEval.e2e.tracerca import tracerca
         
         # Add other methods
         method_mapping = {
             'baro': baro,
             'circa': circa,
             'cloudranger': cloudranger,
-            'dummy': dummy,
-            'e_diagnosis': e_diagnosis,
             'easyrca': easyrca,
             'granger_pagerank': granger_pagerank,
             'lingam_pagerank': lingam_pagerank,
-            'micro_diag': micro_diag,
             'microcause': microcause,
             'microrank': microrank,
             'mscred': mscred,
-            'nsigma': nsigma,
             'pc_pagerank': pc_pagerank,
             'tracerca': tracerca
         }
@@ -139,16 +180,18 @@ if is_py310() if 'is_py310' in globals() else False:
 
 elif is_py38() if 'is_py38' in globals() else False:
     try:
-        from RCAEval.e2e import dummy, e_diagnosis, ht, rcd, mmrcd
+        # Import methods individually to avoid triggering GNN-KAN imports
+        from RCAEval.e2e.rcd import rcd
+        from RCAEval.e2e.mmrcd import mmrcd
         AVAILABLE_METHODS.update({
-            'dummy': dummy,
-            'e_diagnosis': e_diagnosis,
-            'ht': ht,
             'rcd': rcd,
             'mmrcd': mmrcd
         })
     except ImportError as e:
         print(f"⚠️ Python 3.8 methods not available: {e}")
+
+# 使用延遲載入字典
+AVAILABLE_METHODS = LazyMethodDict(AVAILABLE_METHODS)
 
 # Dataset configuration
 DATASET_CONFIG = {

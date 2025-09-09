@@ -821,51 +821,93 @@ class MultiModalFeatureExtractor(nn.Module):
     
     def forward(self, data_dict):
         """
-        多模態特徵融合前向傳播
+        多模態特徵融合前向傳播 - 動態權重調整版本
         
         Args:
             data_dict: 包含 'metrics', 'logs', 'traces' 的字典
             
         Returns:
             fused_embeddings: 融合後的特徵嵌入 [nodes, embed_dim]
+            attention_weights: 注意力權重 [nodes, num_modals, num_modals]
         """
-        # 提取各模態特徵
-        metrics_emb = self.extract_metrics(data_dict.get('metrics', None))
-        logs_emb = self.extract_logs(data_dict.get('logs', []))
-        traces_emb = self.extract_traces(data_dict.get('traces', None))
+        # 1. 檢查可用模態
+        has_metrics = data_dict.get('metrics') is not None
+        has_logs = data_dict.get('logs') is not None and len(data_dict.get('logs', [])) > 0
+        has_traces = data_dict.get('traces') is not None
         
-        # 轉換為 tensor
-        metrics_tensor = torch.tensor(metrics_emb, dtype=torch.float32)
-        logs_tensor = torch.tensor(logs_emb, dtype=torch.float32)
-        traces_tensor = torch.tensor(traces_emb, dtype=torch.float32)
-        
-        # 確保所有模態的節點數一致（取最大值）
-        max_nodes = max(metrics_tensor.shape[0], logs_tensor.shape[0], traces_tensor.shape[0])
-        
-        # 填充到相同節點數
-        if metrics_tensor.shape[0] < max_nodes:
-            padding = torch.zeros(max_nodes - metrics_tensor.shape[0], 32)
-            metrics_tensor = torch.cat([metrics_tensor, padding], dim=0)
-        if logs_tensor.shape[0] < max_nodes:
-            padding = torch.zeros(max_nodes - logs_tensor.shape[0], 32)
-            logs_tensor = torch.cat([logs_tensor, padding], dim=0)
-        if traces_tensor.shape[0] < max_nodes:
-            padding = torch.zeros(max_nodes - traces_tensor.shape[0], 32)
-            traces_tensor = torch.cat([traces_tensor, padding], dim=0)
-        
-        # 投影到統一維度
-        metrics_proj = self.metrics_proj(metrics_tensor)  # [nodes, embed_dim]
-        logs_proj = self.logs_proj(logs_tensor)
-        traces_proj = self.traces_proj(traces_tensor)
-        
-        # 堆疊模態特徵
-        modals = torch.stack([metrics_proj, logs_proj, traces_proj], dim=1)  # [nodes, 3, embed_dim]
-        
-        # 跨模態注意力融合
-        fused, attention_weights = self.attention(modals, modals, modals)  # [nodes, 3, embed_dim]
-        
-        # 平均池化 + 層歸一化
-        fused = self.norm(fused.mean(dim=1))  # [nodes, embed_dim]
+        # 2. 動態權重調整
+        if has_metrics and not has_logs and not has_traces:
+            # 只有metrics：權重 = 1
+            metrics_emb = self.extract_metrics(data_dict.get('metrics'))
+            metrics_tensor = torch.tensor(metrics_emb, dtype=torch.float32)
+            fused = self.metrics_proj(metrics_tensor)
+            attention_weights = torch.ones(1, 1, 1)  # 單一模態
+            print("✓ 使用單一模態: metrics (權重=1.0)")
+            
+        elif has_logs and not has_metrics and not has_traces:
+            # 只有logs：權重 = 1
+            logs_emb = self.extract_logs(data_dict.get('logs', []))
+            logs_tensor = torch.tensor(logs_emb, dtype=torch.float32)
+            fused = self.logs_proj(logs_tensor)
+            attention_weights = torch.ones(1, 1, 1)
+            print("✓ 使用單一模態: logs (權重=1.0)")
+            
+        elif has_traces and not has_metrics and not has_logs:
+            # 只有traces：權重 = 1
+            traces_emb = self.extract_traces(data_dict.get('traces'))
+            traces_tensor = torch.tensor(traces_emb, dtype=torch.float32)
+            fused = self.traces_proj(traces_tensor)
+            attention_weights = torch.ones(1, 1, 1)
+            print("✓ 使用單一模態: traces (權重=1.0)")
+            
+        else:
+            # 多模態：動態權重分配
+            available_modals = []
+            modal_names = []
+            
+            if has_metrics:
+                metrics_emb = self.extract_metrics(data_dict.get('metrics'))
+                metrics_tensor = torch.tensor(metrics_emb, dtype=torch.float32)
+                available_modals.append(self.metrics_proj(metrics_tensor))
+                modal_names.append('metrics')
+                
+            if has_logs:
+                logs_emb = self.extract_logs(data_dict.get('logs', []))
+                logs_tensor = torch.tensor(logs_emb, dtype=torch.float32)
+                available_modals.append(self.logs_proj(logs_tensor))
+                modal_names.append('logs')
+                
+            if has_traces:
+                traces_emb = self.extract_traces(data_dict.get('traces'))
+                traces_tensor = torch.tensor(traces_emb, dtype=torch.float32)
+                available_modals.append(self.traces_proj(traces_tensor))
+                modal_names.append('traces')
+            
+            # 檢查是否有可用模態
+            if len(available_modals) == 0:
+                # 沒有可用模態，返回零特徵
+                print("⚠️ 沒有可用模態，返回零特徵")
+                fused = torch.zeros(1, self.embed_dim)
+                attention_weights = torch.ones(1, 1, 1)
+            else:
+                # 確保所有模態的節點數一致（取最大值）
+                max_nodes = max(modal.shape[0] for modal in available_modals)
+                
+                # 填充到相同節點數
+                padded_modals = []
+                for modal in available_modals:
+                    if modal.shape[0] < max_nodes:
+                        padding = torch.zeros(max_nodes - modal.shape[0], self.embed_dim)
+                        padded_modal = torch.cat([modal, padding], dim=0)
+                    else:
+                        padded_modal = modal
+                    padded_modals.append(padded_modal)
+                
+                # 注意力融合，權重自動分配
+                modals = torch.stack(padded_modals, dim=1)  # [nodes, num_modals, embed_dim]
+                fused, attention_weights = self.attention(modals, modals, modals)
+                fused = self.norm(fused.mean(dim=1))  # 根據實際模態數量平均
+                print(f"✓ 使用 {len(available_modals)} 個模態: {modal_names} (權重=1/{len(available_modals)})")
         
         # 額外的融合層
         fused = self.fusion_layer(fused)  # [nodes, embed_dim]
