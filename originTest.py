@@ -517,7 +517,7 @@ print()
 
 print(f"📊 Overall Performance Metrics:")
 for metric, value in overall_metrics.items():
-    print(f"  {metric}: {value:.3f}")
+    print(f"  {metric}: {value:.4f}")
 print()
 
 # Performance metrics by fault type
@@ -559,7 +559,7 @@ for name, s_evaluator, f_evaluator in fault_evaluators:
     for metric in key_metrics:
         if metric in fault_metrics:
             value = fault_metrics[metric]
-            print(f"    {metric}: {value:.3f}")
+            print(f"    {metric}: {value:.4f}")
     
     print()
 
