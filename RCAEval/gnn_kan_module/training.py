@@ -408,12 +408,12 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
             bottom_k_vals = torch.topk(flat_adj, bottom_k, largest=False)[0]
             
             # 適度強化判別力：top-K接近1，bottom-K接近0
-            top_contrast_loss = -torch.mean((1 - top_k_vals) ** 2) * 8  # 從5提升到8
-            bottom_contrast_loss = -torch.mean(bottom_k_vals ** 2) * 8  # 從5提升到8
+            top_contrast_loss = torch.mean((1 - top_k_vals) ** 2) * 8  # 從5提升到8
+            bottom_contrast_loss = torch.mean(bottom_k_vals ** 2) * 8  # 從5提升到8
             
             # 新增：適度分數差異損失
             if len(top_k_vals) > 0 and len(bottom_k_vals) > 0:
-                score_diff_loss = -torch.mean((top_k_vals[0] - bottom_k_vals[0]) ** 2) * 10
+                score_diff_loss = torch.mean((top_k_vals[0] - bottom_k_vals[0]) ** 2) * 10
                 polarization_loss += score_diff_loss
             
             # 添加到極化損失中
@@ -478,15 +478,31 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
             density_penalty = torch.abs(torch.tensor(graph_density - target_density)) * 2.0
             graph_sparsity_loss = density_penalty
         
-        # 🎯 改進4: 調整損失權重確保有效學習 - 根據GraphDecoder_improve.md調整權重
-        # 加強contrastive loss，減少polarization，平衡reconstruction
-        total_loss = 0.5 * recon_loss + 1.5 * contrast_loss + 0.8 * polarization_loss + margin_loss + kan_reg_loss + (sparsity_lambda * sparsity_loss) + decor_loss + graph_sparsity_loss
+        # 🎯 改進4: 調整損失權重確保有效學習（以重建為主，對比/極化為輔），並支持配置覆寫
+        w_recon = getattr(config, 'w_recon', 1.2)
+        w_contrast = getattr(config, 'w_contrast', 0.3)
+        w_polar = getattr(config, 'w_polar', 0.2)
+        w_margin = getattr(config, 'w_margin', 0.1)
+        w_kan_reg = getattr(config, 'w_kan_reg', 0.005)
+        w_decor = getattr(config, 'w_decor', 0.1)
+        w_graph = getattr(config, 'w_graph', 0.2)
+
+        total_loss = (
+            w_recon * recon_loss
+            + w_contrast * contrast_loss
+            + w_polar * polarization_loss
+            + w_margin * margin_loss
+            + w_kan_reg * kan_reg_loss
+            + (sparsity_lambda * sparsity_loss)
+            + w_decor * decor_loss
+            + w_graph * graph_sparsity_loss
+        )
         
         # 🎯 改進5: 確保損失在合理範圍內（僅在非有限或明顯退化時調整）
         if not torch.isfinite(total_loss):
             print(f"⚠️ 損失非有限 ({total_loss.item() if total_loss.numel()==1 else 'tensor'})，重設為重建導向")
             total_loss = recon_loss + kan_reg_loss
-        elif total_loss.item() < 0 and recon_loss.item() < 0.05:
+        elif total_loss.item() < 0 and recon_loss.item() < 0.01:
             # 僅在總損失為負且重建項極小時視為退化，避免噪音式警告
             print(f"⚠️ 損失退化 (total={total_loss.item():.4f}, recon={recon_loss.item():.4f})，切換為重建優先")
             total_loss = recon_loss + contrast_loss + (sparsity_lambda * sparsity_loss)
