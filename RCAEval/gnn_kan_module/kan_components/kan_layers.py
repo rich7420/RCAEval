@@ -115,19 +115,20 @@ class AdvancedKANLayer(nn.Module):
     
     def reset_parameters(self):
         """KAN特有的參數初始化 - 針對B-spline優化"""
-        # B-spline係數初始化 - 小值確保穩定性
-        std = math.sqrt(2.0 / (self.input_dim + self.output_dim))
-        nn.init.normal_(self.spline_coeffs, mean=0.0, std=std * 0.01)
-        
-        # 激活函數權重初始化
-        nn.init.xavier_uniform_(self.activation_weights, gain=0.05)
-        
-        # 基礎線性層初始化 (最小權重，突出KAN特性)
-        nn.init.xavier_uniform_(self.base_linear.weight, gain=0.1)
-        
-        # 自適應樣條階數權重
-        if hasattr(self, 'spline_order_weights'):
-            nn.init.uniform_(self.spline_order_weights, 0.2, 0.4)
+        with torch.no_grad():
+            # B-spline係數初始化 - 小值確保穩定性
+            std = math.sqrt(2.0 / (self.input_dim + self.output_dim))
+            nn.init.normal_(self.spline_coeffs, mean=0.0, std=std * 0.01)
+            
+            # 激活函數權重初始化
+            nn.init.xavier_uniform_(self.activation_weights, gain=0.05)
+            
+            # 基礎線性層初始化 (最小權重，突出KAN特性)
+            nn.init.xavier_uniform_(self.base_linear.weight, gain=0.1)
+            
+            # 自適應樣條階數權重
+            if hasattr(self, 'spline_order_weights'):
+                nn.init.uniform_(self.spline_order_weights, 0.2, 0.4)
     
     def learnable_activation(self, x):
         """
@@ -288,10 +289,13 @@ class AdvancedKANLayer(nn.Module):
                 parts.append(bspline_output)
         
         try:
-            activation_output = torch.tanh(x @ self.activation_weights.t())
+            # 🔧 確保類型一致性，避免 numpy.float32 和 torch.FloatTensor 不匹配
+            x_float = x.float()
+            activation_weights_float = self.activation_weights.float()
+            activation_output = torch.tanh(x_float @ activation_weights_float.t())
             if torch.isnan(activation_output).any() or torch.isinf(activation_output).any():
                 print("⚠️ 激活函數輸出不穩定，使用線性回退")
-                activation_output = x @ (self.activation_weights.t() * 0.1)
+                activation_output = x_float @ (activation_weights_float.t() * 0.1)
             # 温和缩放
             activation_output = activation_output * 0.3
             parts.append(activation_output)
@@ -368,7 +372,10 @@ class AdvancedKANLayer(nn.Module):
         basis_matrix = torch.stack(basis_functions, dim=-1)  # (..., num_basis)
         
         # 計算B-spline輸出，添加數值檢查
-        spline_output = torch.einsum('...i,oji->...o', basis_matrix, self.spline_coeffs)
+        # 🔧 確保類型一致性，避免 numpy.float32 和 torch.FloatTensor 不匹配
+        basis_matrix = basis_matrix.float()
+        spline_coeffs = self.spline_coeffs.float()
+        spline_output = torch.einsum('...i,oji->...o', basis_matrix, spline_coeffs)
             
         # 最終數值穩定性檢查
         if torch.isnan(spline_output).any() or torch.isinf(spline_output).any():
@@ -413,13 +420,14 @@ class SimplifiedKANLayer(nn.Module):
     def reset_parameters(self):
         """KAN特有的初始化 - 加強數值穩定性"""
         # 多項式係數初始化 - 更小的初始值
-        nn.init.normal_(self.poly_coeffs, mean=0.0, std=0.01)
-        
-        # 激活尺度初始化 - 更保守的範圍
-        nn.init.uniform_(self.activation_scale, 0.01, 0.05)
-        
-        # 基礎變換初始化 - 更小的權重
-        nn.init.xavier_uniform_(self.base_transform.weight, gain=0.01)
+        with torch.no_grad():
+            nn.init.normal_(self.poly_coeffs, mean=0.0, std=0.01)
+            
+            # 激活尺度初始化 - 更保守的範圍，確保返回torch張量
+            nn.init.uniform_(self.activation_scale, 0.01, 0.05)
+            
+            # 基礎變換初始化 - 更小的權重
+            nn.init.xavier_uniform_(self.base_transform.weight, gain=0.01)
     
     def polynomial_basis_functions(self, x):
         """簡化的多項式基函數 - KAN的簡化版本，修復維度問題"""
@@ -493,7 +501,10 @@ class SimplifiedKANLayer(nn.Module):
         try:
             # 1. 多項式基函數 (KAN的核心)
             poly_basis = self.polynomial_basis_functions(x)
-            poly_output = torch.einsum('bid,oid->bo', poly_basis, self.poly_coeffs)
+            # 🔧 確保類型一致性，避免 numpy.float32 和 torch.FloatTensor 不匹配
+            poly_basis = poly_basis.float()
+            poly_coeffs = self.poly_coeffs.float()
+            poly_output = torch.einsum('bid,oid->bo', poly_basis, poly_coeffs)
 
             # 2. 基礎線性變換 (最小化MLP特性)
             base_output = self.base_transform(x)

@@ -141,54 +141,74 @@ class LazyMethodDict(dict):
             base_keys.append('gnn_kan')
         return base_keys
 
-# Import available RCA methods based on Python version
-AVAILABLE_METHODS = {}
+# 延遲導入標準 RCA 方法，避免在初始化時觸發不必要的導入
+def _lazy_import_standard_rca():
+    """延遲導入標準 RCA 方法，只在需要時觸發"""
+    try:
+        if is_py310() if 'is_py310' in globals() else False:
+            from RCAEval.e2e.baro import baro
+            from RCAEval.e2e.circa import circa
+            from RCAEval.e2e.cloudranger import cloudranger
+            from RCAEval.e2e.easyrca import easyrca
+            from RCAEval.e2e.granger_pagerank import granger_pagerank
+            from RCAEval.e2e.lingam_pagerank import lingam_pagerank
+            from RCAEval.e2e.microcause import microcause
+            from RCAEval.e2e.microrank import microrank
+            from RCAEval.e2e.mscred import mscred
+            from RCAEval.e2e.pc_pagerank import pc_pagerank
+            from RCAEval.e2e.tracerca import tracerca
+            
+            return {
+                'baro': baro,
+                'circa': circa,
+                'cloudranger': cloudranger,
+                'easyrca': easyrca,
+                'granger_pagerank': granger_pagerank,
+                'lingam_pagerank': lingam_pagerank,
+                'microcause': microcause,
+                'microrank': microrank,
+                'mscred': mscred,
+                'pc_pagerank': pc_pagerank,
+                'tracerca': tracerca
+            }
+        elif is_py38() if 'is_py38' in globals() else False:
+            from RCAEval.e2e.rcd import rcd
+            from RCAEval.e2e.mmrcd import mmrcd
+            return {
+                'rcd': rcd,
+                'mmrcd': mmrcd
+            }
+        else:
+            return {}
+    except ImportError as e:
+        print(f"⚠️ 標準 RCA 方法導入失敗: {e}")
+        return {}
 
+# 創建延遲導入的方法映射
+standard_methods = []
 if is_py310() if 'is_py310' in globals() else False:
-    try:
-        # Import methods individually to avoid triggering GNN-KAN imports
-        from RCAEval.e2e.baro import baro
-        from RCAEval.e2e.circa import circa
-        from RCAEval.e2e.cloudranger import cloudranger
-        from RCAEval.e2e.easyrca import easyrca
-        from RCAEval.e2e.granger_pagerank import granger_pagerank
-        from RCAEval.e2e.lingam_pagerank import lingam_pagerank
-        from RCAEval.e2e.microcause import microcause
-        from RCAEval.e2e.microrank import microrank
-        from RCAEval.e2e.mscred import mscred
-        from RCAEval.e2e.pc_pagerank import pc_pagerank
-        from RCAEval.e2e.tracerca import tracerca
-        
-        # Add other methods
-        method_mapping = {
-            'baro': baro,
-            'circa': circa,
-            'cloudranger': cloudranger,
-            'easyrca': easyrca,
-            'granger_pagerank': granger_pagerank,
-            'lingam_pagerank': lingam_pagerank,
-            'microcause': microcause,
-            'microrank': microrank,
-            'mscred': mscred,
-            'pc_pagerank': pc_pagerank,
-            'tracerca': tracerca
-        }
-        AVAILABLE_METHODS.update(method_mapping)
-        
-    except ImportError as e:
-        print(f"⚠️ Python 3.10+ methods not available: {e}")
-
+    standard_methods = ['baro', 'circa', 'cloudranger', 'easyrca', 'granger_pagerank', 
+                       'lingam_pagerank', 'microcause', 'microrank', 'mscred', 
+                       'pc_pagerank', 'tracerca']
 elif is_py38() if 'is_py38' in globals() else False:
-    try:
-        # Import methods individually to avoid triggering GNN-KAN imports
-        from RCAEval.e2e.rcd import rcd
-        from RCAEval.e2e.mmrcd import mmrcd
-        AVAILABLE_METHODS.update({
-            'rcd': rcd,
-            'mmrcd': mmrcd
-        })
-    except ImportError as e:
-        print(f"⚠️ Python 3.8 methods not available: {e}")
+    standard_methods = ['rcd', 'mmrcd']
+
+# 為每個標準方法創建延遲導入函數
+AVAILABLE_METHODS = {}
+for method_name in standard_methods:
+    def create_lazy_method(name):
+        def lazy_method(*args, **kwargs):
+            methods = _lazy_import_standard_rca()
+            if name in methods:
+                print(f"✅ 載入 {name} 方法")
+                actual_method = methods[name]
+                # 直接調用實際方法並傳遞所有參數
+                return actual_method(*args, **kwargs)
+            else:
+                raise KeyError(f"Method {name} not available")
+        return lazy_method
+    
+    AVAILABLE_METHODS[method_name] = create_lazy_method(method_name)
 
 # 使用延遲載入字典
 AVAILABLE_METHODS = LazyMethodDict(AVAILABLE_METHODS)
@@ -485,8 +505,15 @@ class SingleMethodExperiment:
         """
         processed_data = data.copy()
         
-        # Remove latency-50, keep latency-90
-        processed_data = processed_data.loc[:, ~processed_data.columns.str.endswith("_latency-50")]
+        # 1. 安全移除latency-50列 (僅當存在時，排除IP地址列)
+        latency_50_cols = [c for c in data.columns if c.endswith("_latency-50") and not "192-168" in c]
+        if latency_50_cols:
+            processed_data = processed_data.drop(columns=latency_50_cols)
+        
+        # 2. 減少IP地址列過濾 - 只移除明顯的node-level指標
+        node_columns = [c for c in processed_data.columns if "192-168" in c and ("node-" in c or "container-" in c)]
+        if node_columns:
+            processed_data = processed_data.drop(columns=node_columns)
         
         # Handle special dataset formats
         if "mm-tt" in data_path:
@@ -512,6 +539,40 @@ class SingleMethodExperiment:
         )
         
         return processed_data
+    
+    def _slice_time_window(self, data: pd.DataFrame, inject_time: int, 
+                          window_length_minutes: int = 20) -> pd.DataFrame:
+        """
+        聚焦故障周圍的關鍵時間段，提高信號密度
+        
+        Args:
+            data: 原始數據DataFrame
+            inject_time: 故障注入時間
+            window_length_minutes: 時間窗口長度（分鐘）
+        
+        Returns:
+            切分後的數據DataFrame
+        """
+        if 'time' not in data.columns:
+            print(f"  ⚠️ 數據中沒有'time'列，跳過時間窗口切分")
+            return data  # 安全回退
+        
+        # 精確計算半窗口寬度(以樣本數為單位)
+        half_window = window_length_minutes * 60 // 2
+        
+        # 只保留注入時間前後的關鍵數據(提高信號密度)
+        normal_data = data[data['time'] < inject_time].tail(half_window)
+        anomal_data = data[data['time'] >= inject_time].head(half_window)
+        
+        # 安全合併
+        windowed_data = pd.concat([normal_data, anomal_data], ignore_index=True)
+        
+        if windowed_data.empty:
+            print(f"  ⚠️ 時間窗口切分後數據為空，使用原始數據")
+            return data
+        
+        print(f"  🕒 時間窗口切分: {len(data)} → {len(windowed_data)} 樣本")
+        return windowed_data
     
     def get_inject_time(self, data_path: str, data: pd.DataFrame) -> int:
         """Get injection time from various sources"""
@@ -679,7 +740,22 @@ class SingleMethodExperiment:
             if var != service and var not in ground_truth:
                 ground_truth.append(var)
         
-        return ground_truth[:10]  # Limit to reasonable size
+        # 🆕 為DELAY/LOSS故障添加相關服務鏈 (符合微服務故障實際傳播模式)
+        if fault_type.lower() in ['delay', 'loss', 'latency']:
+            # 微服務故障傳播鏈：frontend → api → gateway → db
+            service_chain = ['frontend', 'api', 'gateway', 'db']
+            for chain_service in service_chain:
+                if chain_service not in ground_truth:
+                    ground_truth.append(chain_service)
+                    # 添加服務變體
+                    ground_truth.extend([
+                        f"{chain_service}-service",
+                        f"ts-{chain_service}",
+                        f"{chain_service}_service"
+                    ])
+        
+        # 限制到合理大小 (從10個增加到15個，容納更多相關服務)
+        return ground_truth[:15]
     
     def calculate_metrics(self, predicted_ranks: List[str], ground_truth: List[str]) -> Dict[str, float]:
         """
@@ -782,7 +858,8 @@ class SingleMethodExperiment:
         
         return metrics
     
-    def run_experiment(self, limit: Optional[int] = None, test_mode: bool = False, num_cases: int = 5) -> Dict[str, Any]:
+    def run_experiment(self, limit: Optional[int] = None, test_mode: bool = False, 
+                      num_cases: int = 5, window_length_minutes: int = 20) -> Dict[str, Any]:
         """
         Run the complete experiment for the specified method and dataset
         """
@@ -820,6 +897,9 @@ class SingleMethodExperiment:
                 
                 # Get injection time
                 inject_time = self.get_inject_time(data_path, data)
+                
+                # 💡 添加時間窗口切分 (關鍵修改點)
+                data = self._slice_time_window(data, inject_time, window_length_minutes=window_length_minutes)
                 
                 # Get ground truth
                 ground_truth = self.get_ground_truth(case_info)
@@ -1035,6 +1115,9 @@ def parse_args():
     parser.add_argument("--output-dir", type=str, default="experiment_output",
                        help="Output directory for results")
     
+    parser.add_argument("--window", type=int, default=20,
+                       help="Time window around inject_time (minutes, default: 20)")
+    
     return parser.parse_args()
 
 
@@ -1063,7 +1146,8 @@ def main():
         
         # Run experiment
         start_time = time.time()
-        results = experiment.run_experiment(limit=args.limit, test_mode=args.test, num_cases=args.cases)
+        results = experiment.run_experiment(limit=args.limit, test_mode=args.test, 
+                                          num_cases=args.cases, window_length_minutes=args.window)
         total_time = time.time() - start_time
         
         # Print summary

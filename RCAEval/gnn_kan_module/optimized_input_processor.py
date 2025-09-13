@@ -901,6 +901,10 @@ class GNNKANInputOptimizer:
         )
         edge_index, edge_weights = self.graph_builder.build_graph_fast(node_features, node_names)
         
+        # 🔧 安全的類型轉換，確保沒有 numpy.float32 到 torch.FloatTensor 的不匹配
+        if isinstance(node_features, np.ndarray):
+            # 先轉換為 float64，再轉為 torch.float32
+            node_features = node_features.astype(np.float64)
         node_features_tensor = torch.tensor(node_features, dtype=torch.float32)
         processing_time = time.time() - start_time
         
@@ -1175,12 +1179,16 @@ class GNNKANInputOptimizer:
         if len(nonzero_indices) == 0:
             # 空图，返回自环
             n = adj_matrix.shape[0]
-            edge_index = torch.stack([torch.arange(n), torch.arange(n)])
-            edge_weights = torch.ones(n) * 0.1
+            edge_index = torch.stack([torch.arange(n, dtype=torch.long), torch.arange(n, dtype=torch.long)])
+            edge_weights = torch.ones(n, dtype=torch.float32) * 0.1
             return edge_index, edge_weights
         
-        edge_index = nonzero_indices.t()
+        edge_index = nonzero_indices.t().contiguous()
         edge_weights = adj_matrix[nonzero_indices[:, 0], nonzero_indices[:, 1]]
+        
+        # 確保類型正確
+        edge_index = edge_index.long()
+        edge_weights = edge_weights.float()
         
         return edge_index, edge_weights
 

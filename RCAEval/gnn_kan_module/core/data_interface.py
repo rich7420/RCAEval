@@ -62,8 +62,14 @@ class StandardizedData:
         return self.data.shape[1] if self.data.ndim > 1 else 1
     
     def to_tensor(self, device: str = 'cpu') -> torch.Tensor:
-        """轉換為PyTorch張量"""
-        return torch.tensor(self.data, dtype=torch.float32, device=device)
+        """轉換為PyTorch張量 - 確保類型安全"""
+        # 🔧 確保數據類型一致性，避免 numpy.float32 到 torch.FloatTensor 不匹配
+        if isinstance(self.data, np.ndarray):
+            # 先轉換為 float64，再轉為 torch.float32
+            data_safe = self.data.astype(np.float64)
+        else:
+            data_safe = self.data
+        return torch.tensor(data_safe, dtype=torch.float32, device=device)
 
 
 class UnifiedDataInterface:

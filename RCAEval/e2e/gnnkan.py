@@ -49,6 +49,8 @@ def knn_fallback(embeddings, node_names, k=5, similarity_threshold=0.3):
     # 計算余弦相似度
     embeddings_np = embeddings.cpu().numpy()
     similarity_matrix = cosine_similarity(embeddings_np)
+    # 🔧 確保類型轉換安全，避免 numpy.float32 到 torch.FloatTensor 不匹配
+    similarity_matrix = torch.tensor(similarity_matrix, dtype=torch.float32)
     
     # 創建KNN鄰接矩陣
     knn = NearestNeighbors(n_neighbors=k+1, metric='cosine')
@@ -63,6 +65,8 @@ def knn_fallback(embeddings, node_names, k=5, similarity_threshold=0.3):
     for i in range(n_nodes):
         for j, neighbor_idx in enumerate(indices[i]):
             if j > 0:  # 跳過自己
+                # 🔧 確保索引類型正確
+                neighbor_idx = int(neighbor_idx)
                 similarity = similarity_matrix[i, neighbor_idx]
                 if similarity > similarity_threshold:
                     adj_matrix[i, neighbor_idx] = similarity
@@ -82,6 +86,9 @@ def knn_fallback(embeddings, node_names, k=5, similarity_threshold=0.3):
         # 計算最小生成樹
         mst = minimum_spanning_tree(csr_matrix(distance_matrix))
         mst_dense = mst.toarray()
+        
+        # 🔧 確保類型轉換安全，避免 numpy.float32 到 torch.FloatTensor 不匹配
+        mst_dense = torch.tensor(mst_dense, dtype=torch.float32)
         
         # 將MST邊添加到鄰接矩陣
         for i in range(n_nodes):
