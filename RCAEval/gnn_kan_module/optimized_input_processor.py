@@ -402,7 +402,7 @@ class FastServiceExtractor:
 
 
 class KANFeatureProcessor:
-    """專為KAN優化的特徵處理器 - 簡化版本"""
+    """專為KAN優化的特徵處理器"""
     
     def __init__(self, method='enhanced_ica', target_dim=64):
         self.method = method
@@ -808,7 +808,7 @@ class OptimizedGraphBuilder:
             
             # 僅在完全孤立時才強制連接最相似的節點
             if not connected:
-                j = int(np.argmax(similarities))
+                j = int(np.argmax(similarities[:num_nodes]))
                 edges.extend([[i, j], [j, i]])
                 weights.extend([0.2, 0.2])  # 使用最小權重
         return edges, weights
@@ -899,12 +899,21 @@ class GNNKANInputOptimizer:
         node_features, node_names = self.feature_processor.process_features_optimized(
             df, self.force_node_expansion, inject_time
         )
+
+        # 防呆：行數對不上就以 features 為準重建名稱
+        if isinstance(node_features, np.ndarray) and node_features.shape[0] != len(node_names):
+            print(f"⚠️ 節點數不匹配: features={node_features.shape[0]} vs names={len(node_names)}，以 features 為準重建名稱")
+            node_names = [f'node_{i}' for i in range(node_features.shape[0])]
+
         edge_index, edge_weights = self.graph_builder.build_graph_fast(node_features, node_names)
         
-        # 🔧 安全的類型轉換，確保沒有 numpy.float32 到 torch.FloatTensor 的不匹配
-        if isinstance(node_features, np.ndarray):
-            # 先轉換為 float64，再轉為 torch.float32
-            node_features = node_features.astype(np.float64)
+        # 二次保險：強制一致
+        if node_features.shape[0] != len(node_names):
+            print(f"⚠️ build_graph_fast: features={node_features.shape[0]} vs num_nodes={len(node_names)}，截斷到一致")
+            num_nodes = min(len(node_names), node_features.shape[0])
+            node_features = node_features[:num_nodes]
+            node_names = node_names[:num_nodes]
+
         node_features_tensor = torch.tensor(node_features, dtype=torch.float32)
         processing_time = time.time() - start_time
         
@@ -1143,31 +1152,22 @@ class GNNKANInputOptimizer:
         return edge_index, edge_weights
     
     def compute_enhanced_similarity(self, embeddings: torch.Tensor) -> torch.Tensor:
-        """
-        计算增强的相似性矩阵，提高特征区分度
-        """
-        # 标准化嵌入
+
         embeddings_norm = F.normalize(embeddings, p=2, dim=1)
         
-        # 余弦相似性
         cos_sim = torch.mm(embeddings_norm, embeddings_norm.t())
-        
-        # 欧几里得距离相似性
+
         dist_matrix = torch.cdist(embeddings, embeddings, p=2)
         max_dist = dist_matrix.max()
         euclidean_sim = 1.0 - (dist_matrix / (max_dist + 1e-8))
-        
-        # 皮尔逊相关系数相似性
+        # 皮爾森相關係數
         embeddings_centered = embeddings - embeddings.mean(dim=1, keepdim=True)
         std = embeddings_centered.std(dim=1, keepdim=True)
         embeddings_standardized = embeddings_centered / (std + 1e-8)
         pearson_sim = torch.mm(embeddings_standardized, embeddings_standardized.t()) / embeddings.shape[1]
-        
-        # 加权组合多种相似性度量
         combined_sim = (0.5 * cos_sim + 0.3 * euclidean_sim + 0.2 * pearson_sim)
         
-        # 应用非线性变换增强区分度
-        combined_sim = torch.sigmoid(5 * (combined_sim - 0.5))  # 增强对比度
+        combined_sim = torch.sigmoid(5 * (combined_sim - 0.5))
         
         return combined_sim
     
@@ -1179,40 +1179,28 @@ class GNNKANInputOptimizer:
         if len(nonzero_indices) == 0:
             # 空图，返回自环
             n = adj_matrix.shape[0]
-            edge_index = torch.stack([torch.arange(n, dtype=torch.long), torch.arange(n, dtype=torch.long)])
-            edge_weights = torch.ones(n, dtype=torch.float32) * 0.1
+            edge_index = torch.stack([torch.arange(n), torch.arange(n)])
+            edge_weights = torch.ones(n) * 0.1
             return edge_index, edge_weights
         
-        edge_index = nonzero_indices.t().contiguous()
+        edge_index = nonzero_indices.t()
         edge_weights = adj_matrix[nonzero_indices[:, 0], nonzero_indices[:, 1]]
-        
-        # 確保類型正確
-        edge_index = edge_index.long()
-        edge_weights = edge_weights.float()
         
         return edge_index, edge_weights
 
 
 class MultiModalGraphBuilder:
-    """
-    多模态图构建器 / Multi-modal Graph Builder
-    专门处理metrics + logs + traces的融合图构建
-    """
     
     def __init__(self, target_density=0.35):
         self.target_density = target_density
     
     def build_multimodal_graph(self, data_dict, inject_time=None):
-        """
-        构建多模态融合图 / Build multi-modal fusion graph
-        """
-        # 这里可以添加多模态图构建逻辑
+        
         pass
 
 
-# 修复后的剩余代码应该从这里开始:
 def _check_function_placeholder():
-    pass  # 占位符函数，清理错误代码
+    pass
     
     def _adaptive_threshold_calculation(self, similarity_matrix: torch.Tensor) -> float:
         """

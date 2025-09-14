@@ -564,9 +564,17 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
         if val_data is not None and (epoch + 1) % 5 == 0:  # 每5個epoch驗證一次
             model.eval()
             with torch.no_grad():
+                # 取出 val_edge_index 後，先過濾再送模型
                 val_node_features = val_data['node_features'].to(device)
                 val_edge_index = val_data['edge_index'].to(device)
-                val_embeddings, val_pred_adj = model(val_node_features, val_edge_index)
+
+                val_used_edge_index = val_edge_index
+                if val_edge_index.size(1) > 0:
+                    valid_mask = (val_edge_index[0] < val_node_features.size(0)) & (val_edge_index[1] < val_node_features.size(0))
+                    val_valid_edge_index = val_edge_index[:, valid_mask]
+                    val_used_edge_index = val_valid_edge_index if val_valid_edge_index.size(1) > 0 else torch.empty((2,0), dtype=torch.long, device=device)
+
+                val_embeddings, val_pred_adj = model(val_node_features, val_used_edge_index)
                 
                 # 計算驗證精度
                 if val_pred_adj is not None:
@@ -712,28 +720,29 @@ class AdvancedGNNKANTrainer:
         num_nodes = features.size(0)
         device = features.device
         target_adj = torch.zeros(num_nodes, num_nodes, device=device)
-        
+
+        used_edge_index = edge_index  # 預設
         if edge_index.size(1) > 0:
-            # 🔧 安全邊索引檢查 - 避免越界
             valid_edges_mask = (edge_index[0] < num_nodes) & (edge_index[1] < num_nodes)
             valid_edge_index = edge_index[:, valid_edges_mask]
-            
+
             if valid_edge_index.size(1) > 0:
-                src = valid_edge_index[0]
-                dst = valid_edge_index[1]
+                src = valid_edge_index[0]; dst = valid_edge_index[1]
                 ones = torch.ones_like(src, dtype=target_adj.dtype)
                 target_adj.index_put_((src, dst), ones, accumulate=True)
                 target_adj.index_put_((dst, src), ones, accumulate=True)
+                used_edge_index = valid_edge_index  # 關鍵：之後都用過濾後的邊
             else:
                 print(f"⚠️ {phase_name}: 所有邊索引都超出範圍，使用單位矩陣")
                 target_adj = torch.eye(num_nodes, device=device) * 0.1
-        
+                used_edge_index = torch.empty((2, 0), dtype=torch.long, device=device)
+
         model.train()
         for epoch in range(epochs):
             optimizer.zero_grad()
             
             try:
-                node_embeddings, pred_adj = model(features, edge_index)
+                node_embeddings, pred_adj = model(features, used_edge_index)
                 loss = criterion(pred_adj, target_adj, node_embeddings)
                 
                 if not (torch.isnan(loss) or torch.isinf(loss)):
