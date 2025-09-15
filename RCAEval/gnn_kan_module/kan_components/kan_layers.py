@@ -108,8 +108,13 @@ class AdvancedKANLayer(nn.Module):
         # 基礎線性變換 (最小化MLP特性)
         self.base_linear = nn.Linear(input_dim, output_dim, bias=False)
         
-        self.proj = nn.Linear(input_dim, output_dim)
+        # 將組合後的特徵（已是 output_dim）做輕量投影
+        self.proj = nn.Linear(output_dim, output_dim)
         self.out_norm = nn.LayerNorm(output_dim)
+        
+        # 添加缺失的Chebyshev多項式層
+        if self.use_cheb:
+            self.chebyshev_polynomials = nn.Linear(input_dim, output_dim, bias=False)
         
         self.reset_parameters()
     
@@ -369,14 +374,15 @@ class AdvancedKANLayer(nn.Module):
                 basis_functions.append(Tn)
         
         # 組合基函數
-        basis_matrix = torch.stack(basis_functions, dim=-1)  # (..., num_basis)
+        basis_matrix = torch.stack(basis_functions, dim=-1)  # [batch, input_dim, num_basis]
         
         # 計算B-spline輸出，添加數值檢查
         # 🔧 確保類型一致性，避免 numpy.float32 和 torch.FloatTensor 不匹配
         basis_matrix = basis_matrix.float()
-        spline_coeffs = self.spline_coeffs.float()
-        spline_output = torch.einsum('...i,oji->...o', basis_matrix, spline_coeffs)
-            
+        spline_coeffs = self.spline_coeffs.float()  # [output_dim, input_dim, num_basis]
+        # 直接得到 [batch, output_dim]（對 input_dim 和 num_basis 求和）
+        spline_output = torch.einsum('bji,oji->bo', basis_matrix, spline_coeffs)
+        
         # 最終數值穩定性檢查
         if torch.isnan(spline_output).any() or torch.isinf(spline_output).any():
             print("⚠️ B-spline輸出包含無效值，使用回退策略")

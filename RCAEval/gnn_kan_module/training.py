@@ -10,11 +10,24 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.optim import lr_scheduler
 import numpy as np
+import math
 from torch_geometric.utils import negative_sampling
 
 # Use the centralized, full implementation of GradientStabilizer
 # GradientStabilizer 已移除，使用簡化版本
 from .config import SimplifiedGNNKANConfig
+
+
+def learning_rate_scheduler(optimizer, current_epoch, total_epochs):
+    """Cosine annealing learning rate scheduler - 平滑減少LR"""
+    lr_max = 5e-4  # 初始LR提高到5e-4, 讓早期訓練更快
+    min_lr = 1e-6
+    # Cosine curve for smooth decay
+    cos_anneal = 0.5 * (1 + math.cos(math.pi * current_epoch / total_epochs))
+    current_lr = min_lr + (lr_max - min_lr) * cos_anneal
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = current_lr
+    return current_lr
 # Import the model from the models module, not a local copy
 from .models import SimplifiedGNNKAN, GNNKANModel, TemporalAttention
 
@@ -218,24 +231,34 @@ class GNNKANLoss(nn.Module):
         
         total_loss = recon_loss
         
-        # 🔧 階段1：動態稀疏性懲罰，提升Graph Sparsity
+        # 🎯 動態權重調整策略 - 根據訓練進度調整損失權重
+        epoch = getattr(self, 'current_epoch', 0)
+        total_epochs = getattr(self, 'total_epochs', 100)
+        
+        # 修正動態權重計算 - 平衡各損失項
+        w_recon = 0.5  # 進一步降低重構損失權重
+        w_polar = 0.2 + 0.5 * (epoch / max(total_epochs, 1))  # 極化損失增強
+        w_contrast = min(8.0, 2.0 + epoch * 0.1)  # 對比損失更激進增強
+        w_sparsity = min(0.8, 0.1 + epoch * 0.01)  # 降低稀疏性約束壓力
+        
+        # 🔧 改進的稀疏性懲罰
         current_sparsity = (pred_adj_safe > 0.1).float().mean().item()
         sparsity_penalty = torch.mean(torch.abs(pred_adj_safe)) * (1 - current_sparsity)
-        total_loss += sparsity_penalty * 2.0  # 提升權重
+        total_loss += sparsity_penalty * w_sparsity
         
-        # 🔧 階段1：對比損失，防止embedding塌縮
+        # 🔧 增強的對比損失
         if node_embeddings is not None:
-            # 計算節點嵌入的對比損失
-            embeddings_norm = torch.nn.functional.normalize(node_embeddings, p=2, dim=1)
-            similarity_matrix = torch.mm(embeddings_norm, embeddings_norm.t())
-            
-            # 對比損失：鼓勵不同節點有不同的嵌入
-            contrast_loss = torch.mean(torch.abs(similarity_matrix - torch.eye(similarity_matrix.size(0), device=similarity_matrix.device)))
-            total_loss += contrast_loss * self.contrast_weight
+            contrast_loss = self.enhanced_contrastive_loss(node_embeddings, pred_adj_safe)
+            total_loss += contrast_loss * w_contrast
             
             # L2正則化
             l2_reg = torch.norm(node_embeddings, p=2)
             total_loss += self.config.l2_lambda * l2_reg
+            
+            # 🎯 新增: 方差正則化 - 鼓勵節點表示有足夠判別性
+            std_per_dim = torch.clamp(node_embeddings.std(dim=0), 1e-3, None)
+            var_loss = torch.relu(1.0 - std_per_dim).mean()
+            total_loss += 0.05 * var_loss
             
             # 平滑性正則化
             if node_embeddings.size(0) > 1:
@@ -243,14 +266,200 @@ class GNNKANLoss(nn.Module):
                 smoothness_reg = torch.norm(diff, p=2)
                 total_loss += self.config.smoothness_lambda * smoothness_reg
         
-        # 🔧 階段1：極化損失，但降低權重防止過度稀疏
-        polar_loss = -torch.mean(torch.abs(pred_adj_safe))  # 負值鼓勵稀疏
-        total_loss += polar_loss * self.polar_weight  # 降低權重
+        # 🔧 穩定化的極化損失
+        polar_loss = self.stabilized_polar_loss(pred_adj_safe, alpha=0.5)
+        total_loss += polar_loss * w_polar
+        
+        # 🎯 細微Margin Loss - 微調確保top/bottom差距
+        if node_embeddings is not None:
+            margin = 0.08  # 微調差距要求
+            margin_loss = self.discriminative_loss(pred_adj_safe.flatten(), margin)
+            total_loss += 0.15 * margin_loss
+        
+        # 🎯 方向3: Ranking Loss - 直接優化排名 (後期啟用)
+        if epoch > 50 and node_embeddings is not None:
+            try:
+                # 生成pseudo ranks
+                ground_truth_ranks = self.generate_pseudo_ranks(pred_adj_safe)
+                
+                # 計算PageRank分數作為pr_scores
+                pr_scores = pred_adj_safe.sum(dim=1)  # 簡化版PageRank分數
+                
+                # 應用ListNet loss
+                rank_loss = self.listnet_loss(pr_scores, ground_truth_ranks)
+                total_loss += 0.2 * rank_loss
+                
+                if epoch % 10 == 0:  # 每10個epoch打印一次
+                    print(f"  Ranking Loss: {rank_loss.item():.4f}")
+            except Exception as e:
+                print(f"⚠️ Ranking Loss計算失敗: {e}")
         
         return total_loss
+    
+    def enhanced_contrastive_loss(self, embeddings, adj_matrix, 
+                             base_temp=0.2, min_temp=0.1, max_temp=0.5):
+        """
+        修正版對比學習 - 確保與其他損失項量級一致
+        * 無需故障類型信息 *
+        """
+        batch_size = embeddings.shape[0]
+        norm_embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
+        
+        # 計算余弦相似度
+        logits = torch.mm(norm_embeddings, norm_embeddings.t())
+        
+        # 關鍵修正: 使用鄰接矩陣作為正樣本強度，但強化差異
+        # 將鄰接權重從[0.5, 0.73]映射到[-1.0, 1.0]以擴大差異
+        weights = (adj_matrix - 0.62) * 10.0  # 中心點設為值域中點
+        
+        # 限制在合理範圍 [-1.0, 1.0]
+        weights = torch.clamp(weights, -1.0, 1.0)
+        
+        # 關鍵修正: 增強高價值連接
+        strong_connections = (adj_matrix > 0.68).float()
+        weights = weights + strong_connections * 0.3
+        
+        # 移除自連接
+        eye = torch.eye(batch_size, device=embeddings.device)
+        weights = weights * (1 - eye)
+        
+        # 修正: 使用加權相似度計算損失
+        positive_logits = logits * weights * (1 - eye)
+        negative_logits = logits * (1 - weights) * (1 - eye)
+        
+        # 關鍵修正: 提升對比損失量級，確保數值穩定性
+        pos_exp = torch.exp(torch.clamp(positive_logits.sum(dim=1) / 10.0, -10, 10))
+        neg_exp = torch.exp(torch.clamp(negative_logits.sum(dim=1) / 10.0, -10, 10))
+        
+        # 避免除零和log(0)
+        ratio = pos_exp / (neg_exp + 1e-8)
+        ratio = torch.clamp(ratio, min=1e-8, max=1e8)
+        
+        contrastive_loss = -torch.log(ratio).mean()
+        
+        # 檢查NaN並處理
+        if torch.isnan(contrastive_loss):
+            contrastive_loss = torch.tensor(0.0, device=embeddings.device)
+        
+        # 關聯約束: 確保節點表示與鄰接矩陣一致
+        recon_loss = torch.nn.functional.mse_loss(
+            torch.mm(norm_embeddings, norm_embeddings.t()),
+            adj_matrix.detach()
+        ) * 0.1
+        
+        return contrastive_loss * 5.0 + recon_loss  # 明確提升對比損失權重
+    
+    def discriminative_loss(self, pr_scores, margin=0.1):
+        """
+        辨識度損失 - 直接優化top-1分離度
+        pr_scores: PageRank分數列表 (已排序)
+        margin: 最小間距要求
+        """
+        if len(pr_scores) < 2:
+            return torch.tensor(0.0, device=pr_scores[0].device)
+        
+        # 確保分數是tensor
+        if not isinstance(pr_scores, torch.Tensor):
+            pr_scores = torch.tensor(pr_scores, dtype=torch.float32)
+        
+        # 排序分數
+        sorted_scores, _ = torch.sort(pr_scores, descending=True)
+        
+        # 計算top-1與top-2的差距
+        score_diff = sorted_scores[0] - sorted_scores[1]
+        
+        # 損失: 當差異小於margin時產生損失
+        loss = torch.relu(margin - score_diff)
+        
+        return loss
+    
+    def listnet_loss(self, pr_scores, ground_truth_ranks, temperature=1.0):
+        """ListNet ranking loss - 優化PageRank排名, 無需故障類型"""
+        # 轉為概率distribution
+        predicted_probs = torch.softmax(pr_scores / temperature, dim=0)
+        
+        # 基於ground_truth_ranks生成理想分布 (數據驅動: 高rank應該高prob)
+        ideal_probs = torch.zeros_like(predicted_probs)
+        for idx, rank in ground_truth_ranks.items():
+            ideal_probs[idx] = rank / sum(ground_truth_ranks.values())
+        
+        # KL divergence as loss
+        kl_div = F.kl_div(
+            predicted_probs.log(),
+            ideal_probs, 
+            reduction='batchmean'
+        )
+        
+        return kl_div
+    
+    def generate_pseudo_ranks(self, adj_matrix):
+        """生成pseudo label (數據驅動)"""
+        row_sums = adj_matrix.sum(dim=1).detach()
+        pseudo_ranks = row_sums / row_sums.max()
+        return {i: pseudo_ranks[i].item() for i in range(adj_matrix.shape[0])}
+    
+    def stabilized_polar_loss(self, adj_matrix, alpha=0.5):
+        """
+        穩定化極化損失，避免梯度爆炸
+        alpha: 控制稀疏和密集的平衡(0=純稀疏, 1=純密集)
+        """
+        # 先應用sigmoid確保值域在[0,1]
+        adj_probs = torch.sigmoid(adj_matrix)
+        
+        # 結合兩種目標：稀疏與有結構
+        sparse_loss = torch.mean(adj_probs) * (1 - alpha)
+        structured_loss = torch.var(adj_probs) * alpha
+        
+        # 添加梯度穩定項
+        stable_term = 0.001 * torch.log(torch.var(adj_probs) + 1e-8)
+        
+        return sparse_loss + structured_loss - stable_term
 
 
-def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambda=None, **kwargs):
+class LossScheduler:
+    """無需故障類型的損失權重自適應調控器"""
+    
+    def __init__(self, initial_weights, window_size=10):
+        self.weights = initial_weights.copy()
+        self.window_size = window_size
+        self.history = []
+    
+    def update_weights(self, metrics):
+        """基於訓練動態自動調整權重"""
+        self.history.append(metrics)
+        if len(self.history) > self.window_size:
+            self.history.pop(0)
+        
+        # 1. 根據對比損失表現動態調整
+        if len(self.history) >= 2:
+            contrast_trend = (self.history[-1]['contrast'] - 
+                             self.history[-2]['contrast'])
+            
+            # 對比損失下降過快？可能學習不足
+            if contrast_trend < -0.05:
+                self.weights['contrast'] = min(3.0, 
+                                             self.weights['contrast'] * 1.1)
+            # 對比損失停滯？減少關注
+            elif abs(contrast_trend) < 0.01:
+                self.weights['contrast'] = max(0.5, 
+                                             self.weights['contrast'] * 0.95)
+        
+        # 2. 基於圖稀疏度自動調整極化損失
+        sparsity = 1.0 - metrics['density']
+        if sparsity < 0.3:  # 圖太密
+            self.weights['polar'] = min(2.0, self.weights['polar'] * 1.05)
+        elif sparsity > 0.7:  # 圖太稀疏
+            self.weights['polar'] = max(0.1, self.weights['polar'] * 0.95)
+        
+        # 3. 自動平衡重構與結構損失
+        recon_ratio = metrics['recon'] / (metrics['sparsity'] + 1e-5)
+        if recon_ratio > 0.5:  # 重構需求高
+            self.weights['recon'] = min(2.0, self.weights['recon'] * 1.02)
+        
+        return self.weights.copy()
+
+
+def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambda=None, fault_type=None, **kwargs):
     """
     🚨 ISSUE 6: 實時性能力不足分析
     
@@ -322,6 +531,9 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
     
     # 🔧 階段1：驗證數據準備 / Validation data preparation
     val_data = kwargs.get('val_data', None)
+    
+    # 初始化損失函數
+    loss_fn = GNNKANLoss(config)
     val_ground_truth = kwargs.get('val_ground_truth', None)
     monitor_metric = kwargs.get('monitor_metric', 'val_precision')
     
@@ -366,9 +578,18 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
     for epoch in range(config.num_epochs):
         model.train()
         optimizer.zero_grad()
+        
+        # 🎯 方向2: 學習率調度 - 平滑減少LR
+        current_lr = learning_rate_scheduler(optimizer, epoch, config.num_epochs)
+        
+        # 設置當前epoch信息供損失函數使用
+        if hasattr(loss_fn, 'current_epoch'):
+            loss_fn.current_epoch = epoch
+        if hasattr(loss_fn, 'total_epochs'):
+            loss_fn.total_epochs = config.num_epochs
             
-            # 前向傳播
-        node_embedding, pred_adj = model(node_features, edge_index)
+        # 前向傳播 - 使用故障類型感知
+        node_embedding, pred_adj = model(node_features, edge_index, fault_type)
             
         # 損失計算 - 處理KNN Baseline情況
         if pred_adj is None:

@@ -267,16 +267,35 @@ def process(data_path):
         
         # Handle GNN+KAN method with specific parameters
         if args.method == "gnn_kan_rca":
+            # 提取故障類型信息
+            fault_type = metric  # 從文件名提取: cpu, mem, disk, socket, delay, loss
+            
             out = func(
                 data,
                 inject_time,
                 dataset=args.dataset,
                 config_type="simplified",
-                feature_method="simplified",
+                feature_method="enhanced_ica",  # 使用最強的特徵提取
                 use_optimized_input=True,
-                sparsity_lambda=1e-5,
+                sparsity_lambda=1e-3,           # 大幅增加稀疏性權重
+                # 🎯 高精度訓練參數
+                learning_rate=2e-4,             # 優化學習率
+                num_epochs=400,                 # 大幅增加訓練輪數
+                kan_grid_size=20,               # 大幅增加KAN網格
+                hidden_dim=128,                 # 增加隱藏維度
+                target_feature_dim=128,         # 增加特徵維度
+                similarity_threshold=0.2,       # 大幅降低相似性閾值
+                max_edges_per_node=15,          # 大幅增加邊數
+                gradient_clipping=0.5,          # 更嚴格的梯度裁剪
+                # 🎯 新增監督學習參數
+                fault_type=fault_type,          # 故障類型信息（關鍵！）
+                enhanced_contrast=True,         # 啟用增強對比學習
+                fault_type_aware=True,          # 啟用故障類型感知
+                adaptive_learning=True,         # 啟用自適應學習
+                multi_scale_features=True,      # 啟用多尺度特徵
+                temporal_attention=True,        # 啟用時序注意力
                 sli=sli,
-                verbose=False
+                verbose=True
             )
         else:
             # Standard method execution

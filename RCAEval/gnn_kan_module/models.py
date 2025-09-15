@@ -15,8 +15,7 @@ import traceback
 # Import our optimized KAN modules from the new kan_components
 from .kan_components import (
     OptimizedGNNKANEncoder, AdvancedKANLayer,
-    GradientStabilizer, SimplifiedKANLayer,
-    HighCapacityGNNKANEncoder
+    SimplifiedKANLayer
 )
 
 # Import configuration classes for type checking
@@ -38,31 +37,16 @@ class GNNKANModel(nn.Module):
         input_feature_dim = getattr(config, 'target_feature_dim', config.input_dim)
         self.feature_projection = nn.Linear(input_feature_dim, config.input_dim)
         
-        # 根據配置選擇適當的編碼器
-        if hasattr(config, 'high_capacity_mode') and config.high_capacity_mode:
-            self.gnn_encoder = HighCapacityGNNKANEncoder(
-                input_dim=config.input_dim,
-                hidden_dims=config.hidden_dims,
-                output_dim=config.output_dim,
-                num_layers=config.num_gnn_layers,
-                kan_config={
-                    'grid_size': config.kan_grid_size,
-                    'spline_order': config.kan_spline_order,
-                    'use_residual': True,
-                    'use_spectral_norm': True
-                },
-                dropout=config.dropout
-            )
-        else:
-            self.gnn_encoder = OptimizedGNNKANEncoder(
-                input_dim=config.input_dim,
-                hidden_dims=config.hidden_dims,
-                output_dim=config.output_dim,
-                num_layers=config.num_gnn_layers,
-                kan_grid_size=config.kan_grid_size,
-                kan_spline_order=config.kan_spline_order,
-                dropout=config.dropout
-            )
+        # 使用優化的GNN-KAN編碼器
+        self.gnn_encoder = OptimizedGNNKANEncoder(
+            input_dim=config.input_dim,
+            hidden_dims=config.hidden_dims,
+            output_dim=config.output_dim,
+            num_layers=config.num_gnn_layers,
+            kan_grid_size=config.kan_grid_size,
+            kan_spline_order=config.kan_spline_order,
+            dropout=config.dropout
+        )
         
         # 時序注意力機制 - 使用適配器解決維度問題
         try:
@@ -71,20 +55,29 @@ class GNNKANModel(nn.Module):
         except ImportError:
             self.temporal_attention = TemporalAttention(config.output_dim)
         
-        # 🎯 Graph Decoder已移除 - 使用KNN Baseline替代
-        print("✓ 使用KNN Baseline替代Graph Decoder")
+        # 🎯 恢復Graph Decoder - 使用多尺度KAN進行圖結構學習
+        self.graph_decoder = MultiScaleGraphDecoder(
+            embed_dim=config.output_dim,
+            num_nodes=num_nodes,
+            kan_grid_size=config.kan_grid_size,
+            scales=3  # 3個尺度：局部、中層、全局
+        )
+        print("✓ 恢復KAN-based Graph Decoder")
         
         # Dropout
         self.dropout = nn.Dropout(config.dropout)
     
-    def forward(self, node_features, edge_index):
-        """GNN-KAN前向傳播 - 只返回embeddings，鄰接矩陣由KNN Baseline構建"""
+    def forward(self, node_features, edge_index, fault_type=None):
+        """GNN-KAN前向傳播 - 使用KAN學習圖結構"""
         
         try:
-            # 只計算embeddings，鄰接矩陣由KNN Baseline構建
+            # GNN特徵提取
             embeddings = self.gnn_encoder(node_features, edge_index)
-            # 返回None作為adj_scores，因為我們使用KNN Baseline
-            return embeddings, None
+            
+            # 使用KAN-based Graph Decoder學習圖結構
+            adj_scores = self.graph_decoder(embeddings, fault_type)
+            
+            return embeddings, adj_scores
         except RuntimeError as e:
             if "out of memory" in str(e):
                 print("🚨 GPU記憶體不足，使用簡化結果")
@@ -93,8 +86,6 @@ class GNNKANModel(nn.Module):
                 return embeddings, None
             else:
                 raise e
-    
-    # Graph Decoder相關方法已移除 - 使用KNN Baseline替代
 
 
 class TemporalAttention(nn.Module):
@@ -636,6 +627,449 @@ def create_model_with_config(config):
             print(f"❌ Fallback model creation failed: {fallback_error}")
             raise e
 
+
+class FaultAwareGraphDecoder(nn.Module):
+    """
+    故障感知圖解碼器 - 使用KAN學習故障相關的圖結構
+    
+    原理：
+    1. 使用KAN層進行節點對交互學習
+    2. 故障類型感知的權重調整
+    3. 端到端學習圖結構而非使用KNN
+    """
+    
+    def __init__(self, embed_dim, num_nodes, kan_grid_size=8):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.num_nodes = num_nodes
+        
+        # KAN-based attention for graph construction
+        self.kan_attention = AdvancedKANLayer(embed_dim, embed_dim // 2)
+        self.fault_aware_projection = nn.Linear(embed_dim, embed_dim)
+        
+        # 故障類型編碼器
+        self.fault_encoder = nn.Embedding(6, embed_dim // 4)  # 6種故障類型
+        
+        # KAN-based圖結構輸出
+        self.output_kan = AdvancedKANLayer(embed_dim + embed_dim // 4, 1)
+        
+        # 故障類型映射
+        self.fault_type_map = {
+            'cpu': 0, 'mem': 1, 'disk': 2, 
+            'socket': 3, 'delay': 4, 'loss': 5
+        }
+        
+    def forward(self, embeddings, fault_type=None):
+        """
+        前向傳播 - 學習故障相關的圖結構
+        
+        Args:
+            embeddings: 節點嵌入 [num_nodes, embed_dim]
+            fault_type: 故障類型字符串
+            
+        Returns:
+            adj_matrix: 鄰接矩陣 [num_nodes, num_nodes]
+        """
+        num_nodes, embed_dim = embeddings.shape
+        
+        # 故障類型感知投影
+        if fault_type is not None and fault_type in self.fault_type_map:
+            fault_id = self.fault_type_map[fault_type]
+            fault_context = self.fault_encoder(torch.tensor(fault_id, device=embeddings.device))
+            fault_context = fault_context.expand(num_nodes, -1)
+            # 融合故障上下文
+            enhanced_embeddings = embeddings + self.fault_aware_projection(embeddings)
+        else:
+            enhanced_embeddings = embeddings
+        
+        # 計算節點對交互 - 使用KAN學習複雜關係
+        expanded_emb1 = enhanced_embeddings.unsqueeze(1).expand(-1, num_nodes, -1)  # [N, N, D]
+        expanded_emb2 = enhanced_embeddings.unsqueeze(0).expand(num_nodes, -1, -1)  # [N, N, D]
+        
+        # 節點對特徵：元素級乘積 + 拼接
+        pairwise_features = expanded_emb1 * expanded_emb2  # [N, N, D]
+        
+        # 重塑為KAN期望的格式 [N*N, D]
+        batch_size, seq_len, feature_dim = pairwise_features.shape
+        pairwise_features_flat = pairwise_features.view(-1, feature_dim)  # [N*N, D]
+        
+        # 使用KAN計算注意力權重
+        attention_weights_flat = self.kan_attention(pairwise_features_flat)  # [N*N, D//2]
+        # 如果輸出是 [N*N, D//2]，則恢復為 [N, N, D//2]
+        attention_feat_dim = attention_weights_flat.shape[-1]
+        attention_weights = attention_weights_flat.view(batch_size, seq_len, attention_feat_dim)
+        
+        # 如果啟用故障感知，添加故障上下文
+        if fault_type is not None and fault_type in self.fault_type_map:
+            fault_context_expanded = fault_context.unsqueeze(1).expand(-1, num_nodes, -1)
+            # 將注意力權重投影到與fault上下文相同的維度再拼接，避免維度衝突
+            if attention_feat_dim != self.embed_dim // 2:
+                # 安全投影到 embed_dim // 2 維
+                proj = nn.Linear(attention_feat_dim, self.embed_dim // 2).to(attention_weights.device)
+                attention_weights = proj(attention_weights)
+                attention_feat_dim = attention_weights.shape[-1]
+            combined_features = torch.cat([attention_weights, fault_context_expanded], dim=-1)
+        else:
+            combined_features = attention_weights
+        
+        # 輸出鄰接矩陣（AdvancedKANLayer 期望 2D 輸入，先展平再還原）
+        expected_in = self.output_kan.input_dim if hasattr(self.output_kan, 'input_dim') else (self.embed_dim + self.embed_dim // 4)
+        last_dim = combined_features.shape[-1]
+        if last_dim != expected_in:
+            proj_out = nn.Linear(last_dim, expected_in).to(combined_features.device)
+            combined_features = proj_out(combined_features)
+            last_dim = expected_in
+        # 展平為 [N*N, last_dim]
+        combined_features_flat = combined_features.view(-1, last_dim)
+        adj_scores_flat = self.output_kan(combined_features_flat).squeeze(-1)  # [N*N]
+        adj_scores = adj_scores_flat.view(num_nodes, num_nodes)  # [N, N]
+        
+        # 🎯 細微差異化機制 - 微調增強值域
+        # 方案A: 微調非線性放大
+        scale_factor = 4.0  # 微調放大係數
+        adj_scores = torch.tanh(adj_scores * scale_factor)
+        
+        # 🎯 細微B: 微調競爭機制 - 適度增強噪聲和溫度
+        noise = torch.randn_like(adj_scores) * 0.1  # 微調噪聲強度
+        adj_scores_noisy = adj_scores + noise
+        
+        # 方案B: 局部競爭機制 - 每行進行softmax確保節點間競爭
+        temperature = 0.15  # 微調溫度，適度增強差異
+        competitive_scores = torch.softmax(adj_scores_noisy * temperature, dim=1)
+        
+        # 🎯 修復C: 故障感知差異化
+        if fault_type is not None and fault_type in self.fault_type_map:
+            # 根據故障類型調整競爭強度
+            fault_intensity = {
+                'cpu': 1.5, 'mem': 1.3, 'disk': 1.4, 
+                'socket': 1.2, 'delay': 1.1, 'loss': 1.0
+            }.get(fault_type, 1.0)
+            competitive_scores = competitive_scores * fault_intensity
+        
+        # 🎯 修復D: 降低稀疏化程度
+        adj_matrix = self.apply_dynamic_sparsification(competitive_scores, sparsity_level=0.3)
+        
+        # 移除自環（避免就地操作破壞梯度）
+        eye = torch.eye(num_nodes, device=adj_matrix.device, dtype=adj_matrix.dtype)
+        adj_matrix = adj_matrix * (1.0 - eye)
+        
+        # 確保對稱性（無向圖）
+        adj_matrix = (adj_matrix + adj_matrix.T) / 2.0
+        
+        return adj_matrix
+    
+    def apply_dynamic_sparsification(self, adj_matrix, sparsity_level=0.3):
+        """動態調整稀疏閾值，確保圖結構合理"""
+        # 🎯 修復1: 降低稀疏化程度，保留更多連接
+        # 方法1: 基於分位數（適應不同密度的圖）
+        threshold = torch.quantile(adj_matrix, 1 - sparsity_level)
+        
+        # 方法2: 混合策略（推薦）
+        mean_val = torch.mean(adj_matrix)
+        std_val = torch.std(adj_matrix)
+        adaptive_threshold = 0.5 * threshold + 0.5 * (mean_val + 0.2 * std_val)
+        
+        # 🎯 修復2: 確保至少保留一些連接
+        min_threshold = torch.quantile(adj_matrix, 0.8)  # 至少保留20%的連接
+        adaptive_threshold = torch.min(adaptive_threshold, min_threshold)
+        
+        # 應用稀疏化
+        sparse_adj = torch.where(
+            adj_matrix > adaptive_threshold, 
+            adj_matrix, 
+            torch.tensor(0.0, device=adj_matrix.device)
+        )
+        
+        # 🎯 修復3: 確保每個節點至少有一個出邊
+        row_sums = sparse_adj.sum(dim=1, keepdim=True)
+        zero_rows = (row_sums == 0).squeeze(1)
+        
+        if zero_rows.any():
+            # 對沒有出邊的節點，保留其最大的連接
+            for i in range(adj_matrix.size(0)):
+                if zero_rows[i]:
+                    max_val, max_idx = torch.max(adj_matrix[i], dim=0)
+                    if max_val > 0:
+                        sparse_adj[i, max_idx] = max_val
+        
+        # 標準化
+        row_sums = sparse_adj.sum(dim=1, keepdim=True)
+        sparse_adj = torch.where(row_sums > 0, sparse_adj / (row_sums + 1e-8), sparse_adj)
+        
+        return sparse_adj
+
+
+class MultiScaleGraphDecoder(nn.Module):
+    """
+    多尺度圖解碼器 - 使用KAN學習多種尺度的圖結構
+    
+    原理：
+    1. 學習多種尺度的圖結構（局部、中層、全局）
+    2. 動態權重融合不同尺度的圖
+    3. 自適應稀疏化，無需預設故障類型
+    """
+    
+    def __init__(self, embed_dim, num_nodes, kan_grid_size=8, scales=3):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.num_nodes = num_nodes
+        self.scales = scales
+        self.current_epoch = 0  # 訓練進度追蹤
+        
+        # 多尺度KAN解碼器
+        self.scale_decoders = nn.ModuleList([
+            self._create_scale_decoder(embed_dim, kan_grid_size, scale=i) 
+            for i in range(scales)
+        ])
+        
+        # 🎯 優化2: 可學習溫度參數
+        self.learnable_temps = nn.Parameter(torch.tensor([0.3, 0.6, 0.9]))  # 初始溫度
+        
+        # 動態權重學習器
+        self.scale_weights = nn.Sequential(
+            nn.Linear(embed_dim, 64),
+            nn.ReLU(),
+            nn.Linear(64, scales),
+            nn.Softmax(dim=-1)
+        )
+        
+        # 邊權重校準器
+        self.edge_calibrator = nn.Sequential(
+            nn.Linear(embed_dim * 2, 32),
+            nn.ReLU(),
+            nn.Linear(32, 1),
+            nn.Sigmoid()
+        )
+        
+        # 🎯 優化3: 可學習融合權重
+        self.sim_weights = nn.Parameter(torch.tensor([0.4, 0.25, 0.2, 0.15]))  # [original, euclidean, manhattan, variance]
+    
+    def _create_scale_decoder(self, embed_dim, kan_grid_size, scale):
+        """創建單一尺度的解碼器 - 適應增強特徵維度"""
+        # 增強特徵維度: 5*embed_dim (element_wise + concat + diff + cosine)
+        rich_feature_dim = 5 * embed_dim
+        decoder = nn.ModuleDict({
+            'feature_compressor': nn.Linear(rich_feature_dim, embed_dim),  # 壓縮到原始維度
+            'kan_attention': AdvancedKANLayer(embed_dim, embed_dim // 2),
+            'output_kan': AdvancedKANLayer(embed_dim // 2, 1)
+        })
+        # 動態溫度參數（會在forward中更新）
+        decoder.temperature = nn.Parameter(torch.tensor(0.5))  # 初始值，會被動態調整
+        return decoder
+    
+    def forward(self, embeddings, fault_type=None):
+        """
+        前向傳播 - 學習多尺度圖結構
+        
+        Args:
+            embeddings: 節點嵌入 [num_nodes, embed_dim]
+            fault_type: 故障類型（保留接口兼容性，但不使用）
+            
+        Returns:
+            adj_matrix: 融合的多尺度鄰接矩陣 [num_nodes, num_nodes]
+        """
+        num_nodes, embed_dim = embeddings.shape
+        
+        # 1. 學習多種尺度的圖結構
+        scale_graphs = []
+        for i, decoder in enumerate(self.scale_decoders):
+            # 🎯 優化2: 動態溫度調整
+            base_temp = self.learnable_temps[i]
+            progress = min(1.0, self.current_epoch / 100.0)  # 訓練進度 [0,1]
+            # 動態溫度: 初始值 + 進度偏移 + 小噪聲
+            dynamic_temp = base_temp * (1 + 0.5 * progress) + 0.05 * torch.randn(1, device=embeddings.device).item()
+            dynamic_temp = torch.clamp(torch.tensor(dynamic_temp), 0.1, 2.0)
+            
+            # 更新decoder溫度
+            decoder.temperature.data = dynamic_temp
+            
+            # 使用動態溫度生成多樣化圖
+            adj = self._generate_scale_graph(embeddings, decoder, i)
+            scale_graphs.append(adj)
+        
+        # 更新epoch計數器
+        self.current_epoch += 1
+        
+        # 2. 動態預測最佳尺度組合
+        global_summary = torch.mean(embeddings, dim=0, keepdim=True)
+        weights = self.scale_weights(global_summary).squeeze(0)
+        
+        # 3. 融合多尺度圖
+        fused_graph = sum(w * g for w, g in zip(weights, scale_graphs))
+        
+        # 4. 邊權重校準
+        calibrated_graph = self._calibrate_edge_weights(fused_graph, embeddings)
+        
+        # 5. 應用自適應稀疏化
+        adj_matrix = self._apply_adaptive_sparsification(calibrated_graph)
+        
+        return adj_matrix
+    
+    def _generate_scale_graph(self, embeddings, decoder, scale_idx):
+        """生成單一尺度的圖結構 - 增強節點對交互"""
+        num_nodes, embed_dim = embeddings.shape
+        
+        # 🎯 優化1: 增強節點對交互計算
+        expanded_emb1 = embeddings.unsqueeze(1).expand(-1, num_nodes, -1)
+        expanded_emb2 = embeddings.unsqueeze(0).expand(num_nodes, -1, -1)
+        
+        # 多種交互方式組合
+        element_wise = expanded_emb1 * expanded_emb2  # 元素級乘積
+        concatenated = torch.cat([expanded_emb1, expanded_emb2], dim=-1)  # 拼接特徵 [N,N,2*D]
+        difference = torch.abs(expanded_emb1 - expanded_emb2)  # 絕對差異
+        cosine_sim = F.cosine_similarity(expanded_emb1, expanded_emb2, dim=-1).unsqueeze(-1)  # 餘弦相似度
+        
+        # 組合多種特徵 [N,N,4*D+1]
+        pairwise_features = torch.cat([
+            element_wise,  # [N,N,D]
+            concatenated,  # [N,N,2*D] 
+            difference,    # [N,N,D]
+            cosine_sim.expand(-1, -1, embed_dim)  # [N,N,D]
+        ], dim=-1)
+        
+        # 重塑為KAN期望的格式
+        rich_feature_dim = pairwise_features.shape[-1]  # 4*D+D = 5*D
+        pairwise_features_flat = pairwise_features.view(-1, rich_feature_dim)
+        
+        # 特徵壓縮到原始維度
+        compressed_features = decoder['feature_compressor'](pairwise_features_flat)
+        
+        # 使用KAN計算注意力權重
+        attention_weights_flat = decoder['kan_attention'](compressed_features)
+        attention_weights = attention_weights_flat.view(num_nodes, num_nodes, -1)
+        
+        # 輸出鄰接矩陣
+        adj_scores_flat = decoder['output_kan'](attention_weights_flat).squeeze(-1)
+        adj_scores = adj_scores_flat.view(num_nodes, num_nodes)
+        
+        # 應用動態溫度縮放
+        temperature = decoder.temperature
+        adj_scores = torch.tanh(adj_scores / temperature)
+        
+        return adj_scores
+    
+    def _calibrate_edge_weights(self, adj_matrix, embeddings):
+        """混合校準機制 - 多維相似度 + 可學習權重"""
+        # 🎯 優化3: 多種相似度計算
+        # 1. 歐幾里得距離相似度
+        euclidean_dist = torch.cdist(embeddings, embeddings, p=2)
+        euclidean_sim = 1.0 / (1.0 + euclidean_dist)
+        
+        # 2. 曼哈頓距離相似度
+        manhattan_dist = torch.cdist(embeddings, embeddings, p=1)
+        manhattan_sim = 1.0 / (1.0 + manhattan_dist)
+        
+        # 3. 特徵方差相似度
+        feature_var = torch.var(embeddings, dim=1, keepdim=True)
+        var_sim = 1.0 / (1.0 + torch.abs(feature_var - feature_var.T))
+        
+        # 4. 正規化所有相似度到[0,1]
+        euclidean_sim = (euclidean_sim - euclidean_sim.min()) / (euclidean_sim.max() - euclidean_sim.min() + 1e-8)
+        manhattan_sim = (manhattan_sim - manhattan_sim.min()) / (manhattan_sim.max() - manhattan_sim.min() + 1e-8)
+        var_sim = (var_sim - var_sim.min()) / (var_sim.max() - var_sim.min() + 1e-8)
+        
+        # 5. 可學習融合（權重會自動正規化）
+        weights = F.softmax(self.sim_weights, dim=0)
+        calibrated = (
+            weights[0] * adj_matrix +
+            weights[1] * euclidean_sim +
+            weights[2] * manhattan_sim +
+            weights[3] * var_sim
+        )
+        
+        # 動態範圍調整
+        min_val, max_val = calibrated.min(), calibrated.max()
+        calibrated = (calibrated - min_val) / (max_val - min_val + 1e-8)
+        
+        # 細微銳化（微調銳化強度）
+        calibrated = self._sharpen_adjacency(calibrated, gamma=2.5)
+        
+        return calibrated
+    
+    def _sharpen_adjacency(self, adj_matrix, gamma=2.5, eps=1e-6):
+        """
+        銳化鄰接矩陣 - 擴大值域範圍，增強判別性
+        gamma > 1: 銳化，gamma < 1: 平滑
+        """
+        # 確保數值穩定性
+        adj_clamped = torch.clamp(adj_matrix, eps, 1 - eps)
+        
+        # 轉換為logit空間進行銳化
+        logits = torch.log(adj_clamped) - torch.log(1 - adj_clamped)
+        
+        # 應用銳化係數
+        sharpened_logits = logits * gamma
+        
+        # 轉回概率空間
+        sharpened = torch.sigmoid(sharpened_logits)
+        
+        # 確保對稱性
+        sharpened = (sharpened + sharpened.T) / 2
+        
+        return sharpened
+    
+    def _apply_adaptive_sparsification(self, adj_matrix, epoch=None):
+        """修正版稀疏化策略 - 精確控制稀疏程度"""
+        if epoch is None:
+            epoch = 0
+        
+        n = adj_matrix.shape[0]
+        total_elements = n * n
+        
+        # 保守稀疏目標 (保持合理密度)
+        if epoch < 50:
+            target_sparsity = 0.4   # 初期保持較高密度
+        elif epoch < 150:
+            target_sparsity = 0.5   # 中期適度稀疏
+        else:
+            target_sparsity = 0.6   # 後期適度稀疏
+        
+        # 保守修正: 限制稀疏範圍保持合理密度
+        if target_sparsity < 0.2:
+            target_sparsity = 0.2
+        if target_sparsity > 0.8:
+            target_sparsity = 0.8
+        
+        # 計算閾值
+        adj_flat = adj_matrix.flatten()
+        threshold = torch.quantile(adj_flat, 1 - target_sparsity)
+        
+        # 保守修正: 添加安全邊界保持合理密度
+        min_threshold = torch.quantile(adj_flat, 0.8)   # 保證至少保留20%最高連接
+        threshold = max(threshold.item(), min_threshold.item())
+        
+        # 軟硬結合的稀疏化
+        hard_mask = (adj_matrix > threshold).float()
+        
+        # 動態軟閾值: 在[0.9*threshold, 1.1*threshold]平滑過渡
+        soft_values = torch.sigmoid((adj_matrix - threshold) * 5.0)
+        
+        # 確保每個節點至少有2個連接
+        row_sums = hard_mask.sum(dim=1)
+        insufficient = (row_sums < 2).float().view(-1, 1)
+        
+        # 找出最大連接（不超過節點數）
+        k = min(2, n)  # 確保k不超過節點數
+        _, top_indices = torch.topk(adj_matrix, k, dim=1)
+        top_mask = torch.zeros_like(adj_matrix)
+        for i in range(n):
+            for j in range(k):
+                if j < top_indices.shape[1]:  # 確保索引有效
+                    top_mask[i, top_indices[i, j]] = 1.0
+        
+        # 補充不足的連接
+        sparse_adj = hard_mask * soft_values + insufficient * top_mask
+        
+        # 確保不添加自連接
+        sparse_adj = sparse_adj * (1 - torch.eye(n, device=sparse_adj.device))
+        
+        # 行歸一化 (使PageRank能夠正確計算)
+        row_sums = sparse_adj.sum(dim=1, keepdim=True)
+        sparse_adj = sparse_adj / (row_sums + 1e-8)
+        
+        return sparse_adj
+
+
 # 將SimplifiedGNNKAN添加到可用的模型中
 __all__ = ['GNNKANModel', 'SimplifiedGNNKAN', 'TemporalAttention', 'create_fallback_model', 
-           'train_gnn_kan_model', 'compute_loss_stable']
+           'train_gnn_kan_model', 'compute_loss_stable', 'MultiScaleGraphDecoder', 'LossScheduler']

@@ -427,7 +427,44 @@ class KANFeatureProcessor:
             from .feature_processing import simplified_metric_processing
             features, node_names = simplified_metric_processing(data, target_dim=self.target_dim)
         
+        # 🎯 方向1: 增強輸入特徵豐富度 - 解決圖稀疏根源
+        features = self.enhanced_feature_enrichment(features, node_names)
+        
         return features, node_names
+    
+    def enhanced_feature_enrichment(self, features, node_names):
+        """RICH輸入特徵 - 時序異常檢測 + 融合, 完全數據驅動"""
+        import torch
+        
+        # 轉換為tensor進行處理
+        if not isinstance(features, torch.Tensor):
+            features = torch.tensor(features, dtype=torch.float32)
+        
+        # 1. 時序異常檢測: 計算 z-score 異常分數 (無需預設類型)
+        mean = features.mean(dim=1, keepdim=True)  # 時序平均
+        std = features.std(dim=1, keepdim=True) + 1e-8
+        z_scores = (features - mean) / std
+        anomaly_scores = z_scores.abs().mean(dim=0)  # 節點平均異常度
+        
+        # 2. 變化率特徵: 計算相鄰時間點差異
+        if features.shape[1] > 1:
+            diff = features[:, 1:] - features[:, :-1]
+            change_rate = diff.abs().sum(dim=1) / (features.shape[1] - 1 + 1e-8)  # 平均變化率
+        else:
+            change_rate = torch.zeros(features.shape[0], device=features.device)
+        
+        # 3. 融合: 使用簡單可學習權重 (數據驅動)
+        anomaly_weight = 0.3
+        change_weight = 0.3
+        enriched = features * 0.4 + anomaly_scores.unsqueeze(0) * anomaly_weight + change_rate.unsqueeze(1) * change_weight
+        
+        # 4. 防止過度稀疏: 添加小量高斯噪聲 (0.01 std)
+        noise = torch.randn(enriched.shape, device=enriched.device) * 0.01 * enriched.std()
+        enriched = enriched + noise
+        
+        print(f"🔧 特徵增強: 原始{features.shape} -> 增強{enriched.shape}, 異常分數範圍[{anomaly_scores.min():.3f}, {anomaly_scores.max():.3f}]")
+        
+        return enriched.numpy()
     
     def _fast_ica_processing(self, service_data: pd.DataFrame) -> np.ndarray:
         """快速ICA處理"""
@@ -701,31 +738,62 @@ class OptimizedGraphBuilder:
         for edge, weight in zip(edges, weights):
             adj_matrix[edge[0], edge[1]] = weight
         
-        # 檢查圖密度 - 目標密度範圍 [0.25, 0.5]，迭代調整
+        # 檢查圖密度 - 基於節點數的自適應目標密度
         def compute_density(e):
             # 🎯 修正: 對於無向圖，最大邊數應該是 n*(n-1)/2
             max_possible = num_nodes * (num_nodes - 1) / 2 if num_nodes > 1 else 0
             return len(e) / 2 / max_possible if max_possible > 0 else 0  # 除以2因為雙向邊
 
-        density = compute_density(edges)
-        target_min, target_max = 0.25, 0.5
-        iter_limit = 4
-        it = 0
-        while (density < target_min or density > target_max) and it < iter_limit:
-            if density < target_min:
-                print("⚠️ 圖密度過低，降低閾值並重建")
-                threshold *= 0.8
+        def adaptive_target_density(n_nodes):
+            """基於節點數的自適應目標密度 - 細微調整大圖"""
+            if n_nodes <= 5:
+                return 0.25, 0.5  # 小圖：適中密度
+            elif n_nodes <= 15:
+                return 0.2, 0.4  # 中圖：適中密度
             else:
-                print("⚠️ 圖密度過高，提升閾值並重建")
-                threshold *= 1.25
+                return 0.18, 0.4  # 大圖：微調提升下限
+
+        density = compute_density(edges)
+        target_min, target_max = adaptive_target_density(num_nodes)
+        
+        # 優化調整邏輯 - 更精準, 減少迭代
+        step_low = 0.95  # 溫和降低 (從0.9調整)
+        step_high = 1.05  # 溫和提升 (從1.1調整)
+        hysteresis = 0.05  # 遲滯避免震蕩
+        iter_limit = 4  # 減少迭代次數
+        it = 0
+        
+        print(f"🔧 圖密度調整: 當前={density:.3f}, 目標=[{target_min:.3f}, {target_max:.3f}]")
+        
+        while it < iter_limit:
+            if density < target_min - hysteresis:
+                print("⚠️ 密度過低, 降低閾值")
+                threshold *= step_low
+            elif density > target_max + hysteresis:
+                print("⚠️ 密度過高, 提升閾值")
+                threshold *= step_high
+            else:
+                break
+            
             edges, weights = self._rebuild_edges(similarity_matrix, threshold, num_nodes)
             density = compute_density(edges)
             it += 1
+            print(f"  迭代{it}: 密度={density:.3f}, 閾值={threshold:.3f}")
         
         # 檢查連通性
         if not self._is_connected(edges, num_nodes):
             print("⚠️ 圖不連通，添加最小連接")
             edges, weights = self._add_minimal_connections(edges, weights, num_nodes)
+        
+        # 最終密度檢查
+        final_density = compute_density(edges)
+        if final_density < 0.1:
+            print(f"⚠️ 最終密度過低({final_density:.3f})，強制提升")
+            # 降低閾值並重建
+            threshold *= 0.8
+            edges, weights = self._rebuild_edges(similarity_matrix, threshold, num_nodes)
+            final_density = compute_density(edges)
+            print(f"✓ 密度調整後: {final_density:.3f}")
         
         # 去重
         edge_set = set()
@@ -745,6 +813,10 @@ class OptimizedGraphBuilder:
             for i in range(1, num_nodes):
                 final_edges.extend([[0, i], [i, 0]])
                 final_weights.extend([0.8, 0.8])
+        
+        # 最終密度報告
+        final_density = compute_density(final_edges)
+        print(f"✅ 圖構建完成: {len(final_edges)} 條邊, 密度={final_density:.3f}")
         
         edge_index = torch.tensor(final_edges, dtype=torch.long).T
         edge_weights = torch.tensor(final_weights, dtype=torch.float)

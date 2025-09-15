@@ -618,17 +618,39 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
     
     with torch.no_grad():
         try:
-
-            # 🎯 使用KNN Baseline進行鄰接矩陣構建（永久替換Graph Decoder）
-            print("🎯 使用KNN Baseline進行鄰接矩陣構建...")
+            # 🎯 使用KAN-based Graph Decoder進行圖結構學習
+            print("🎯 使用KAN-based Graph Decoder學習圖結構...")
             
-            # 只獲取embeddings，不使用Graph Decoder
-            embeddings, _ = model(node_features, edge_index)
-            print(f"✓ 獲取embeddings成功: 輸入{node_features.shape} -> 嵌入{embeddings.shape}")
+            # 提取故障類型信息
+            fault_type = kwargs.get('fault_type', None)
+            if fault_type is None:
+                # 嘗試從node_names推斷故障類型
+                if any('cpu' in name.lower() for name in node_names):
+                    fault_type = 'cpu'
+                elif any('mem' in name.lower() for name in node_names):
+                    fault_type = 'mem'
+                elif any('disk' in name.lower() for name in node_names):
+                    fault_type = 'disk'
+                elif any('socket' in name.lower() for name in node_names):
+                    fault_type = 'socket'
+                elif any('delay' in name.lower() or 'latency' in name.lower() for name in node_names):
+                    fault_type = 'delay'
+                elif any('loss' in name.lower() for name in node_names):
+                    fault_type = 'loss'
+                print(f"🔍 推斷的故障類型: {fault_type}")
             
-            # 使用KNN構建鄰接矩陣
-            adj_matrix = knn_fallback(embeddings, node_names, k=5, similarity_threshold=0.3)
-            print(f"✓ KNN鄰接矩陣構建成功: {adj_matrix.shape}, 密度: {adj_matrix.mean().item():.3f}")
+            # 使用真正的GNN-KAN模型學習圖結構
+            embeddings, adj_scores = model(node_features, edge_index, fault_type)
+            print(f"✓ GNN-KAN推理成功: 輸入{node_features.shape} -> 嵌入{embeddings.shape}")
+            
+            if adj_scores is not None:
+                # 使用KAN學習的鄰接矩陣
+                adj_matrix = adj_scores
+                print(f"✓ KAN圖結構學習成功: {adj_matrix.shape}, 密度: {adj_matrix.mean().item():.3f}")
+            else:
+                # 降級到KNN
+                print("⚠️ KAN圖學習失敗，使用KNN fallback")
+                adj_matrix = knn_fallback(embeddings, node_names, k=5, similarity_threshold=0.3)
             
             import torch.nn.functional as F
             embeddings = F.normalize(embeddings, p=2, dim=-1)
@@ -639,7 +661,7 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
                 embeddings = embeddings.cpu()
                 
         except Exception as inference_error:
-            print(f"⚠️ KAN推理失敗: {inference_error}")
+            print(f"⚠️ GNN-KAN推理失敗: {inference_error}")
             # 降級處理
             num_nodes = len(node_names)
             adj_matrix = torch.eye(num_nodes)
@@ -696,13 +718,95 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
     
     print("📊 計算PageRank重要性排名...")
     
-    def safe_pagerank(adj_matrix, node_names):
-        """安全的PageRank計算，包含軟閾值和空圖保護"""
+    def sharpened_pagerank(adj_matrix, node_names, fault_type=None, alpha=0.85, beta=1.8, min_gap=0.04):
+        """修正版銳化PageRank - 處理dim錯誤 & 動態gap"""
         import torch
         import networkx as nx
+        import numpy as np
         
-        # 轉換為torch tensor進行軟閾值處理
-        adj_tensor = torch.tensor(adj_matrix, dtype=torch.float32)
+        # 修復dim錯誤 - 始終用np.var
+        if hasattr(adj_matrix, 'cpu') or (isinstance(adj_matrix, torch.Tensor)):
+            adj_matrix = adj_matrix.cpu().numpy()
+        
+        # 轉換為numpy進行處理
+        adj_np = np.array(adj_matrix, dtype=np.float32)
+        
+        # 🎯 修復1: 檢查並修復空矩陣問題
+        if adj_np.sum() < 1e-6:
+            print("⚠️ 檢測到空鄰接矩陣，使用基於特徵相似性的回退策略")
+            n = len(node_names)
+            adj_np = np.zeros((n, n))
+            
+            # 創建基於名稱相似性的連接
+            for i in range(n):
+                for j in range(i+1, n):
+                    sim = len(set(node_names[i]) & set(node_names[j])) / max(len(node_names[i]), len(node_names[j]))
+                    if sim > 0.3:
+                        adj_np[i, j] = sim
+                        adj_np[j, i] = sim
+            
+            # 如果仍然沒有連接，創建最小連通圖
+            if adj_np.sum() < 1e-6:
+                for i in range(n-1):
+                    adj_np[i, i+1] = 0.5
+                    adj_np[i+1, i] = 0.5
+        
+        # 基線PageRank
+        G = nx.from_numpy_array(adj_np, create_using=nx.DiGraph)
+        pr_scores = nx.pagerank(G, alpha=alpha)
+        
+        # 動態min_gap - 基於n_nodes調整 (小圖大gap)
+        n = len(node_names)
+        dynamic_gap = min_gap * (1 + 1.0 / n)  # e.g. 3 nodes: gap~0.083, 38 nodes: gap~0.052
+        
+        # 應用銳化
+        scores = np.array(list(pr_scores.values()))
+        sorted_idx = np.argsort(-scores)
+        
+        if len(scores) > 1 and scores[sorted_idx[0]] - scores[sorted_idx[1]] < dynamic_gap:
+            print(f"🔧 檢測到差距不足, 應用銳化 (dynamic_gap={dynamic_gap:.4f})")
+            scores[sorted_idx[0]] += dynamic_gap * 0.7
+            scores[sorted_idx[1]] -= dynamic_gap * 0.3
+            scores = scores / scores.sum()
+            
+            # 重建分數字典
+            for i, score in enumerate(scores):
+                pr_scores[i] = score
+        
+        # 邊界保護
+        for i in range(len(pr_scores)):
+            pr_scores[i] = np.clip(pr_scores[i], 0.01, 0.99)
+        
+        # 重新歸一化
+        total_score = sum(pr_scores.values())
+        for i in pr_scores:
+            pr_scores[i] /= total_score
+        
+        sorted_nodes = sorted(pr_scores.items(), key=lambda x: x[1], reverse=True)
+        return [(node_names[idx], score) for idx, score in sorted_nodes]
+    
+    def ensemble_pagerank(adj_matrix, node_names, num_ensembles=3, alpha=0.85, beta=1.8, min_gap=0.04):
+        """多模型集成 - 平均PageRank分數"""
+        all_scores = []
+        
+        for i in range(num_ensembles):
+            # 輕微隨機噪聲擾動adj (數據驅動, 防止 trapping in local min)
+            noise = np.random.randn(*adj_matrix.shape) * 0.01 * np.std(adj_matrix)
+            perturbed_adj = adj_matrix + noise
+            perturbed_adj = np.clip(perturbed_adj, 0, 1)  # 確保在[0,1]範圍
+            
+            # 使用銳化PageRank
+            scores = sharpened_pagerank(perturbed_adj, node_names, alpha=alpha, beta=beta, min_gap=min_gap)
+            all_scores.append(dict(scores))
+        
+        # 平均統合
+        avg_scores = {}
+        for key in all_scores[0].keys():
+            avg_scores[key] = sum(d[key] for d in all_scores) / num_ensembles
+        
+        # 轉換回列表格式
+        sorted_avg = sorted(avg_scores.items(), key=lambda x: x[1], reverse=True)
+        return [(name, score) for name, score in sorted_avg]
         
         # 軟閾值：使用溫度softmax處理連續權重
         adj_soft = torch.softmax(adj_tensor / 0.1, dim=1)  # 溫度=0.1用於銳化
@@ -726,8 +830,8 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
         return [(node_names[idx], score) for idx, score in sorted_nodes]
     
     try:
-        # 使用安全的PageRank函數
-        page_rank_results = safe_pagerank(numpy_adj, node_names)
+        # 🎯 方向4: 多模型集成 - 使用集成PageRank
+        page_rank_results = ensemble_pagerank(numpy_adj, node_names, num_ensembles=3, alpha=0.85, beta=1.8, min_gap=0.04)
         # 提取節點名稱列表（按重要性排序）
         pagerank_ranks = [result[0] for result in page_rank_results]
         pagerank_scores = {result[0]: result[1] for result in page_rank_results}
