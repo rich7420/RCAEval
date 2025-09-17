@@ -466,6 +466,8 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
         
         # 使用正確的方法調用
         optimized_data = processor.optimize_input(data, inject_time)
+        # 取得因果先後先驗（如有）
+        lead_lag_prior = optimized_data.metadata.get('lead_lag_prior', None)
         
         node_features = optimized_data.node_features
         edge_index = optimized_data.edge_index
@@ -670,6 +672,18 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
     # 4.5 故障時間點增強分析
     print("🎯 執行故障時間點增強分析...")
     enhanced_adj = adj_matrix.clone()
+    # 應用保守的lead-lag先驗：偏好早→晚的方向（若可用）
+    try:
+        if 'lead_lag_prior' in locals() and lead_lag_prior is not None:
+            import torch as _torch
+            prior_tensor = _torch.tensor(lead_lag_prior, dtype=enhanced_adj.dtype, device=enhanced_adj.device)
+            if prior_tensor.shape == enhanced_adj.shape:
+                enhanced_adj = enhanced_adj * prior_tensor
+                # 行歸一化，保持隨後的PageRank穩定
+                row_sums = enhanced_adj.sum(dim=1, keepdim=True)
+                enhanced_adj = _torch.where(row_sums > 0, enhanced_adj / (row_sums + 1e-8), enhanced_adj)
+    except Exception:
+        pass
     
     if inject_time is not None:
         print(f"✓ 使用故障注入時間: {inject_time}")

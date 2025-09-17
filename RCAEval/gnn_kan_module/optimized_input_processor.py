@@ -978,6 +978,9 @@ class GNNKANInputOptimizer:
             node_names = [f'node_{i}' for i in range(node_features.shape[0])]
 
         edge_index, edge_weights = self.graph_builder.build_graph_fast(node_features, node_names)
+
+        # 保守的因果先後矩陣（lead-lag prior）：偏好「先異常→後影響」的方向
+        lead_lag_prior = self._compute_lead_lag_prior(df, node_names)
         
         # 二次保險：強制一致
         if node_features.shape[0] != len(node_names):
@@ -1000,7 +1003,8 @@ class GNNKANInputOptimizer:
                 'num_nodes': len(node_names),
                 'num_edges': edge_index.size(1),
                 'feature_method': self.feature_processor.method,
-                'inject_time': inject_time
+                'inject_time': inject_time,
+                'lead_lag_prior': lead_lag_prior.tolist() if lead_lag_prior is not None else None
             }
         )
     
@@ -1115,6 +1119,60 @@ class GNNKANInputOptimizer:
                 print(f"[DEBUG] 最終列名: {df.columns.tolist()}")
 
         return df
+
+    def _compute_lead_lag_prior(self, df: pd.DataFrame, node_names: List[str]) -> Optional[torch.Tensor]:
+        """保守計算服務間先後關係的先驗矩陣。
+        方法：
+        - 對每個節點，嘗試從欄位名稱包含節點名的數值列聚合成單一時間序列（均值）
+        - 對聚合序列做z-score，取首次超過閾值的時間作為『異常起始時間』
+        - 構建先驗 L[i,j] ~ sigmoid((t_j - t_i)/tau)，i 早於 j 時 > 0.5，否則 < 0.5
+        退化處理：找不到對應列或時間不足時，返回全1矩陣（不影響原流程）
+        """
+        try:
+            if df is None or not isinstance(df, pd.DataFrame) or len(df) == 0:
+                return None
+            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+            if len(numeric_cols) == 0:
+                return None
+            series_per_node = []
+            for name in node_names:
+                # 寬鬆匹配：名稱出現在欄位中或欄位在名稱中
+                matched = [c for c in numeric_cols if (str(name).lower() in str(c).lower()) or (str(c).lower() in str(name).lower())]
+                if not matched:
+                    # 回退：選取與該節點索引相同模數的列，避免空
+                    idx = len(series_per_node) % max(1, len(numeric_cols))
+                    matched = [numeric_cols[idx]]
+                values = df[matched].mean(axis=1).astype(float).values
+                if len(values) < 5:
+                    series_per_node.append(None)
+                    continue
+                mu = np.mean(values)
+                sigma = np.std(values) + 1e-8
+                z = (values - mu) / sigma
+                # 首次顯著異常閾值（保守）：|z|>2.0
+                thresh = 2.0
+                indices = np.where(np.abs(z) > thresh)[0]
+                onset = int(indices[0]) if len(indices) > 0 else len(values)  # 未觸發則視為很晚
+                series_per_node.append(onset)
+            if any(s is None for s in series_per_node):
+                # 時間點不足，返回均勻先驗
+                n = len(node_names)
+                return torch.ones((n, n), dtype=torch.float32)
+            onsets = np.array(series_per_node, dtype=float)
+            n = len(onsets)
+            if n == 0:
+                return None
+            # 時間尺度（tau）取序列長度的5%，至少為1
+            T = max(1.0, 0.05 * max(onsets.max(), 1.0))
+            # L[i,j] = sigmoid((t_j - t_i)/tau)
+            diff = onsets.reshape(1, n) - onsets.reshape(n, 1)
+            L = 1.0 / (1.0 + np.exp(-diff / T))
+            # 歸一化並移除自環偏置
+            np.fill_diagonal(L, 1.0)
+            L = np.clip(L, 0.2, 0.8)
+            return torch.tensor(L, dtype=torch.float32)
+        except Exception:
+            return None
     
     def compute_multi_modal_similarity(self, fused_embeds: torch.Tensor) -> torch.Tensor:
         """

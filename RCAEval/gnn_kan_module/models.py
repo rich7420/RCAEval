@@ -942,9 +942,9 @@ class MultiScaleGraphDecoder(nn.Module):
         adj_scores_flat = decoder['output_kan'](attention_weights_flat).squeeze(-1)
         adj_scores = adj_scores_flat.view(num_nodes, num_nodes)
         
-        # 應用動態溫度縮放
+        # 應用動態溫度縮放（保留線性分數，避免中途壓縮）
         temperature = decoder.temperature
-        adj_scores = torch.tanh(adj_scores / temperature)
+        adj_scores = adj_scores / (temperature + 1e-8)
         
         return adj_scores
     
@@ -980,9 +980,11 @@ class MultiScaleGraphDecoder(nn.Module):
         # 動態範圍調整
         min_val, max_val = calibrated.min(), calibrated.max()
         calibrated = (calibrated - min_val) / (max_val - min_val + 1e-8)
+        # 避免極端0/1導致後續硬剪枝過度
+        calibrated = torch.clamp(calibrated, 0.05, 0.95)
         
-        # 細微銳化（微調銳化強度）
-        calibrated = self._sharpen_adjacency(calibrated, gamma=2.5)
+        # 細微銳化（降低強度，避免過度兩極）
+        calibrated = self._sharpen_adjacency(calibrated, gamma=2.2)
         
         return calibrated
     
@@ -1018,11 +1020,11 @@ class MultiScaleGraphDecoder(nn.Module):
         
         # 保守稀疏目標 (保持合理密度)
         if epoch < 50:
-            target_sparsity = 0.4   # 初期保持較高密度
+            target_sparsity = 0.45   # 初期保留45%
         elif epoch < 150:
-            target_sparsity = 0.5   # 中期適度稀疏
+            target_sparsity = 0.40   # 中期保留40%
         else:
-            target_sparsity = 0.6   # 後期適度稀疏
+            target_sparsity = 0.35   # 後期保留35%
         
         # 保守修正: 限制稀疏範圍保持合理密度
         if target_sparsity < 0.2:
@@ -1035,37 +1037,30 @@ class MultiScaleGraphDecoder(nn.Module):
         threshold = torch.quantile(adj_flat, 1 - target_sparsity)
         
         # 保守修正: 添加安全邊界保持合理密度
-        min_threshold = torch.quantile(adj_flat, 0.8)   # 保證至少保留20%最高連接
+        min_threshold = torch.quantile(adj_flat, 0.7)   # 保證至少保留30%最高連接
         threshold = max(threshold.item(), min_threshold.item())
         
-        # 軟硬結合的稀疏化
-        hard_mask = (adj_matrix > threshold).float()
+        # 動態軟閾值: 平滑過渡（連續權重，避免產生大量硬0）
+        soft_values = torch.sigmoid((adj_matrix - threshold) * 3.5)
         
-        # 動態軟閾值: 在[0.9*threshold, 1.1*threshold]平滑過渡
-        soft_values = torch.sigmoid((adj_matrix - threshold) * 5.0)
+        # 最小權重地板，避免行全0
+        soft_values = torch.clamp(soft_values, 1e-4, 1.0)
         
-        # 確保每個節點至少有2個連接
-        row_sums = hard_mask.sum(dim=1)
-        insufficient = (row_sums < 2).float().view(-1, 1)
-        
-        # 找出最大連接（不超過節點數）
-        k = min(2, n)  # 確保k不超過節點數
+        # 確保每個節點至少有2個連接（若行近乎全0，補強 top-2）
+        row_sums_soft = soft_values.sum(dim=1, keepdim=True)
+        needs_boost = (row_sums_soft.squeeze(1) < 2e-4).float().view(-1, 1)
+        k = min(2, n)
         _, top_indices = torch.topk(adj_matrix, k, dim=1)
-        top_mask = torch.zeros_like(adj_matrix)
+        boost = torch.zeros_like(adj_matrix)
         for i in range(n):
             for j in range(k):
-                if j < top_indices.shape[1]:  # 確保索引有效
-                    top_mask[i, top_indices[i, j]] = 1.0
-        
-        # 補充不足的連接
-        sparse_adj = hard_mask * soft_values + insufficient * top_mask
+                if j < top_indices.shape[1]:
+                    boost[i, top_indices[i, j]] = 1.0
+        # 以小常數加入，避免破壞連續性
+        sparse_adj = soft_values + needs_boost * 1e-3 * boost
         
         # 確保不添加自連接
         sparse_adj = sparse_adj * (1 - torch.eye(n, device=sparse_adj.device))
-        
-        # 行歸一化 (使PageRank能夠正確計算)
-        row_sums = sparse_adj.sum(dim=1, keepdim=True)
-        sparse_adj = sparse_adj / (row_sums + 1e-8)
         
         return sparse_adj
 

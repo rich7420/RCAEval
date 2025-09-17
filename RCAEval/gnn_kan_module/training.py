@@ -598,13 +598,25 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
             pred_adj_sigmoid = torch.eye(node_embedding.size(0), device=node_embedding.device)
         else:
             # 使用Graph Decoder的情況
-            recon_loss = F.binary_cross_entropy_with_logits(pred_adj, true_adj, reduction='mean')
-            pred_adj_sigmoid = torch.sigmoid(pred_adj)
+            # 若pred_adj已在[0,1]，視為概率直接用 BCE；否則視為logits用 BCEWithLogits
+            try:
+                pred_min = float(pred_adj.detach().min())
+                pred_max = float(pred_adj.detach().max())
+                is_prob = (pred_min >= 0.0) and (pred_max <= 1.0)
+            except Exception:
+                is_prob = False
+
+            if is_prob:
+                recon_loss = F.binary_cross_entropy(pred_adj, true_adj, reduction='mean')
+                pred_adj_sigmoid = pred_adj
+            else:
+                recon_loss = F.binary_cross_entropy_with_logits(pred_adj, true_adj, reduction='mean')
+                pred_adj_sigmoid = torch.sigmoid(pred_adj)
         
         # 🎯 強化極化損失 - 使用更激進的策略
         # 方法1: 獎勵接近0和1的值，懲罰中間值
         distance_from_center = torch.abs(pred_adj_sigmoid - 0.5)
-        polarization_loss = -torch.mean(distance_from_center ** 2) * 10  # 從8提升到10
+        polarization_loss = -torch.mean(distance_from_center ** 2) * 6  # 降低力度避免極端化
         
         # 🎯 方法2: 添加 top-k 對比損失 - 強化最重要的邊
         if pred_adj_sigmoid.numel() > 4:  # 確保有足夠的元素
@@ -629,12 +641,12 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
             bottom_k_vals = torch.topk(flat_adj, bottom_k, largest=False)[0]
             
             # 適度強化判別力：top-K接近1，bottom-K接近0
-            top_contrast_loss = torch.mean((1 - top_k_vals) ** 2) * 8  # 從5提升到8
-            bottom_contrast_loss = torch.mean(bottom_k_vals ** 2) * 8  # 從5提升到8
+            top_contrast_loss = torch.mean((1 - top_k_vals) ** 2) * 5
+            bottom_contrast_loss = torch.mean(bottom_k_vals ** 2) * 5
             
             # 新增：適度分數差異損失
             if len(top_k_vals) > 0 and len(bottom_k_vals) > 0:
-                score_diff_loss = torch.mean((top_k_vals[0] - bottom_k_vals[0]) ** 2) * 10
+                score_diff_loss = torch.mean((top_k_vals[0] - bottom_k_vals[0]) ** 2) * 6
                 polarization_loss += score_diff_loss
             
             # 添加到極化損失中
@@ -754,7 +766,8 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
         # 計算鄰接矩陣統計
         with torch.no_grad():
             if pred_adj is not None:
-                adj_probs = torch.sigmoid(pred_adj)
+                # 使用前面已根據數值域決定的機率矩陣，避免再次sigmoid壓縮
+                adj_probs = pred_adj_sigmoid
                 adj_min = adj_probs.min().item()
                 adj_max = adj_probs.max().item()
                 adj_mean = adj_probs.mean().item()
