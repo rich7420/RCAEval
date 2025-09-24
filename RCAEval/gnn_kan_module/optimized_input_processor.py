@@ -95,41 +95,68 @@ class FastServiceExtractor:
         
     def extract_services_batch(self, columns: List[str], force_expansion=False) -> Dict[str, List[str]]:
         """批量提取微服務對應的列 - 多層策略 + 強制擴展"""
+        # 🔥 首先過濾掉 IP 地址格式的列名
+        filtered_columns = self._filter_ip_address_columns(columns)
+        if len(filtered_columns) < len(columns):
+            print(f"✓ 過濾掉 {len(columns) - len(filtered_columns)} 個 IP 地址格式的列名")
+        
+        # 如果過濾後沒有列，使用原始列但添加警告
+        if not filtered_columns and columns:
+            print("⚠️ 過濾後沒有列，使用原始列但標記為非服務")
+            filtered_columns = columns
+        
         service_columns = {}
         
         # 🔥 如果啟用強制擴展，使用更激進的分組策略
         if force_expansion:
             print("✓ 啟用強制節點擴展模式")
-            service_columns = self._create_individual_metric_nodes(columns)
+            service_columns = self._create_individual_metric_nodes(filtered_columns)
         else:
             # 🎯 策略1：精確匹配已知微服務
-            service_columns = self._extract_known_services(columns)
+            service_columns = self._extract_known_services(filtered_columns)
             
             # 🎯 策略2：如果精確匹配結果不足，使用模式匹配
             if len(service_columns) <= 1:
-                service_columns.update(self._extract_pattern_services(columns))
+                service_columns.update(self._extract_pattern_services(filtered_columns))
             
             # 🎯 策略3：如果仍然不足，使用前綴分組
             if len(service_columns) <= 1:
-                service_columns.update(self._extract_prefix_services(columns))
+                service_columns.update(self._extract_prefix_services(filtered_columns))
             
             # 🎯 策略4：如果還是不足，按指標類型分組
             if len(service_columns) <= 1:
-                service_columns = self._extract_metric_services(columns)
+                service_columns = self._extract_metric_services(filtered_columns)
             
             # 🚀 策略5：最後手段，智能分割確保多節點
-            if len(service_columns) <= 1 and len(columns) > 1:
-                service_columns = self._create_multiple_services(columns)
+            if len(service_columns) <= 1 and len(filtered_columns) > 1:
+                service_columns = self._create_multiple_services(filtered_columns)
         
         # 🔥 關鍵修復：強制確保至少2個節點
         if len(service_columns) <= 1:
             print(f"⚠️ 節點數不足({len(service_columns)})，強制創建多節點")
-            service_columns = self._force_create_multiple_nodes(columns)
+            service_columns = self._force_create_multiple_nodes(filtered_columns)
         
         # 📊 優化：清理空分組並限制分組數量
-        service_columns = self._optimize_service_groups(service_columns, columns)
+        service_columns = self._optimize_service_groups(service_columns, filtered_columns)
         
         return service_columns
+        
+    def _filter_ip_address_columns(self, columns: List[str]) -> List[str]:
+        """過濾掉 IP 地址格式的列名"""
+        filtered_columns = []
+        
+        for col in columns:
+            # 檢查是否為 IP 地址格式 (如 192-168-xx-xx-xxxx)
+            is_ip_format = (
+                (col.startswith("192-168-") and col.count("-") >= 4) or
+                # 檢查是否符合 IP 地址的一般模式 (數字-數字-數字-數字-端口)
+                (col.count("-") >= 4 and all(part.isdigit() for part in col.split("-")))
+            )
+            
+            if not is_ip_format:
+                filtered_columns.append(col)
+        
+        return filtered_columns
     
     def _create_individual_metric_nodes(self, columns: List[str]) -> Dict[str, List[str]]:
         """創建單指標節點 - 最大化節點數量以提高準確度"""
@@ -460,6 +487,34 @@ class KANFeatureProcessor:
         else:
             from .feature_processing import simplified_metric_processing
             features, node_names = simplified_metric_processing(data, target_dim=self.target_dim)
+            
+        # 🔥 過濾掉 IP 地址格式的節點名稱
+        filtered_node_names = []
+        filtered_features = []
+        
+        for i, name in enumerate(node_names):
+            # 檢查是否為 IP 地址格式 (如 192-168-xx-xx-xxxx)
+            is_ip_format = (
+                (name.startswith("192-168-") and name.count("-") >= 4) or
+                # 檢查是否符合 IP 地址的一般模式 (數字-數字-數字-數字-端口)
+                (name.count("-") >= 4 and all(part.isdigit() for part in name.split("-")))
+            )
+            
+            if not is_ip_format:
+                filtered_node_names.append(name)
+                filtered_features.append(features[i])
+        
+        # 如果過濾後沒有節點，使用原始節點但添加警告
+        if not filtered_node_names and node_names:
+            print("⚠️ 過濾後沒有節點，使用原始節點但標記為非服務")
+            filtered_node_names = node_names
+            filtered_features = features
+        
+        # 更新節點名稱和特徵
+        if len(filtered_node_names) < len(node_names):
+            print(f"✓ 過濾掉 {len(node_names) - len(filtered_node_names)} 個 IP 地址格式的節點名稱")
+            node_names = filtered_node_names
+            features = np.array(filtered_features) if filtered_features else features
         
         # 🎯 方向1: 增強輸入特徵豐富度 - 解決圖稀疏根源
         features = self.enhanced_feature_enrichment(features, node_names)

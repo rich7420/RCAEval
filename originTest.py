@@ -403,29 +403,49 @@ for service in services:
                 continue  # ignore
 
             for i, ranks in data.items():
-                s_ranks = [Node(x.split("_")[0].replace("-db", ""), "unknown") for x in ranks]
+                # 過濾掉 IP 地址格式的字符串 (如 '192-168-29-237-9100')
+                s_ranks = []
+                for x in ranks:
+                    service_name = x.split("_")[0].replace("-db", "")
+                    # 檢查是否為 IP 地址格式 (如 192-168-xx-xx-xxxx)
+                    is_ip_format = (
+                        (service_name.startswith("192-168-") and service_name.count("-") >= 4) or
+                        # 檢查是否符合 IP 地址的一般模式 (數字-數字-數字-數字-端口)
+                        (service_name.count("-") >= 4 and all(part.isdigit() for part in service_name.split("-")))
+                    )
+                    if not is_ip_format:
+                        s_ranks.append(Node(service_name, "unknown"))
                 # remove duplication
                 old_s_ranks = s_ranks.copy()
-                s_ranks = (
-                    [old_s_ranks[0]]
-                    + [
+                if old_s_ranks:  # 確保列表不為空
+                    s_ranks = [old_s_ranks[0]] + [
                         old_s_ranks[i]
                         for i in range(1, len(old_s_ranks))
                         if old_s_ranks[i] not in old_s_ranks[:i]
                     ]
-                    if old_s_ranks
-                    else []
-                )
+                else:
+                    s_ranks = []
 
                 # Handle different output formats from different methods
                 f_ranks = []
                 for x in ranks:
+                    service_name = x.split("_")[0] if "_" in x else x
+                    
+                    # 檢查是否為 IP 地址格式 (如 192-168-xx-xx-xxxx)
+                    is_ip_format = (
+                        (service_name.startswith("192-168-") and service_name.count("-") >= 4) or
+                        # 檢查是否符合 IP 地址的一般模式 (數字-數字-數字-數字-端口)
+                        (service_name.count("-") >= 4 and all(part.isdigit() for part in service_name.split("-")))
+                    )
+                    if is_ip_format:
+                        continue  # 跳過 IP 地址格式的字符串
+                        
                     if "_" in x and len(x.split("_")) >= 2:
                         # Standard format: service_metric
-                        f_ranks.append(Node(x.split("_")[0], x.split("_")[1]))
+                        f_ranks.append(Node(service_name, x.split("_")[1]))
                     else:
                         # GNN+KAN format: just service name, use fault type as metric
-                        f_ranks.append(Node(x, fault))
+                        f_ranks.append(Node(service_name, fault))
 
                 s_evaluator.add_case(ranks=s_ranks, answer=Node(service, "unknown"))
                 f_evaluator.add_case(ranks=f_ranks, answer=Node(service, fault))

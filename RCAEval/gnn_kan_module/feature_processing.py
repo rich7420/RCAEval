@@ -577,7 +577,7 @@ def simplified_metric_processing(metrics_data, target_dim=64):
 
 
 def extract_service_names_from_columns(columns: list) -> list:
-    """從列名中提取服務名稱 - 更智能的版本"""
+    """從列名中提取服務名稱 - 更智能的版本 + IP 地址過濾"""
     services = set()
     
     # 常見的微服務模式
@@ -589,6 +589,17 @@ def extract_service_names_from_columns(columns: list) -> list:
     
     for col in columns:
         col_lower = str(col).lower()
+        
+        # 檢查是否為 IP 地址格式 (如 192-168-xx-xx-xxxx)
+        is_ip_format = (
+            (col_lower.startswith("192-168-") and col_lower.count("-") >= 4) or
+            # 檢查是否符合 IP 地址的一般模式 (數字-數字-數字-數字-端口)
+            (col_lower.count("-") >= 4 and all(part.isdigit() for part in col_lower.split("-")))
+        )
+        
+        if is_ip_format:
+            # 跳過 IP 地址格式的列名
+            continue
         
         # 檢查是否包含已知的微服務名稱
         for pattern in service_patterns:
@@ -603,7 +614,7 @@ def extract_service_names_from_columns(columns: list) -> list:
                     services.add(prefix)
             elif '-' in col_lower:
                 prefix = col_lower.split('-')[0]
-                if len(prefix) > 2:
+                if len(prefix) > 2 and not prefix.isdigit():  # 避免數字前綴
                     services.add(prefix)
     
     return sorted(list(services))
