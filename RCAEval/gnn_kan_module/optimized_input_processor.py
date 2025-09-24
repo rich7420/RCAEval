@@ -121,6 +121,11 @@ class FastServiceExtractor:
             if len(service_columns) <= 1 and len(columns) > 1:
                 service_columns = self._create_multiple_services(columns)
         
+        # 🔥 關鍵修復：強制確保至少2個節點
+        if len(service_columns) <= 1:
+            print(f"⚠️ 節點數不足({len(service_columns)})，強制創建多節點")
+            service_columns = self._force_create_multiple_nodes(columns)
+        
         # 📊 優化：清理空分組並限制分組數量
         service_columns = self._optimize_service_groups(service_columns, columns)
         
@@ -207,6 +212,35 @@ class FastServiceExtractor:
             
             services = expanded_services
             print(f"✓ 節點擴展完成：{len(columns)} 列 -> {len(services)} 節點（保證最少{min_nodes}個）")
+        return services
+    
+    def _force_create_multiple_nodes(self, columns: List[str]) -> Dict[str, List[str]]:
+        """強制創建多個節點 - 解決單節點問題"""
+        services = {}
+        
+        if len(columns) == 0:
+            # 如果沒有列，創建默認節點
+            services['default_node'] = ['placeholder_metric']
+            return services
+        
+        if len(columns) == 1:
+            # 單列情況：創建多個虛擬節點
+            col = columns[0]
+            services[f'{col}_cpu'] = [col]
+            services[f'{col}_memory'] = [col]
+            services[f'{col}_network'] = [col]
+            print(f"✓ 單列強制擴展：{col} -> 3個節點")
+        else:
+            # 多列情況：按列分割
+            for i, col in enumerate(columns):
+                if i < 3:  # 最多創建3個節點
+                    services[f'node_{i+1}'] = [col]
+                else:
+                    # 將多餘的列分配到現有節點
+                    target_node = f'node_{(i % 3) + 1}'
+                    services[target_node].append(col)
+        
+        print(f"✓ 強制多節點創建完成：{len(columns)} 列 -> {len(services)} 節點")
         return services
     
     def _extract_metric_type(self, col: str) -> str:

@@ -1044,7 +1044,7 @@ class MultiScaleGraphDecoder(nn.Module):
         soft_values = torch.sigmoid((adj_matrix - threshold) * 3.5)
         
         # 最小權重地板，避免行全0
-        soft_values = torch.clamp(soft_values, 1e-4, 1.0)
+        soft_values = torch.clamp(soft_values, 5e-4, 1.0)
         
         # 確保每個節點至少有2個連接（若行近乎全0，補強 top-2）
         row_sums_soft = soft_values.sum(dim=1, keepdim=True)

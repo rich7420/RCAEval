@@ -238,7 +238,7 @@ class GNNKANLoss(nn.Module):
         # 修正動態權重計算 - 平衡各損失項
         w_recon = 0.5  # 進一步降低重構損失權重
         w_polar = 0.2 + 0.5 * (epoch / max(total_epochs, 1))  # 極化損失增強
-        w_contrast = min(8.0, 2.0 + epoch * 0.1)  # 對比損失更激進增強
+        w_contrast = min(8.0, 2.0 + epoch * 0.1 )  # 對比損失更激進增強
         w_sparsity = min(0.8, 0.1 + epoch * 0.01)  # 降低稀疏性約束壓力
         
         # 🔧 改進的稀疏性懲罰
@@ -739,6 +739,27 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
             # 僅在總損失為負且重建項極小時視為退化，避免噪音式警告
             print(f"⚠️ 損失退化 (total={total_loss.item():.4f}, recon={recon_loss.item():.4f})，切換為重建優先")
             total_loss = recon_loss + contrast_loss + (sparsity_lambda * sparsity_loss)
+        
+        # 🔥 關鍵修復：NaN值檢測和處理
+        if torch.isnan(total_loss) or torch.isinf(total_loss):
+            print(f"⚠️ 檢測到NaN/Inf損失，進行修復")
+            print(f"  recon_loss: {recon_loss.item() if not torch.isnan(recon_loss) else 'NaN'}")
+            print(f"  contrast_loss: {contrast_loss:.4f}")
+            print(f"  polarization_loss: {polarization_loss.item() if not torch.isnan(polarization_loss) else 'NaN'}")
+            print(f"  margin_loss: {margin_loss:.4f}")
+            
+            # 使用安全的損失值
+            safe_recon = torch.tensor(0.0, device=recon_loss.device) if torch.isnan(recon_loss) else recon_loss
+            safe_contrast = torch.tensor(0.0, device=node_features.device) if contrast_loss == 0 else torch.tensor(contrast_loss, device=node_features.device)
+            safe_polar = torch.tensor(0.0, device=node_features.device) if torch.isnan(polarization_loss) else polarization_loss
+            safe_margin = torch.tensor(0.0, device=node_features.device) if margin_loss == 0 else torch.tensor(margin_loss, device=node_features.device)
+            
+            total_loss = w_recon * safe_recon + w_contrast * safe_contrast + w_polar * safe_polar + w_margin * safe_margin
+            
+            # 如果仍然有問題，使用最小損失
+            if torch.isnan(total_loss) or torch.isinf(total_loss):
+                total_loss = torch.tensor(0.1, device=total_loss.device, requires_grad=True)
+                print(f"  ⚠️ 使用最小安全損失: {total_loss.item()}")
         
         # 反向傳播
         total_loss.backward()

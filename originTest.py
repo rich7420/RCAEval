@@ -96,6 +96,7 @@ def parse_args():
     parser.add_argument("--length", type=int, default=20, help="Time series length (RQ4)")
     parser.add_argument("--tdelta", type=int, default=0, help="Specify $t_delta$ to simulate delay in anomaly detection")
     parser.add_argument("--test", action="store_true", help="Perform smoke test on certain methods without fully run on all data")
+    parser.add_argument("--learning_rate", type=float, default=None, help="Override learning rate for gnn_kan_rca")
     args = parser.parse_args()
 
     # Check if method is available (including GNN+KAN)
@@ -121,22 +122,7 @@ def parse_args():
 
 args = parse_args()
 
-# download dataset
-if "online-boutique" in args.dataset or "re1-ob" in args.dataset:
-    download_online_boutique_dataset()
-elif "sock-shop-1" in args.dataset:
-    download_sock_shop_1_dataset()
-elif "sock-shop-2" in args.dataset or "re1-ss" in args.dataset:
-    download_sock_shop_2_dataset()
-elif "train-ticket" in args.dataset or "re1-tt" in args.dataset:
-    download_train_ticket_dataset()
-elif "re2" in args.dataset:
-    download_re2_dataset()
-elif "re3" in args.dataset:
-    download_re3_dataset()
-else:
-    raise Exception(f"{args.dataset} is not defined!")
-
+# download dataset (skip if already exists to avoid read-only errors)
 DATASET_MAP = {
     "online-boutique": "data/online-boutique",
     "sock-shop-1": "data/sock-shop-1",
@@ -152,6 +138,26 @@ DATASET_MAP = {
     "re3-ss": "data/RE3/RE3-SS",
     "re3-tt": "data/RE3/RE3-TT"
 }
+desired_dataset_path = DATASET_MAP.get(args.dataset)
+if desired_dataset_path is None:
+    raise Exception(f"{args.dataset} is not defined!")
+
+if not os.path.exists(desired_dataset_path):
+    if "online-boutique" in args.dataset or "re1-ob" in args.dataset:
+        download_online_boutique_dataset()
+    elif "sock-shop-1" in args.dataset:
+        download_sock_shop_1_dataset()
+    elif "sock-shop-2" in args.dataset or "re1-ss" in args.dataset:
+        download_sock_shop_2_dataset()
+    elif "train-ticket" in args.dataset or "re1-tt" in args.dataset:
+        download_train_ticket_dataset()
+    elif "re2" in args.dataset:
+        download_re2_dataset()
+    elif "re3" in args.dataset:
+        download_re3_dataset()
+    else:
+        raise Exception(f"{args.dataset} is not defined!")
+
 dataset = DATASET_MAP[args.dataset]
 
 
@@ -246,11 +252,11 @@ def process(data_path):
         sli = "front-end_cpu"
         if f"{service}_lat_90" in data:
             sli = f"{service}_lat_90"
-    elif "train-ticket" in data_path or "fse-tt" in data_path or "RE2-TT" in data_path:
+    elif "train-ticket" in data_path or "fse-tt" in data_path or "RE2-TT" in data_path or "RE3-TT" in data_path:
         sli = "ts-ui-dashboard_latency"
         if f"{service}_latency" in data:
             sli = f"{service}_latency"
-    elif "online-boutique" in data_path or "fse-ob" in data_path or "RE2-OB" in data_path or "RE2-SS" in data_path:
+    elif "online-boutique" in data_path or "fse-ob" in data_path or "RE2-OB" in data_path or "RE2-SS" in data_path or "RE3-OB" in data_path or "RE3-SS" in data_path:
         sli = "frontend_latency"
         if f"{service}_latency" in data:
             sli = f"{service}_latency"
@@ -277,16 +283,16 @@ def process(data_path):
                 config_type="simplified",
                 feature_method="enhanced_ica",  # 使用最強的特徵提取
                 use_optimized_input=True,
-                sparsity_lambda=1e-3,           # 大幅增加稀疏性權重
+                sparsity_lambda=2e-3,           # 大幅增加稀疏性權重
                 # 🎯 高精度訓練參數
-                learning_rate=2.15e-4,             # 優化學習率
+                learning_rate=(args.learning_rate if args.learning_rate is not None else 2.856334749157e-8),           # 優化學習率
                 num_epochs=400,                 # 大幅增加訓練輪數
                 kan_grid_size=20,               # 大幅增加KAN網格
                 hidden_dim=128,                 # 增加隱藏維度
                 target_feature_dim=128,         # 增加特徵維度
-                similarity_threshold=0.2,       # 大幅降低相似性閾值
+                similarity_threshold=0.265,       # 大幅降低相似性閾值
                 max_edges_per_node=15,          # 大幅增加邊數
-                gradient_clipping=0.5,          # 更嚴格的梯度裁剪
+                gradient_clipping=0.6,          # 更嚴格的梯度裁剪
                 # 🎯 新增監督學習參數
                 fault_type=fault_type,          # 故障類型信息（關鍵！）
                 enhanced_contrast=True,         # 啟用增強對比學習
