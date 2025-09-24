@@ -20,6 +20,10 @@ class GNNKANConfig:
         self.kan_num_basis = 12              # 從4增加到12
         self.learnable_activation = True
         
+        # 🎯 基函數選擇配置 - Single source of truth for basis function selection
+        self.basis_function = 'chebyshev'    # Default to chebyshev for backward compatibility
+        self.basis_kwargs = {}               # Additional parameters for specific basis functions
+        
         #  增加模型容量和深度
         self.input_dim = 128                 # 從64增加到128
         self.hidden_dims = [128, 96, 64]     # 從[32,16]增加到[128,96,64]

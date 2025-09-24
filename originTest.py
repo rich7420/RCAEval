@@ -97,6 +97,9 @@ def parse_args():
     parser.add_argument("--tdelta", type=int, default=0, help="Specify $t_delta$ to simulate delay in anomaly detection")
     parser.add_argument("--test", action="store_true", help="Perform smoke test on certain methods without fully run on all data")
     parser.add_argument("--learning_rate", type=float, default=None, help="Override learning rate for gnn_kan_rca")
+    parser.add_argument("--basis_function", type=str, default="chebyshev", 
+                       choices=["chebyshev", "b_spline", "fourier", "pqc", "pqc_gpu"], 
+                       help="Choose basis function for gnn_kan_rca")
     args = parser.parse_args()
 
     # Check if method is available (including GNN+KAN)
@@ -300,6 +303,8 @@ def process(data_path):
                 adaptive_learning=True,         # 啟用自適應學習
                 multi_scale_features=True,      # 啟用多尺度特徵
                 temporal_attention=True,        # 啟用時序注意力
+                # 🎯 基函數選擇參數
+                basis_function=args.basis_function,  # 基函數選擇
                 sli=sli,
                 verbose=True
             )

@@ -45,7 +45,9 @@ class GNNKANModel(nn.Module):
             num_layers=config.num_gnn_layers,
             kan_grid_size=config.kan_grid_size,
             kan_spline_order=config.kan_spline_order,
-            dropout=config.dropout
+            dropout=config.dropout,
+            basis_function=getattr(config, 'basis_function', 'chebyshev'),
+            basis_kwargs=getattr(config, 'basis_kwargs', {})
         )
         
         # 時序注意力機制 - 使用適配器解決維度問題
@@ -462,7 +464,9 @@ class SimplifiedGNNKAN(nn.Module):
                     num_basis=kan_config.get('num_basis', 8),
                     spline_order=kan_config.get('spline_order', 3),
                     grid_size=kan_config.get('grid_size', 8),
-                    adaptive_spline_order=kan_config.get('adaptive_spline_order', True)
+                    adaptive_spline_order=kan_config.get('adaptive_spline_order', True),
+                    basis_function=kan_config.get('basis_function', 'chebyshev'),
+                    basis_kwargs=kan_config.get('basis_kwargs', {})
                 )
             else:
                 return create_compatible_kan_layer(input_dim, output_dim)

@@ -296,7 +296,8 @@ def gnn_kan_rca_multimodal(data_dict, inject_time=None, dataset=None, with_bg=Fa
 
 def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False, 
                 config_type='simplified', feature_method='enhanced_ica', 
-                use_optimized_input=True, sparsity_lambda=1e-5, **kwargs):
+                use_optimized_input=True, sparsity_lambda=1e-5, 
+                basis_function='chebyshev', **kwargs):
     """
     🚨 ISSUE 3: 多階段處理複雜度質疑
     
@@ -423,8 +424,8 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
         use_gpu = False
         cuda_available = False
     
-    # 1. 創建配置
-    config = create_config(**kwargs)
+    # 1. 創建配置 - Thread basis_function into create_config and model construction
+    config = create_config(basis_function=basis_function, **kwargs)
     config.feature_method = feature_method
     config.use_cuda = use_gpu  # 強制設定GPU使用
     

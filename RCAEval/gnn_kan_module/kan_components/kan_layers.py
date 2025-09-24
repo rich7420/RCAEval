@@ -64,7 +64,8 @@ class AdvancedKANLayer(nn.Module):
                  l1_lambda=1e-3, entropy_lambda=1e-3,
                  use_cheb=True, use_bspline=True,
                  clamp_in=1.5, cheb_clamp=1.0,
-                 normalize_input=True, use_residual=True):
+                 normalize_input=True, use_residual=True,
+                 basis_function='chebyshev', basis_kwargs=None):
         super(AdvancedKANLayer, self).__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
@@ -82,6 +83,20 @@ class AdvancedKANLayer(nn.Module):
         self.cheb_clamp = cheb_clamp
         self.normalize_input = normalize_input
         self.use_residual = use_residual
+        
+        # 🎯 基函數選擇 - Replace direct basis calls with factory output
+        self.basis_function = basis_function
+        self.basis_kwargs = basis_kwargs or {}
+        
+        # Import basis function factory
+        from .basis_functions import BasisFunctionFactory
+        
+        # Create basis function instance
+        self.basis = BasisFunctionFactory.create_basis_function(
+            basis_function, num_basis, 
+            spline_order=spline_order, grid_size=grid_size,
+            **self.basis_kwargs
+        )
         
         # 🎯 KAN核心：可學習的B-spline基函數係數 (不是MLP的固定權重)
         self.spline_coeffs = nn.Parameter(
@@ -277,21 +292,24 @@ class AdvancedKANLayer(nn.Module):
         
         parts = []
         
-        if self.use_cheb:
-            xc = torch.clamp(x, -self.cheb_clamp, self.cheb_clamp)
-            cheb_output = self.chebyshev_polynomials(xc)
-            cheb_output = torch.tanh(cheb_output) * 0.5 
-            parts.append(cheb_output)
-        
-        if self.use_bspline:
-            try:
-                bspline_output = self.enhanced_b_spline_basis(x)
-                bspline_output = torch.tanh(bspline_output) * 0.5
-                parts.append(bspline_output)
-            except Exception as e:
-                print(f"⚠️ B-spline計算失敗，使用回退策略: {e}")
-                bspline_output = self._fallback_basis(x)
-                parts.append(bspline_output)
+        # 🎯 使用統一的基函數工廠 - Replace direct basis calls with factory output
+        try:
+            # Get basis functions from factory
+            basis_tensor = self.basis(x)  # [batch, input_dim, num_basis]
+            
+            # Compute spline output using basis functions and learnable coefficients
+            spline_coeffs = self.spline_coeffs.float()  # [output_dim, input_dim, num_basis]
+            basis_output = torch.einsum('bji,oji->bo', basis_tensor, spline_coeffs)
+            
+            # Apply activation and scaling
+            basis_output = torch.tanh(basis_output) * 0.5
+            parts.append(basis_output)
+            
+        except Exception as e:
+            print(f"⚠️ 基函數計算失敗，使用回退策略: {e}")
+            # Fallback to simple linear transformation
+            fallback_output = x @ (torch.ones_like(self.spline_coeffs[:, :, 0]).t() * 0.1)
+            parts.append(fallback_output)
         
         try:
             # 🔧 確保類型一致性，避免 numpy.float32 和 torch.FloatTensor 不匹配
@@ -397,13 +415,26 @@ class SimplifiedKANLayer(nn.Module):
     移除了自適應樣條階數等複雜特性，確保穩定收斂
     """
     
-    def __init__(self, input_dim, output_dim, num_basis=8, layer_idx=0, verbose=False):
+    def __init__(self, input_dim, output_dim, num_basis=8, layer_idx=0, verbose=False,
+                 basis_function='chebyshev', basis_kwargs=None):
         super(SimplifiedKANLayer, self).__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.num_basis = num_basis
         self.layer_idx = layer_idx # 用於日誌追蹤
         self.verbose = verbose
+        
+        # 🎯 基函數選擇 - Replace direct basis calls with factory output
+        self.basis_function = basis_function
+        self.basis_kwargs = basis_kwargs or {}
+        
+        # Import basis function factory
+        from .basis_functions import BasisFunctionFactory
+        
+        # Create basis function instance
+        self.basis = BasisFunctionFactory.create_basis_function(
+            basis_function, num_basis, **self.basis_kwargs
+        )
 
         # 🎯 簡化KAN核心：多項式基函數係數
         self.poly_coeffs = nn.Parameter(
@@ -505,12 +536,12 @@ class SimplifiedKANLayer(nn.Module):
                 pass
 
         try:
-            # 1. 多項式基函數 (KAN的核心)
-            poly_basis = self.polynomial_basis_functions(x)
+            # 1. 使用統一的基函數工廠 - Replace direct basis calls with factory output
+            basis_tensor = self.basis(x)  # [batch, input_dim, num_basis]
             # 🔧 確保類型一致性，避免 numpy.float32 和 torch.FloatTensor 不匹配
-            poly_basis = poly_basis.float()
+            basis_tensor = basis_tensor.float()
             poly_coeffs = self.poly_coeffs.float()
-            poly_output = torch.einsum('bid,oid->bo', poly_basis, poly_coeffs)
+            poly_output = torch.einsum('bid,oid->bo', basis_tensor, poly_coeffs)
 
             # 2. 基礎線性變換 (最小化MLP特性)
             base_output = self.base_transform(x)
@@ -584,7 +615,8 @@ class OptimizedGNNKANEncoder(nn.Module):
     
     def __init__(self, input_dim, hidden_dims, output_dim, 
                  num_layers=2, kan_grid_size=8, kan_spline_order=3, 
-                 dropout=0.1, learnable_graph=True, **kwargs):
+                 dropout=0.1, learnable_graph=True, 
+                 basis_function='chebyshev', basis_kwargs=None, **kwargs):
         super(OptimizedGNNKANEncoder, self).__init__()
         
         self.num_layers = num_layers
@@ -603,7 +635,9 @@ class OptimizedGNNKANEncoder(nn.Module):
                 dims[i], dims[i + 1], 
                 num_basis=kan_grid_size,
                 grid_size=kan_grid_size,
-                spline_order=kan_spline_order
+                spline_order=kan_spline_order,
+                basis_function=basis_function,
+                basis_kwargs=basis_kwargs
             ))
             
             # Dropout (但不使用MLP常用的ReLU/GELU等固定激活)
@@ -614,15 +648,27 @@ class OptimizedGNNKANEncoder(nn.Module):
         
         # 簡化消息傳遞 (避免MLP結構)
         self.message_processors = nn.ModuleList([
-            CompatibleSimplifiedKANLayer(dims[i + 1], dims[i + 1])
+            CompatibleSimplifiedKANLayer(
+                dims[i + 1], dims[i + 1],
+                basis_function=basis_function,
+                basis_kwargs=basis_kwargs
+            )
             for i in range(len(dims) - 1)
         ])
         
         # 可學習圖結構
         if learnable_graph:
             self.edge_learner = nn.Sequential(
-                CompatibleSimplifiedKANLayer(dims[-1] * 2, dims[-1]),
-                CompatibleSimplifiedKANLayer(dims[-1], 1)
+                CompatibleSimplifiedKANLayer(
+                    dims[-1] * 2, dims[-1],
+                    basis_function=basis_function,
+                    basis_kwargs=basis_kwargs
+                ),
+                CompatibleSimplifiedKANLayer(
+                    dims[-1], 1,
+                    basis_function=basis_function,
+                    basis_kwargs=basis_kwargs
+                )
             )
         
     def kan_message_passing(self, x, edge_index, layer_idx):
@@ -853,7 +899,8 @@ class CompatibleSimplifiedKANLayer(SimplifiedKANLayer):
     
     def __init__(self, input_dim, output_dim, num_basis=8, 
                  spline_order=None, grid_size=None, 
-                 adaptive_spline_order=None, verbose=False, **kwargs):
+                 adaptive_spline_order=None, verbose=False,
+                 basis_function='chebyshev', basis_kwargs=None, **kwargs):
         # 只使用 SimplifiedKANLayer 支持的參數
         # 將不支持的參數（如spline_order, grid_size）過濾掉
         
@@ -865,13 +912,21 @@ class CompatibleSimplifiedKANLayer(SimplifiedKANLayer):
             output_dim=output_dim, 
             num_basis=num_basis,
             verbose=verbose,
+            basis_function=basis_function,
+            basis_kwargs=basis_kwargs,
             **simplified_kwargs
         )
         # print(f"Initialized CompatibleSimplifiedKANLayer, verbose={self.verbose}")
 
 
-def create_compatible_kan_layer(input_dim, output_dim, **kwargs):
-    return CompatibleSimplifiedKANLayer(input_dim, output_dim, **kwargs)
+def create_compatible_kan_layer(input_dim, output_dim, basis_function='chebyshev', basis_kwargs=None, **kwargs):
+    """Create compatible KAN layer with basis function selection"""
+    return CompatibleSimplifiedKANLayer(
+        input_dim, output_dim, 
+        basis_function=basis_function, 
+        basis_kwargs=basis_kwargs,
+        **kwargs
+    )
 
 
 class KANEdgeDecoder(nn.Module):
