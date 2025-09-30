@@ -54,52 +54,34 @@ class ChebyshevBasis(nn.Module):
         Returns shape: [batch, input_dim, num_basis]
         """
         batch_size, input_dim = x.shape
-        
+
         # Normalize input to [-1, 1] range (Chebyshev polynomials standard domain)
         x_mean = torch.mean(x, dim=0, keepdim=True)
         x_std = torch.std(x, dim=0, keepdim=True) + 1e-8
         x_normalized = (x - x_mean) / x_std
         x_grid = torch.tanh(x_normalized)  # Non-linear mapping to [-1,1]
-        
-        # Generate basis functions for each input dimension
-        basis_functions_list = []
-        
-        for dim_idx in range(input_dim):
-            x_dim = x_grid[:, dim_idx:dim_idx+1]  # [batch_size, 1]
-            dim_basis = []
-            
-            # T_0(x) = 1
-            dim_basis.append(torch.ones_like(x_dim))
-            
-            if self.num_basis > 1:
-                # T_1(x) = x
-                dim_basis.append(x_dim)
-            
-            # T_n(x) = 2x*T_{n-1}(x) - T_{n-2}(x) (Chebyshev recurrence)
-            for n in range(2, self.num_basis):
-                if len(dim_basis) >= 2:
-                    t_next = 2 * x_dim * dim_basis[-1] - dim_basis[-2]
-                    t_next = torch.clamp(t_next, -5.0, 5.0)  # Numerical stability
-                    dim_basis.append(t_next)
-                else:
-                    # Safe fallback
-                    dim_basis.append(torch.zeros_like(x_dim))
-            
-            # Ensure correct number of basis functions
-            while len(dim_basis) < self.num_basis:
-                dim_basis.append(torch.zeros_like(x_dim))
-            
-            # Truncate to correct number
-            dim_basis = dim_basis[:self.num_basis]
-            
-            # Stack to [batch_size, num_basis]
-            dim_basis_tensor = torch.cat(dim_basis, dim=1)
-            basis_functions_list.append(dim_basis_tensor)
-        
-        # Stack to [batch_size, input_dim, num_basis]
-        basis_tensor = torch.stack(basis_functions_list, dim=1)
-        
-        return basis_tensor
+
+        # Vectorized basis computation without in-place mutation of the output tensor
+        # Build basis terms as independent tensors to keep autograd graph intact
+        T0 = torch.ones_like(x_grid)
+        basis_terms = [T0]
+
+        if self.num_basis > 1:
+            T1 = x_grid
+            basis_terms.append(T1)
+
+            for _ in range(2, self.num_basis):
+                Tn = 2.0 * x_grid * basis_terms[-1] - basis_terms[-2]
+                Tn = torch.clamp(Tn, -5.0, 5.0)
+                basis_terms.append(Tn)
+
+        # If fewer terms than required, pad with zeros
+        while len(basis_terms) < self.num_basis:
+            basis_terms.append(torch.zeros_like(x_grid))
+
+        # Stack along the last dim to shape [batch, input_dim, num_basis]
+        basis = torch.stack(basis_terms, dim=-1)
+        return basis
 
 
 class BSplineBasis(nn.Module):
@@ -152,29 +134,58 @@ class BSplineBasis(nn.Module):
         Returns shape: [batch, input_dim, num_basis]
         """
         batch_size, input_dim = x.shape
-        
-        # Normalize input to [-1, 1] range
-        x_normalized = torch.clamp(x, min=-2.0, max=2.0) / 2.0
-        
-        # Generate basis functions for each input dimension
-        basis_functions_list = []
-        
-        for dim_idx in range(input_dim):
-            x_dim = x_normalized[:, dim_idx:dim_idx+1]  # [batch_size, 1]
-            dim_basis = []
-            
-            # Generate B-spline basis functions
-            for i in range(self.num_basis):
-                basis_func = self._bspline_basis_function(x_dim, i, self.spline_order)
-                dim_basis.append(basis_func)
-            
-            # Stack to [batch_size, num_basis]
-            dim_basis_tensor = torch.cat(dim_basis, dim=1)
-            basis_functions_list.append(dim_basis_tensor)
-        
-        # Stack to [batch_size, input_dim, num_basis]
-        basis_tensor = torch.stack(basis_functions_list, dim=1)
-        
+
+        # Normalize input to [-1, 1] range (preserve original semantics)
+        x_normalized = torch.clamp(x, min=-2.0, max=2.0) / 2.0  # [B, D]
+
+        # Prepare knot-related tensors
+        knots = self.knot_vector  # [M]
+        M = knots.shape[0]
+        p = self.spline_order
+
+        # Base case B_{i,0}(x): indicator t_i <= x < t_{i+1}
+        # Vectorize across batch and dims; i dimension is last
+        x_exp = x_normalized.unsqueeze(-1)  # [B, D, 1]
+        t_i = knots[:-1].view(1, 1, -1)     # [1,1,M-1]
+        t_ip1 = knots[1:].view(1, 1, -1)    # [1,1,M-1]
+
+        B_prev = ((x_exp >= t_i) & (x_exp < t_ip1)).to(x.dtype)  # [B, D, M-1]
+
+        # Iteratively compute up to degree p using Cox–de Boor
+        for deg in range(1, p + 1):
+            # For degree 'deg', valid i range shrinks by 1 on the right each step
+            # Denominators
+            denom1 = (knots[deg:M-1] - knots[:M-1-deg]).view(1, 1, -1)  # [1,1,M-1-deg]
+            denom2 = (knots[deg+1:M] - knots[1:M-deg]).view(1, 1, -1)   # [1,1,M-1-deg]
+
+            # Align B_prev segments
+            left = B_prev[..., :B_prev.shape[-1]-1]   # [B,D,M-2-(deg-1)+1] => [B,D,M-1-deg]
+            right = B_prev[..., 1:]                   # [B,D,M-1-deg]
+
+            # Compute coefficients a and b with safe division
+            x_left = x_exp[..., :left.shape[-1]]      # [B,D,M-1-deg]
+            x_right = x_exp[..., :right.shape[-1]]    # [B,D,M-1-deg]
+
+            # a = (x - t_i) / (t_{i+deg} - t_i)
+            num1 = x_left - knots[:M-1-deg].view(1, 1, -1)
+            a = torch.where(denom1.abs() > 1e-8, num1 / denom1, torch.zeros_like(num1))
+
+            # b = (t_{i+deg+1} - x) / (t_{i+deg+1} - t_{i+1})
+            num2 = knots[deg+1:M].view(1, 1, -1) - x_right
+            b = torch.where(denom2.abs() > 1e-8, num2 / denom2, torch.zeros_like(num2))
+
+            B_curr = a * left + b * right            # [B,D,M-1-deg]
+            B_prev = B_curr
+
+        # After degree p, B_prev corresponds to B_{i,p} for i=0..M-1-p-1 (length L)
+        L = B_prev.shape[-1]
+        # Select first num_basis; pad zeros if needed
+        if self.num_basis <= L:
+            basis_tensor = B_prev[..., :self.num_basis]
+        else:
+            pad = torch.zeros(batch_size, input_dim, self.num_basis - L, dtype=B_prev.dtype, device=B_prev.device)
+            basis_tensor = torch.cat([B_prev, pad], dim=-1)
+
         return basis_tensor
 
 
@@ -201,41 +212,35 @@ class FourierBasis(nn.Module):
         Returns shape: [batch, input_dim, num_basis]
         """
         batch_size, input_dim = x.shape
-        
-        # Normalize input to [0, 2π] range for Fourier series
-        x_normalized = (x - x.min()) / (x.max() - x.min() + 1e-8) * 2 * math.pi
-        
-        # Generate basis functions for each input dimension
-        basis_functions_list = []
-        
-        for dim_idx in range(input_dim):
-            x_dim = x_normalized[:, dim_idx:dim_idx+1]  # [batch_size, 1]
-            dim_basis = []
-            
-            # Constant term: 1
-            dim_basis.append(torch.ones_like(x_dim))
-            
-            # Fourier terms: sin(kx), cos(kx)
-            for k in self.frequencies:
-                sin_term = torch.sin(k * x_dim)
-                cos_term = torch.cos(k * x_dim)
-                dim_basis.append(sin_term)
-                dim_basis.append(cos_term)
-            
-            # Ensure we have exactly num_basis functions
-            while len(dim_basis) < self.num_basis:
-                dim_basis.append(torch.zeros_like(x_dim))
-            
-            # Truncate to correct number
-            dim_basis = dim_basis[:self.num_basis]
-            
-            # Stack to [batch_size, num_basis]
-            dim_basis_tensor = torch.cat(dim_basis, dim=1)
-            basis_functions_list.append(dim_basis_tensor)
-        
-        # Stack to [batch_size, input_dim, num_basis]
-        basis_tensor = torch.stack(basis_functions_list, dim=1)
-        
+
+        # Normalize input to [0, 2π] range for Fourier series (preserve original semantics)
+        x_normalized = (x - x.min()) / (x.max() - x.min() + 1e-8) * 2 * math.pi  # [B, D]
+
+        # Constant term
+        ones = torch.ones(batch_size, input_dim, 1, dtype=x.dtype, device=x.device)
+
+        if self.num_basis <= 1:
+            return ones
+
+        # Frequencies: shape [K] where K = num_basis - 1 (consistent with original)
+        freqs = self.frequencies.to(x.device)
+        if len(freqs) != self.num_basis - 1:
+            freqs = torch.arange(1, self.num_basis, dtype=x.dtype, device=x.device)
+
+        # Compute sin and cos for all dims and frequencies in one shot
+        # xk: [B, D, K]
+        xk = x_normalized.unsqueeze(-1) * freqs.view(1, 1, -1)
+        sin_xk = torch.sin(xk)
+        cos_xk = torch.cos(xk)
+
+        # Interleave sin and cos per frequency: [sin1, cos1, sin2, cos2, ...]
+        interleaved = torch.stack([sin_xk, cos_xk], dim=-1).reshape(batch_size, input_dim, -1)
+
+        # Take first (num_basis - 1) terms to match original truncation behavior
+        fourier_terms = interleaved[..., : self.num_basis - 1]
+
+        # Concatenate constant term to form [B, D, num_basis]
+        basis_tensor = torch.cat([ones, fourier_terms], dim=-1)
         return basis_tensor
 
 

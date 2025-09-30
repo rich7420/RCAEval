@@ -100,6 +100,15 @@ def parse_args():
     parser.add_argument("--basis_function", type=str, default="chebyshev", 
                        choices=["chebyshev", "b_spline", "fourier", "pqc", "pqc_gpu"], 
                        help="Choose basis function for gnn_kan_rca")
+    parser.add_argument(
+        "--feature_method",
+        type=str,
+        default=None,
+        choices=[
+            "enhanced_ica", "ica", "simplified", "kpca", "rca_aware", "multimodal_fusion", "auto"
+        ],
+        help="Choose feature extraction method for gnn_kan_rca (e.g., rca_aware)"
+    )
     args = parser.parse_args()
 
     # Check if method is available (including GNN+KAN)
@@ -284,7 +293,7 @@ def process(data_path):
                 inject_time,
                 dataset=args.dataset,
                 config_type="simplified",
-                feature_method="enhanced_ica",  # 使用最強的特徵提取
+                feature_method=(args.feature_method if args.feature_method is not None else "enhanced_ica"),
                 use_optimized_input=True,
                 sparsity_lambda=2e-3,           # 大幅增加稀疏性權重
                 # 🎯 高精度訓練參數

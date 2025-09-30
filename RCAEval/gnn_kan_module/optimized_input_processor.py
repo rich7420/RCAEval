@@ -464,20 +464,26 @@ class FastServiceExtractor:
 
 class KANFeatureProcessor:
     """專為KAN優化的特徵處理器"""
-    
-    def __init__(self, method='enhanced_ica', target_dim=64):
+
+    def __init__(self, method='enhanced_ica', target_dim=64, dataset_name=None):
         self.method = method
         self.target_dim = target_dim
+        self.dataset_name = dataset_name
         self.service_extractor = FastServiceExtractor()
         
     def process_features_optimized(self, data: pd.DataFrame, force_expansion=False, inject_time=None) -> Tuple[np.ndarray, List[str]]:
-        """簡化的特徵處理 - 使用增強版 ICA"""
-        
+        """簡化的特徵處理 - 支持RCA導向方法"""
+
         # 🚀 直接使用增強版特徵處理
         if self.method == 'enhanced_ica':
             from .feature_processing import enhanced_ica_with_temporal_contrast
             features, node_names = enhanced_ica_with_temporal_contrast(
                 data, inject_time=inject_time, target_dim=self.target_dim
+            )
+        elif self.method == 'rca_aware':
+            from .feature_processing import rca_aware_metric_processing
+            features, node_names = rca_aware_metric_processing(
+                data, inject_time=inject_time, dataset_name=getattr(self, 'dataset_name', ''), target_dim=self.target_dim
             )
         elif self.method == 'ica':
             from .feature_processing import ica_metric_processing
