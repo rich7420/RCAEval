@@ -42,6 +42,7 @@ class GNNKANConfig:
         self.batch_size = 8                  # 從32減少到8，提高穩定性
         self.patience = 60                   # 從25增加到60
         self.min_delta = 1e-6                # 從1e-5減少到1e-6
+        self.min_epochs = 30                 # 新增：最小訓練輪數保證
         
         # 🎯 優化圖構建
         self.similarity_threshold = 0.2      # 從0.5大幅降低到0.2

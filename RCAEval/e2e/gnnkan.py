@@ -381,8 +381,9 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
     
     # 🔧 階段1：Early Stopping參數 / Early Stopping parameters
     kwargs.setdefault('early_stopping', True)        # 啟用早停 / Enable early stopping
-    kwargs.setdefault('patience', 10)                # 耐心值 / Patience value
-    kwargs.setdefault('min_delta', 0.001)            # 最小改善閾值 / Minimum improvement threshold
+    kwargs.setdefault('patience', 20)                # 增加耐心值
+    kwargs.setdefault('min_delta', 0.0003)            # 放寬最小改善閾值
+    kwargs.setdefault('min_epochs', 30)              # 新增：最小訓練輪數保證
     kwargs.setdefault('monitor_metric', 'val_precision')  # 監控驗證精度 / Monitor validation precision
     
     # 穩健性參數

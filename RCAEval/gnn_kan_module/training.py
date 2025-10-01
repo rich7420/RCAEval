@@ -866,15 +866,35 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
             
             model.train()
         
-        # 早停檢查
-        if early_stopping(total_loss.item()) or patience_counter >= config.patience:
+        # 添加最小訓練輪數檢查
+        if epoch + 1 < config.min_epochs:
+            continue
+
+        # 🎯 改進：智能早停與銳化協調機制
+        early_stop_triggered = early_stopping(total_loss.item()) or patience_counter >= config.patience
+        
+        if early_stop_triggered:
+            # 分析早停原因並決定銳化策略
+            convergence_state = _analyze_convergence_state(
+                training_history, epoch, patience_counter, config.patience
+            )
+            
             if patience_counter >= config.patience:
                 print(f"🛑 Early stopping at epoch {epoch+1} (validation patience exceeded)")
                 # 恢復最佳模型
                 if 'best_model_state' in locals():
                     model.load_state_dict(best_model_state)
+                
+                # 根據收斂狀態決定是否銳化
+                if convergence_state['needs_sharpening']:
+                    print(f"🔧 檢測到收斂但差距不足，應用智能銳化 (gap={convergence_state['score_gap']:.4f})")
+                    _apply_adaptive_sharpening(model, convergence_state)
             else:
                 print(f"🛑 Early stopping at epoch {epoch+1} (loss plateau)")
+                # 損失平台早停通常不需要銳化，因為模型可能過擬合
+                if convergence_state['needs_sharpening'] and convergence_state['is_healthy_convergence']:
+                    print(f"🔧 檢測到健康收斂但差距不足，應用輕度銳化")
+                    _apply_adaptive_sharpening(model, convergence_state, intensity='light')
             break
         
         if (epoch + 1) % 10 == 0 or epoch == 0:
@@ -888,6 +908,98 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
 
     print("✅ Training finished.")
     return model, training_history
+
+
+def _analyze_convergence_state(training_history, epoch, patience_counter, max_patience):
+    """
+    分析收斂狀態，決定是否需要銳化
+    
+    Args:
+        training_history: 訓練歷史
+        epoch: 當前epoch
+        patience_counter: 耐心計數器
+        max_patience: 最大耐心值
+        
+    Returns:
+        dict: 收斂狀態分析結果
+    """
+    # 分析損失趨勢
+    recent_losses = training_history['loss'][-10:] if len(training_history['loss']) >= 10 else training_history['loss']
+    loss_trend = np.polyfit(range(len(recent_losses)), recent_losses, 1)[0] if len(recent_losses) > 1 else 0
+    
+    # 分析鄰接矩陣統計
+    recent_adj_max = training_history['adj_max'][-5:] if len(training_history['adj_max']) >= 5 else training_history['adj_max']
+    recent_adj_min = training_history['adj_min'][-5:] if len(training_history['adj_min']) >= 5 else training_history['adj_min']
+    
+    # 計算值域差距
+    avg_max = np.mean(recent_adj_max) if recent_adj_max else 0.5
+    avg_min = np.mean(recent_adj_min) if recent_adj_min else 0.0
+    score_gap = avg_max - avg_min
+    
+    # 判斷收斂類型
+    is_healthy_convergence = (
+        loss_trend < 0.001 and  # 損失基本穩定
+        patience_counter >= max_patience * 0.7 and  # 耐心值較高
+        score_gap > 0.1  # 有一定判別性
+    )
+    
+    # 判斷是否需要銳化
+    needs_sharpening = (
+        score_gap < 0.15 and  # 差距不足
+        avg_max < 0.8 and  # 最大值不夠高
+        avg_min > 0.2  # 最小值不夠低
+    )
+    
+    return {
+        'loss_trend': loss_trend,
+        'score_gap': score_gap,
+        'avg_max': avg_max,
+        'avg_min': avg_min,
+        'is_healthy_convergence': is_healthy_convergence,
+        'needs_sharpening': needs_sharpening,
+        'convergence_type': 'healthy' if is_healthy_convergence else 'plateau'
+    }
+
+
+def _apply_adaptive_sharpening(model, convergence_state, intensity='adaptive'):
+    """
+    應用自適應銳化策略
+    
+    Args:
+        model: 訓練好的模型
+        convergence_state: 收斂狀態分析結果
+        intensity: 銳化強度 ('light', 'adaptive', 'strong')
+    """
+    # 根據收斂狀態和強度決定銳化參數
+    score_gap = convergence_state['score_gap']
+    
+    if intensity == 'light':
+        gamma = 1.5
+        min_gap = 0.08
+    elif intensity == 'strong':
+        gamma = 3.0
+        min_gap = 0.12
+    else:  # adaptive
+        # 根據差距動態調整
+        if score_gap < 0.05:
+            gamma = 2.5
+            min_gap = 0.10
+        elif score_gap < 0.10:
+            gamma = 2.0
+            min_gap = 0.08
+        else:
+            gamma = 1.8
+            min_gap = 0.06
+    
+    print(f"🔧 應用自適應銳化: gamma={gamma:.1f}, min_gap={min_gap:.3f}")
+    
+    # 在模型上設置銳化參數（如果模型支持）
+    if hasattr(model, 'set_sharpening_params'):
+        model.set_sharpening_params(gamma=gamma, min_gap=min_gap)
+    
+    # 如果模型有銳化方法，直接應用
+    if hasattr(model, 'apply_sharpening'):
+        model.apply_sharpening(gamma=gamma, min_gap=min_gap)
 
 
 class AdvancedGNNKANTrainer:
