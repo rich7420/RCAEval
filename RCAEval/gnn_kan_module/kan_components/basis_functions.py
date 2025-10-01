@@ -261,28 +261,28 @@ class PQCBasis(nn.Module):
         Simulate parameterized quantum circuit on CPU
         This is a simplified approximation of quantum circuit behavior
         """
-        batch_size = x.shape[0]
-        
-        # Simulate quantum state preparation
-        # For simplicity, we use trigonometric functions to approximate quantum behavior
-        x_normalized = torch.tanh(x)  # Normalize to [-1, 1]
-        
-        # Simulate quantum gates with parameterized rotations
-        quantum_features = []
-        
-        for i in range(self.num_qubits):
-            # Rotation gates simulation
-            rot_x = torch.cos(self.theta[i] * x_normalized + self.phi[i])
-            rot_y = torch.sin(self.theta[i] * x_normalized + self.phi[i])
-            quantum_features.append(rot_x)
-            quantum_features.append(rot_y)
-        
-        # Combine quantum features
-        quantum_state = torch.cat(quantum_features, dim=-1)
-        
-        # Simulate measurement (expectation values)
+        # Vectorized CPU simulation for all qubits
+        # Normalize input to [-1, 1]
+        x_normalized = torch.tanh(x)  # [B, 1]
+
+        # Prepare parameters
+        theta = self.theta.to(x.device)
+        phi = self.phi.to(x.device)
+
+        # Expand to [B, 1, Q] then broadcast
+        x_exp = x_normalized.unsqueeze(-1)  # [B, 1, 1]
+        theta_exp = theta.view(1, 1, -1)
+        phi_exp = phi.view(1, 1, -1)
+
+        # Compute rotations in parallel: [B, 1, Q]
+        rot_x = torch.cos(theta_exp * x_exp + phi_exp)
+        rot_y = torch.sin(theta_exp * x_exp + phi_exp)
+
+        # Concatenate along qubit-feature axis -> [B, 1, 2Q]
+        quantum_state = torch.cat([rot_x, rot_y], dim=-1)
+
+        # Measurement: mean over features axis -> [B, 1]
         measurement = torch.mean(quantum_state, dim=-1, keepdim=True)
-        
         return measurement
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -291,35 +291,23 @@ class PQCBasis(nn.Module):
         Returns shape: [batch, input_dim, num_basis]
         """
         batch_size, input_dim = x.shape
-        
-        # Generate basis functions for each input dimension
-        basis_functions_list = []
-        
-        for dim_idx in range(input_dim):
-            x_dim = x[:, dim_idx:dim_idx+1]  # [batch_size, 1]
-            
-            # Simulate quantum circuit for this dimension
-            quantum_output = self._quantum_circuit_simulation(x_dim)
-            
-            # Generate basis functions based on quantum output
-            dim_basis = []
-            
-            # Constant term
-            dim_basis.append(torch.ones_like(x_dim))
-            
-            # Quantum-inspired basis functions
-            for i in range(self.num_basis - 1):
-                # Use quantum output to generate non-linear basis functions
-                basis_func = torch.sin(quantum_output * (i + 1) * math.pi)
-                dim_basis.append(basis_func)
-            
-            # Stack to [batch_size, num_basis]
-            dim_basis_tensor = torch.cat(dim_basis, dim=1)
-            basis_functions_list.append(dim_basis_tensor)
-        
-        # Stack to [batch_size, input_dim, num_basis]
-        basis_tensor = torch.stack(basis_functions_list, dim=1)
-        
+
+        # Vectorize across all input dims: reshape to [B*D, 1]
+        x_flat = x.reshape(-1, 1)
+        quantum_output = self._quantum_circuit_simulation(x_flat)  # [B*D, 1]
+
+        # Build basis terms vectorized
+        ones = torch.ones(quantum_output.shape[0], 1, dtype=x.dtype, device=x.device)
+        if self.num_basis <= 1:
+            basis_flat = ones
+        else:
+            freqs = torch.arange(1, self.num_basis, dtype=x.dtype, device=x.device)
+            angles = quantum_output @ (freqs.view(1, -1) * math.pi)  # [B*D, K]
+            sin_terms = torch.sin(angles)  # [B*D, K]
+            basis_flat = torch.cat([ones, sin_terms], dim=-1)  # [B*D, num_basis]
+
+        # Reshape back to [B, D, num_basis]
+        basis_tensor = basis_flat.reshape(batch_size, input_dim, self.num_basis)
         return basis_tensor
 
 
@@ -395,31 +383,29 @@ class PQCGpuBasis(nn.Module):
     
     def _quantum_circuit_simulation_gpu(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Execute quantum circuit on GPU using PennyLane
+        Execute quantum circuit on GPU using vectorized trig simulation
         """
+        # Fallback to vectorized CPU sim if PennyLane not available
         if not self.pennylane_available:
-            # Fallback to CPU simulation
             return self._quantum_circuit_simulation_cpu(x)
-        
-        batch_size = x.shape[0]
-        quantum_outputs = []
-        
-        try:
-            for i in range(batch_size):
-                # Prepare input for quantum circuit
-                x_input = x[i].cpu().numpy()
-                
-                # Execute quantum circuit
-                q_output = self.quantum_circuit(x_input, self.theta, self.phi)
-                quantum_outputs.append(torch.tensor(q_output, device=x.device))
-            
-            # Stack results
-            quantum_output = torch.stack(quantum_outputs, dim=0)
-            return quantum_output  # [batch_size, num_qubits]
-            
-        except Exception as e:
-            print(f"⚠️ Quantum circuit execution failed: {e}, falling back to CPU simulation")
-            return self._quantum_circuit_simulation_cpu(x)
+
+        # Use vectorized trig simulation on current device to avoid per-sample qnode
+        x_normalized = torch.tanh(x)  # [B, 1]
+        theta = self.theta.to(x.device)
+        phi = self.phi.to(x.device)
+
+        # Expand to [B, 1, Q]
+        x_exp = x_normalized.unsqueeze(-1)
+        theta_exp = theta.view(1, 1, -1)
+        phi_exp = phi.view(1, 1, -1)
+
+        rot_x = torch.cos(theta_exp * x_exp + phi_exp)
+        rot_y = torch.sin(theta_exp * x_exp + phi_exp)
+        rot_z = torch.cos((theta_exp * 0.5) * x_exp)  # simple extra feature
+
+        quantum_state = torch.cat([rot_x, rot_y, rot_z], dim=-1)
+        measurement = torch.mean(quantum_state, dim=-1, keepdim=True)
+        return measurement
     
     def _quantum_circuit_simulation_cpu(self, x: torch.Tensor) -> torch.Tensor:
         """
