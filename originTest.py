@@ -100,6 +100,7 @@ def parse_args():
     parser.add_argument("--basis_function", type=str, default="chebyshev", 
                        choices=["chebyshev", "b_spline", "fourier", "pqc", "pqc_gpu"], 
                        help="Choose basis function for gnn_kan_rca")
+    parser.add_argument("--use_dual_graph", action="store_true", help="Enable dual graph mode for gnn_kan_rca")
     parser.add_argument(
         "--feature_method",
         type=str,
@@ -296,6 +297,7 @@ def process(data_path):
                 feature_method=(args.feature_method if args.feature_method is not None else "enhanced_ica"),
                 use_optimized_input=True,
                 sparsity_lambda=2e-3,           # 大幅增加稀疏性權重
+                use_dual_graph=args.use_dual_graph,  # 傳遞雙圖模式參數
                 # 🎯 高精度訓練參數
                 learning_rate=(args.learning_rate if args.learning_rate is not None else 1.07655e-7),           # 優化學習率
                 num_epochs=400,                 # 大幅增加訓練輪數
