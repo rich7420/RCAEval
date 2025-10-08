@@ -17,8 +17,256 @@ import networkx as nx
 import warnings
 from typing import Dict, List, Tuple, Optional, Union, Any
 from dataclasses import dataclass, field
+from scipy.stats import rankdata
 
 warnings.filterwarnings("ignore")
+
+
+def detect_change_point(time_series: np.ndarray) -> int:
+    """
+    檢測時序數據的變化點（異常開始時間）
+    使用 CUSUM (Cumulative Sum) 算法
+    
+    Args:
+        time_series: 時序數據數組
+        
+    Returns:
+        change_point: 變化點索引，如果無明顯變化則返回序列長度
+        
+    Example:
+        >>> ts = np.array([1, 1, 1, 5, 5, 5])  # 階躍信號
+        >>> detect_change_point(ts)
+        3
+    """
+    if len(time_series) < 3:
+        return 0
+    
+    # 計算均值和標準差（前1/3段作為基線）
+    baseline_len = max(3, len(time_series) // 3)
+    baseline_mean = np.mean(time_series[:baseline_len])
+    baseline_std = np.std(time_series[:baseline_len])
+    
+    if baseline_std < 1e-8:
+        # 基線段幾乎無變化，使用全局std
+        baseline_std = np.std(time_series) + 1e-8
+    
+    # CUSUM 累積和
+    cusum = np.zeros(len(time_series))
+    threshold = max(2 * baseline_std, baseline_mean * 0.05)  # 降低閾值
+    
+    for i in range(1, len(time_series)):
+        # CUSUM 公式：累積偏離基線的程度
+        deviation = time_series[i] - baseline_mean
+        cusum[i] = max(0, cusum[i-1] + deviation - baseline_std)
+        
+        if cusum[i] > threshold:
+            return i  # 找到異常開始點
+    
+    return len(time_series)  # 無明顯變化點
+
+
+def detect_anomaly_signal(time_series: np.ndarray) -> np.ndarray:
+    """
+    提取異常信號（0/1 序列）
+    使用移動平均 + 3-sigma 規則
+    
+    Args:
+        time_series: 時序數據數組
+        
+    Returns:
+        anomaly_signal: 0/1 數組，1 表示異常，0 表示正常
+        
+    Example:
+        >>> ts = np.array([1, 1, 1, 10, 1, 1, 1])  # 突發異常
+        >>> detect_anomaly_signal(ts)
+        array([0., 0., 0., 1., 0., 0., 0.])
+    """
+    if len(time_series) < 3:
+        return np.zeros(len(time_series))
+    
+    # 窗口大小：序列長度的 10%，最小為 3
+    window = max(3, len(time_series) // 10)
+    
+    # 移動平均（使用 numpy.convolve）
+    rolling_mean = np.convolve(time_series, np.ones(window)/window, mode='same')
+    
+    # 移動標準差（使用滑動窗口）
+    rolling_std = np.array([
+        np.std(time_series[max(0, i-window):min(len(time_series), i+window)])
+        for i in range(len(time_series))
+    ])
+    
+    # 3-sigma 規則：偏離移動平均超過 3 個標準差即為異常
+    anomaly_signal = np.abs(time_series - rolling_mean) > (3 * rolling_std + 1e-8)
+    
+    return anomaly_signal.astype(float)
+
+
+def time_lagged_correlation(signal_a: np.ndarray, signal_b: np.ndarray, 
+                            max_lag: int = 10) -> Tuple[float, int]:
+    """
+    計算時滯相關性
+    
+    Args:
+        signal_a: 信號 A
+        signal_b: 信號 B
+        max_lag: 最大時滯（正向和負向）
+        
+    Returns:
+        max_corr: 最大相關係數
+        best_lag: 最佳時滯（正值表示 A 領先於 B）
+        
+    Example:
+        >>> a = np.array([0, 0, 1, 1, 1])
+        >>> b = np.array([0, 1, 1, 1, 0])  # b 滯後於 a
+        >>> corr, lag = time_lagged_correlation(a, b)
+        >>> print(f"相關性: {corr:.2f}, lag: {lag}")
+        相關性: 0.87, lag: 1
+    """
+    max_corr = 0.0
+    best_lag = 0
+    
+    for lag in range(-max_lag, max_lag + 1):
+        # 根據 lag 調整信號
+        if lag >= 0:
+            # 正向 lag: a 領先於 b
+            a_shifted = signal_a[:-lag] if lag > 0 else signal_a
+            b_shifted = signal_b[lag:]
+        else:
+            # 負向 lag: b 領先於 a
+            a_shifted = signal_a[-lag:]
+            b_shifted = signal_b[:lag]
+        
+        # 取最小長度
+        min_len = min(len(a_shifted), len(b_shifted))
+        if min_len < 3:
+            continue
+        
+        a_cut = a_shifted[:min_len]
+        b_cut = b_shifted[:min_len]
+        
+        # 計算相關係數（需要標準差 > 0）
+        if np.std(a_cut) > 1e-8 and np.std(b_cut) > 1e-8:
+            try:
+                corr = np.corrcoef(a_cut, b_cut)[0, 1]
+                if not np.isnan(corr) and np.abs(corr) > np.abs(max_corr):
+                    max_corr = corr
+                    best_lag = lag
+            except:
+                continue
+    
+    return max_corr, best_lag
+
+
+def compute_relative_anomaly_features(
+    feature_matrix: np.ndarray,  # [N_services, D_features]
+    service_names: List[str],
+    time_series_dict: Dict[str, np.ndarray]  # 原始時序數據
+) -> np.ndarray:
+    """
+    計算相對異常度特徵（完全無監督，不使用 fault type）
+    
+    核心思想：
+    1. 對每個特徵維度，計算該服務相對於其他服務的異常程度
+    2. 識別時序上的異常首次出現時間
+    3. 所有特徵都是相對的，不需要知道故障類型
+    
+    Args:
+        feature_matrix: 原始特徵矩陣 [N, D]
+        service_names: 服務名稱列表
+        time_series_dict: 原始時序數據字典 {service_name: time_series}
+        
+    Returns:
+        relative_features: 相對異常度特徵矩陣 [N, D_relative]
+            包含: z_scores (D維), percentiles (D維), onset_ranks (1維), propagation_scores (1維)
+    """
+    
+    N, D = feature_matrix.shape
+    relative_features = []
+    
+    print(f"📊 計算相對異常度特徵: {N} 服務 × {D} 基礎特徵")
+    
+    # ========== 1. 統計相對異常度 ==========
+    # 對每個原始特徵維度計算 Z-score 和 Percentile
+    for d in range(D):
+        feature_col = feature_matrix[:, d]
+        mean_val = np.mean(feature_col)
+        std_val = np.std(feature_col)
+        
+        # Z-score: 衡量該服務在此特徵上距離均值多少個標準差
+        z_scores = (feature_col - mean_val) / (std_val + 1e-8)
+        relative_features.append(z_scores.reshape(-1, 1))
+        
+        # Percentile rank: 該服務在所有服務中的排名（0-1）
+        percentiles = rankdata(feature_col, method='average') / N
+        relative_features.append(percentiles.reshape(-1, 1))
+    
+    # ========== 2. 時序相對異常度 ==========
+    # 檢測每個服務的異常開始時間（change point）
+    onset_times = []
+    for service in service_names:
+        if service in time_series_dict:
+            ts = time_series_dict[service]
+            onset_time = detect_change_point(ts)
+        else:
+            onset_time = float('inf')  # 無數據視為最晚出現
+        onset_times.append(onset_time)
+    
+    # 相對發生時間排名：越早 = 越可能是根因
+    onset_ranks = rankdata(onset_times, method='average') / N
+    relative_features.append(onset_ranks.reshape(-1, 1))
+    
+    # ========== 3. 傳播影響力評分 ==========
+    # 計算該服務的異常與其他服務異常的相關性（優化版本）
+    propagation_scores = []
+    
+    # 預先計算所有服務的異常信號，避免重複計算
+    anomaly_signals_cache = {}
+    for i, service in enumerate(service_names):
+        if service in time_series_dict:
+            anomaly_signals_cache[i] = detect_anomaly_signal(time_series_dict[service])
+        else:
+            anomaly_signals_cache[i] = np.array([])
+    
+    for i in range(N):
+        if i in anomaly_signals_cache and len(anomaly_signals_cache[i]) > 0:
+            correlations = []
+            
+            # 只計算與前幾個服務的相關性，避免 O(N²) 複雜度
+            max_services = min(10, N)  # 最多計算 10 個服務的相關性
+            
+            for j in range(min(max_services, N)):
+                if i != j and j in anomaly_signals_cache and len(anomaly_signals_cache[j]) > 0:
+                    # 時滯相關：i 的異常是否早於 j
+                    max_corr, best_lag = time_lagged_correlation(
+                        anomaly_signals_cache[i], 
+                        anomaly_signals_cache[j], 
+                        max_lag=5  # 減少 max_lag 以提高性能
+                    )
+                    
+                    # 如果 lag > 0，說明 i 早於 j，i 可能是根因
+                    if best_lag > 0 and max_corr > 0:
+                        correlations.append(max_corr)
+            
+            # 平均影響力：該服務的異常與多少其他服務的異常相關
+            prop_score = np.mean(correlations) if correlations else 0.0
+        else:
+            prop_score = 0.0
+        
+        propagation_scores.append(prop_score)
+    
+    relative_features.append(np.array(propagation_scores).reshape(-1, 1))
+    
+    # ========== 4. 拼接所有相對特徵 ==========
+    relative_matrix = np.concatenate(relative_features, axis=1)
+    
+    print(f"✅ 相對異常度特徵完成: {relative_matrix.shape[1]} 維")
+    print(f"   - Z-scores: {D} 維")
+    print(f"   - Percentiles: {D} 維")
+    print(f"   - Onset ranks: 1 維")
+    print(f"   - Propagation scores: 1 維")
+    
+    return relative_matrix
 
 
 @dataclass
@@ -1616,6 +1864,49 @@ def rca_aware_metric_processing(metrics_df: pd.DataFrame,
             col_data = feature_matrix[:, col]
             if np.std(col_data) > 0:
                 feature_matrix[:, col] = (col_data - np.mean(col_data)) / np.std(col_data)
+
+    # ========== 🆕 新增：相對異常度特徵 ==========
+    # 收集原始時序數據用於相對異常度計算
+    time_series_dict = {}
+    columns = df.columns.tolist()
+    
+    for service_name in all_service_names:
+        # 找到該服務的主要欄位（優先 latency，其次其他指標）
+        service_cols = [col for col in columns if service_name in col]
+        
+        if service_cols:
+            # 優先選擇 latency 欄位
+            latency_cols = [col for col in service_cols if 'latency' in col.lower()]
+            if latency_cols:
+                time_series_dict[service_name] = df[latency_cols[0]].values
+            else:
+                # 否則使用第一個可用欄位
+                time_series_dict[service_name] = df[service_cols[0]].values
+    
+    # 計算相對異常度特徵
+    try:
+        print(f"🔄 開始計算相對異常度特徵...")
+        relative_features = compute_relative_anomaly_features(
+            feature_matrix, 
+            all_service_names, 
+            time_series_dict
+        )
+        
+        # 拼接原始特徵 + 相對異常度特徵
+        enhanced_matrix = np.concatenate([feature_matrix, relative_features], axis=1)
+        
+        print(f"✅ 相對異常度特徵提取完成:")
+        print(f"   原始特徵: {feature_matrix.shape[1]} 維")
+        print(f"   相對特徵: {relative_features.shape[1]} 維")
+        print(f"   總計: {enhanced_matrix.shape[1]} 維")
+        
+        feature_matrix = enhanced_matrix
+        
+    except Exception as e:
+        print(f"⚠️ 相對異常度特徵計算失敗: {e}")
+        print(f"   回退到原始特徵")
+        import traceback
+        traceback.print_exc()
 
     # 處理NaN和無限值
     feature_matrix = np.nan_to_num(feature_matrix, nan=0.0, posinf=1.0, neginf=-1.0)

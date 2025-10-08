@@ -13,6 +13,23 @@ import torch.nn as nn
 
 warnings.filterwarnings("ignore")
 
+
+class TemporalAttentionAdapter(nn.Module):
+    """時序注意力適配器 - 用於調整特徵維度"""
+    
+    def __init__(self, feature_dim: int, target_dim: int = 128, num_heads: int = 4):
+        super().__init__()
+        self.feature_dim = feature_dim
+        self.target_dim = target_dim
+        self.num_heads = num_heads
+        
+        # 簡單的線性投影
+        self.projection = nn.Linear(feature_dim, target_dim)
+        
+    def forward(self, x):
+        return self.projection(x)
+
+
 # 🎯 KNN Baseline 函數（永久替換Graph Decoder）
 def knn_fallback(embeddings, node_names, k=5, similarity_threshold=0.3):
     """
@@ -297,7 +314,7 @@ def gnn_kan_rca_multimodal(data_dict, inject_time=None, dataset=None, with_bg=Fa
 def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False, 
                 config_type='simplified', feature_method='enhanced_ica', 
                 use_optimized_input=True, sparsity_lambda=1e-5, 
-                basis_function='chebyshev', **kwargs):
+                basis_function='chebyshev', use_dual_graph=False, **kwargs):
     """
     🚨 ISSUE 3: 多階段處理複雜度質疑
     
@@ -511,9 +528,14 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
         
         node_features = torch.FloatTensor(features)
     
-    # 3. 初始化純粹KAN模型並移動到正確設備
-    print("🤖 初始化純粹KAN模型（KAN取代MLP）...")
-    model = GNNKANModel(config, len(node_names))
+    # 3. 初始化模型並移動到正確設備
+    if use_dual_graph:
+        print("🧠 初始化雙圖融合 GNN-KAN 模型...")
+        from ..gnn_kan_module.models import DualGraphGNNKANModel
+        model = DualGraphGNNKANModel(config, len(node_names))
+    else:
+        print("🤖 初始化純粹KAN模型（KAN取代MLP）...")
+        model = GNNKANModel(config, len(node_names))
     
     # 強制設備管理 - 確保使用正確設備
     device = 'cuda' if use_gpu and torch.cuda.is_available() else 'cpu'
@@ -590,6 +612,18 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
             val_ground_truth = kwargs.get('val_ground_truth', None)
             print(f"✓ 驗證數據準備: {len(val_indices)}個節點用於驗證")
     
+    # 準備雙圖數據（如果啟用）
+    if use_dual_graph:
+        print("🔄 準備雙圖數據...")
+        # 這裡需要從優化輸入處理器獲取傳播圖數據
+        # 暫時使用相似度圖作為傳播圖的佔位符
+        prop_edge_index = edge_index
+        prop_edge_weights = edge_weights
+        print(f"✓ 雙圖數據準備完成: 相似度圖 {edge_index.shape[1]} 邊, 傳播圖 {prop_edge_index.shape[1]} 邊")
+    else:
+        prop_edge_index = None
+        prop_edge_weights = None
+    
     model, training_history = train_gnn_kan_model(
         model, 
         node_features, 
@@ -598,6 +632,8 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
         sparsity_lambda=sparsity_lambda,  # 傳遞稀疏性參數
         val_data=val_data,  # 傳遞驗證數據
         val_ground_truth=val_ground_truth,  # 傳遞驗證真實標籤
+        prop_edge_index=prop_edge_index,  # 傳遞傳播圖邊索引
+        prop_edge_weights=prop_edge_weights,  # 傳遞傳播圖邊權重
         **kwargs  # 傳遞其他參數
     )
     
@@ -666,7 +702,17 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
                 print(f"🔍 推斷的故障類型: {fault_type}")
             
             # 使用真正的GNN-KAN模型學習圖結構
-            embeddings, adj_scores = model(node_features, edge_index, fault_type)
+            if use_dual_graph:
+                embeddings, adj_scores = model(
+                    node_features, 
+                    edge_index, 
+                    prop_edge_index, 
+                    edge_weights, 
+                    prop_edge_weights, 
+                    fault_type
+                )
+            else:
+                embeddings, adj_scores = model(node_features, edge_index, fault_type)
             print(f"✓ GNN-KAN推理成功: 輸入{node_features.shape} -> 嵌入{embeddings.shape}")
             
             if adj_scores is not None:

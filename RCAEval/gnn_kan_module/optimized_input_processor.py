@@ -765,11 +765,25 @@ class KANFeatureProcessor:
 class OptimizedGraphBuilder:
     """優化的圖構建器 - 修復空圖問題"""
     
-    def __init__(self, similarity_threshold=0.5, max_edges_per_node=4):  # 提高閾值降低密度 / Increase threshold to reduce density
+    def __init__(self, similarity_threshold=0.5, max_edges_per_node=4, use_propagation_graph=False):  # 提高閾值降低密度 / Increase threshold to reduce density
         # 🔧 降低相似性閾值，避免空圖
         self.similarity_threshold = similarity_threshold
         self.max_edges_per_node = max_edges_per_node
-        print(f"🔧 圖構建器初始化: 閾值={similarity_threshold}, 最大邊數={max_edges_per_node}")
+        self.use_propagation_graph = use_propagation_graph
+        
+        # 初始化傳播圖構建器
+        if self.use_propagation_graph:
+            from .propagation_graph_builder import PropagationGraphBuilder
+            self.propagation_builder = PropagationGraphBuilder(
+                similarity_threshold=similarity_threshold,
+                propagation_threshold=0.3,
+                max_lag=10,
+                min_correlation=0.2
+            )
+            print(f"🔧 圖構建器初始化: 閾值={similarity_threshold}, 最大邊數={max_edges_per_node}, 傳播圖=啟用")
+        else:
+            self.propagation_builder = None
+            print(f"🔧 圖構建器初始化: 閾值={similarity_threshold}, 最大邊數={max_edges_per_node}, 傳播圖=禁用")
     
     def build_graph_fast(self, node_features: np.ndarray, node_names: List[str]) -> Tuple[torch.Tensor, torch.Tensor]:
         """修復版圖構建 - 確保圖連通性 (改進方案3.3.1)"""
@@ -1015,6 +1029,71 @@ class OptimizedGraphBuilder:
             weights.extend([0.5, 0.5])
         
         return edges, weights
+    
+    def build_graph_with_propagation(self, 
+                                   node_features: np.ndarray, 
+                                   node_names: List[str],
+                                   time_series_dict: Optional[Dict[str, np.ndarray]] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        構建雙圖（相似性圖 + 傳播圖）
+        
+        Args:
+            node_features: 節點特徵矩陣 [N_nodes, D_features]
+            node_names: 節點名稱列表
+            time_series_dict: 原始時序數據字典（用於傳播圖）
+            
+        Returns:
+            (sim_edge_index, sim_weights, prop_edge_index, prop_weights)
+        """
+        if not self.use_propagation_graph or self.propagation_builder is None:
+            # 回退到單圖模式
+            edge_index, edge_weights = self.build_graph_fast(node_features, node_names)
+            # 返回相同的圖作為兩個圖
+            return edge_index, edge_weights, edge_index, edge_weights
+        
+        print(f"🌐 構建雙圖: {len(node_names)} 個節點")
+        
+        # 使用傳播圖構建器構建雙圖
+        sim_edge_index, sim_weights, prop_edge_index, prop_weights = self.propagation_builder.build_dual_graph(
+            node_features, node_names, time_series_dict or {}
+        )
+        
+        print(f"✅ 雙圖構建完成:")
+        print(f"  相似性圖: {sim_edge_index.shape[1]} 條邊")
+        print(f"  傳播圖: {prop_edge_index.shape[1]} 條邊")
+        
+        return sim_edge_index, sim_weights, prop_edge_index, prop_weights
+    
+    def _collect_time_series_data(self, df: pd.DataFrame, node_names: List[str]) -> Dict[str, np.ndarray]:
+        """
+        收集原始時序數據用於傳播圖構建
+        
+        Args:
+            df: 原始數據框
+            node_names: 節點名稱列表
+            
+        Returns:
+            時序數據字典 {service_name: time_series}
+        """
+        time_series_dict = {}
+        
+        for service_name in node_names:
+            # 嘗試找到與服務名稱相關的列
+            service_cols = [col for col in df.columns if service_name in col]
+            
+            if service_cols:
+                # 優先選擇延遲相關的列
+                latency_cols = [col for col in service_cols if 'latency' in col.lower()]
+                if latency_cols:
+                    time_series_dict[service_name] = df[latency_cols[0]].values
+                else:
+                    # 如果沒有延遲列，使用第一個數值列
+                    time_series_dict[service_name] = df[service_cols[0]].values
+            else:
+                # 如果找不到對應的列，創建一個默認的時序
+                time_series_dict[service_name] = np.random.randn(len(df))
+        
+        return time_series_dict
 
 
 class EnhancedFusion(nn.Module):
@@ -1050,13 +1129,15 @@ class GNNKANInputOptimizer:
                  target_dim=64,
                  similarity_threshold=0.5,  # 提高相似性閾值以降低圖密度 / Increase similarity threshold to reduce graph density
                  max_edges_per_node=4,      # 減少每節點最大邊數 / Reduce max edges per node
-                 force_node_expansion=False):
+                 force_node_expansion=False,
+                 use_propagation_graph=False):  # 新增：是否使用傳播圖
         
         self.feature_processor = KANFeatureProcessor(
             feature_method, target_dim
         )
-        self.graph_builder = OptimizedGraphBuilder(similarity_threshold, max_edges_per_node)
+        self.graph_builder = OptimizedGraphBuilder(similarity_threshold, max_edges_per_node, use_propagation_graph)
         self.force_node_expansion = force_node_expansion
+        self.use_propagation_graph = use_propagation_graph
     
     def optimize_input(self, data: Any, inject_time: Optional[float] = None) -> KANOptimizedData:
         """優化輸入處理 + 強制節點擴展支持 + BARO 風格特徵"""
@@ -1072,7 +1153,18 @@ class GNNKANInputOptimizer:
             print(f"⚠️ 節點數不匹配: features={node_features.shape[0]} vs names={len(node_names)}，以 features 為準重建名稱")
             node_names = [f'node_{i}' for i in range(node_features.shape[0])]
 
-        edge_index, edge_weights = self.graph_builder.build_graph_fast(node_features, node_names)
+        # 根據是否使用傳播圖選擇構建方法
+        if self.use_propagation_graph:
+            # 收集原始時序數據用於傳播圖
+            time_series_dict = self._collect_time_series_data(df, node_names)
+            sim_edge_index, sim_weights, prop_edge_index, prop_weights = self.graph_builder.build_graph_with_propagation(
+                node_features, node_names, time_series_dict
+            )
+            # 使用相似性圖作為主要圖
+            edge_index, edge_weights = sim_edge_index, sim_weights
+        else:
+            edge_index, edge_weights = self.graph_builder.build_graph_fast(node_features, node_names)
+            sim_edge_index, sim_weights, prop_edge_index, prop_weights = edge_index, edge_weights, edge_index, edge_weights
 
         # 保守的因果先後矩陣（lead-lag prior）：偏好「先異常→後影響」的方向
         lead_lag_prior = self._compute_lead_lag_prior(df, node_names)
@@ -1412,6 +1504,37 @@ class GNNKANInputOptimizer:
         edge_weights = adj_matrix[nonzero_indices[:, 0], nonzero_indices[:, 1]]
         
         return edge_index, edge_weights
+    
+    def _collect_time_series_data(self, df: pd.DataFrame, node_names: List[str]) -> Dict[str, np.ndarray]:
+        """
+        收集原始時序數據用於傳播圖構建
+        
+        Args:
+            df: 原始數據框
+            node_names: 節點名稱列表
+            
+        Returns:
+            時序數據字典 {service_name: time_series}
+        """
+        time_series_dict = {}
+        
+        for service_name in node_names:
+            # 嘗試找到與服務名稱相關的列
+            service_cols = [col for col in df.columns if service_name in col]
+            
+            if service_cols:
+                # 優先選擇延遲相關的列
+                latency_cols = [col for col in service_cols if 'latency' in col.lower()]
+                if latency_cols:
+                    time_series_dict[service_name] = df[latency_cols[0]].values
+                else:
+                    # 如果沒有延遲列，使用第一個數值列
+                    time_series_dict[service_name] = df[service_cols[0]].values
+            else:
+                # 如果找不到對應的列，創建一個默認的時序
+                time_series_dict[service_name] = np.random.randn(len(df))
+        
+        return time_series_dict
 
 
 class MultiModalGraphBuilder:
@@ -1510,11 +1633,13 @@ def optimize_gnn_kan_input(data: Any,
                           feature_method: str = 'ica',
                           target_dim: int = 64,
                           inject_time: Optional[float] = None,
+                          use_propagation_graph: bool = False,
                           **kwargs) -> KANOptimizedData:
     """一鍵優化GNN+KAN輸入"""
     optimizer = GNNKANInputOptimizer(
         feature_method=feature_method,
         target_dim=target_dim,
+        use_propagation_graph=use_propagation_graph,
         **kwargs
     )
     

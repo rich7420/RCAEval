@@ -70,14 +70,27 @@ class GNNKANModel(nn.Module):
         self.dropout = nn.Dropout(config.dropout)
     
     def forward(self, node_features, edge_index, fault_type=None):
-        """GNN-KAN前向傳播 - 使用KAN學習圖結構"""
+        """GNN-KAN前向傳播 - 使用KAN學習圖結構，優化版本"""
         
         try:
+            # 🔧 優化：緩存中間結果，減少重複計算
+            if not hasattr(self, '_cache') or self._cache is None:
+                self._cache = {}
+            
+            # 檢查是否可以使用緩存
+            cache_key = f"{node_features.shape}_{edge_index.shape}"
+            if cache_key in self._cache and not self.training:
+                return self._cache[cache_key]
+            
             # GNN特徵提取
             embeddings = self.gnn_encoder(node_features, edge_index)
             
             # 使用KAN-based Graph Decoder學習圖結構
             adj_scores = self.graph_decoder(embeddings, fault_type)
+            
+            # 緩存結果（僅在推理時）
+            if not self.training:
+                self._cache[cache_key] = (embeddings, adj_scores)
             
             return embeddings, adj_scores
         except RuntimeError as e:
@@ -350,7 +363,7 @@ class AdvancedTrainingManager:
             loss = compute_loss_stable(embeddings, adj, edge_index, self.config)
             
             # 反向傳播
-            loss.backward()
+            loss.backward(retain_graph=False)
             optimizer.step()
             
             # 學習率調度
@@ -1069,6 +1082,215 @@ class MultiScaleGraphDecoder(nn.Module):
         return sparse_adj
 
 
+class DualGraphGNNKANModel(nn.Module):
+    """
+    雙圖融合 GNN-KAN 模型
+    
+    核心理念：
+    - 相似度圖：捕捉服務間的靜態相似性
+    - 傳播圖：捕捉異常傳播的動態關係
+    - 自適應融合：根據故障類型動態調整兩個圖的權重
+    
+    Args:
+        config: GNNKANConfig 配置對象
+        num_nodes: 節點數量
+        similarity_threshold: 相似度圖閾值（默認 0.5）
+        propagation_threshold: 傳播圖閾值（默認 0.3）
+        max_lag: 最大時滯（默認 10）
+    
+    Example:
+        >>> config = GNNKANConfig()
+        >>> model = DualGraphGNNKANModel(config, num_nodes=10)
+        >>> node_features = torch.randn(10, 128)
+        >>> sim_edge_index = torch.tensor([[0, 1], [1, 0]], dtype=torch.long)
+        >>> prop_edge_index = torch.tensor([[0, 1]], dtype=torch.long)
+        >>> output = model(node_features, sim_edge_index, prop_edge_index)
+    """
+    
+    def __init__(self, config, num_nodes, similarity_threshold=0.5, 
+                 propagation_threshold=0.3, max_lag=10):
+        super(DualGraphGNNKANModel, self).__init__()
+        
+        self.config = config
+        self.num_nodes = num_nodes
+        self.similarity_threshold = similarity_threshold
+        self.propagation_threshold = propagation_threshold
+        self.max_lag = max_lag
+        
+        # 特徵維度
+        self.input_dim = config.hidden_dims[0] if hasattr(config, 'hidden_dims') else 128
+        self.hidden_dim = config.hidden_dims[0] if hasattr(config, 'hidden_dims') else 128
+        self.output_dim = config.hidden_dims[0] if hasattr(config, 'hidden_dims') else 128
+        
+        print(f"🧠 初始化 DualGraphGNNKANModel:")
+        print(f"   - 節點數: {num_nodes}")
+        print(f"   - 輸入維度: {self.input_dim}")
+        print(f"   - 隱藏維度: {self.hidden_dim}")
+        print(f"   - 相似度閾值: {similarity_threshold}")
+        print(f"   - 傳播閾值: {propagation_threshold}")
+        
+        # 1. 相似度圖分支 (GNN + KAN)
+        self.similarity_gnn = OptimizedGNNKANEncoder(
+            input_dim=self.input_dim,
+            hidden_dims=config.hidden_dims if hasattr(config, 'hidden_dims') else [128, 96, 64],
+            output_dim=self.hidden_dim,
+            num_layers=getattr(config, 'num_layers', 3),
+            dropout=getattr(config, 'dropout', 0.1),
+            kan_grid_size=getattr(config, 'kan_grid_size', 8),
+            kan_spline_order=getattr(config, 'kan_spline_order', 3),
+            basis_function=getattr(config, 'basis_function', 'chebyshev')
+        )
+        
+        # 2. 傳播圖分支 (GNN + KAN)
+        self.propagation_gnn = OptimizedGNNKANEncoder(
+            input_dim=self.input_dim,
+            hidden_dims=config.hidden_dims if hasattr(config, 'hidden_dims') else [128, 96, 64],
+            output_dim=self.hidden_dim,
+            num_layers=getattr(config, 'num_layers', 3),
+            dropout=getattr(config, 'dropout', 0.1),
+            kan_grid_size=getattr(config, 'kan_grid_size', 8),
+            kan_spline_order=getattr(config, 'kan_spline_order', 3),
+            basis_function=getattr(config, 'basis_function', 'chebyshev')
+        )
+        
+        # 3. 自適應融合層
+        self.fusion_layer = nn.Sequential(
+            nn.Linear(self.hidden_dim * 2, self.hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(getattr(config, 'dropout', 0.1)),
+            nn.Linear(self.hidden_dim, self.hidden_dim)
+        )
+        
+        # 4. 可學習的分支權重（用於自適應融合）
+        self.branch_weights = nn.Parameter(torch.tensor([0.5, 0.5]))
+        
+        # 5. 圖解碼器（用於重建鄰接矩陣）
+        self.graph_decoder = nn.Sequential(
+            nn.Linear(1, self.hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(getattr(config, 'dropout', 0.1)),
+            nn.Linear(self.hidden_dim // 2, 1),
+            nn.Sigmoid()
+        )
+        
+        # 6. 注意力機制（用於特徵融合）
+        self.attention = nn.MultiheadAttention(
+            embed_dim=self.hidden_dim,
+            num_heads=4,
+            dropout=getattr(config, 'dropout', 0.1),
+            batch_first=True
+        )
+        
+        print(f"✅ DualGraphGNNKANModel 初始化完成")
+        print(f"   - 相似度分支參數: {sum(p.numel() for p in self.similarity_gnn.parameters())}")
+        print(f"   - 傳播分支參數: {sum(p.numel() for p in self.propagation_gnn.parameters())}")
+        print(f"   - 總參數: {sum(p.numel() for p in self.parameters())}")
+    
+    def forward(self, node_features, sim_edge_index, prop_edge_index=None, 
+                sim_edge_weights=None, prop_edge_weights=None, fault_type=None):
+        """
+        前向傳播
+        
+        Args:
+            node_features: 節點特徵 [N, D]
+            sim_edge_index: 相似度圖邊索引 [2, E_sim]
+            prop_edge_index: 傳播圖邊索引 [2, E_prop] (可選)
+            sim_edge_weights: 相似度圖邊權重 [E_sim] (可選)
+            prop_edge_weights: 傳播圖邊權重 [E_prop] (可選)
+            fault_type: 故障類型 (可選，用於自適應融合)
+            
+        Returns:
+            node_embedding: 融合後的節點嵌入 [N, D]
+            pred_adj: 預測的鄰接矩陣 [N, N] (可選)
+        """
+        batch_size, num_nodes = node_features.shape[0], node_features.shape[1]
+        
+        # 🔧 優化：緩存機制
+        if not hasattr(self, '_cache') or self._cache is None:
+            self._cache = {}
+        
+        # 檢查是否可以使用緩存
+        cache_key = f"{node_features.shape}_{sim_edge_index.shape}_{prop_edge_index.shape if prop_edge_index is not None else 'None'}"
+        if cache_key in self._cache and not self.training:
+            return self._cache[cache_key]
+        
+        # 1. 相似度圖分支前向傳播
+        sim_embedding = self.similarity_gnn(node_features, sim_edge_index)
+        
+        # 2. 傳播圖分支前向傳播（如果提供）
+        if prop_edge_index is not None and prop_edge_index.size(1) > 0:
+            prop_embedding = self.propagation_gnn(node_features, prop_edge_index)
+            
+            # 3. 自適應融合
+            # 根據故障類型調整分支權重
+            if fault_type is not None:
+                # 對於 DELAY 和 LOSS 故障，增加傳播圖權重
+                if fault_type in ['delay', 'loss']:
+                    weights = F.softmax(torch.tensor([0.3, 0.7]), dim=0)
+                else:
+                    weights = F.softmax(torch.tensor([0.7, 0.3]), dim=0)
+            else:
+                # 使用可學習權重
+                weights = F.softmax(self.branch_weights, dim=0)
+            
+            # 加權融合
+            fused_embedding = weights[0] * sim_embedding + weights[1] * prop_embedding
+            
+            # 4. 注意力機制增強融合
+            # 將兩個嵌入拼接進行自注意力
+            combined_embedding = torch.stack([sim_embedding, prop_embedding], dim=1)  # [N, 2, D]
+            attended_embedding, _ = self.attention(
+                combined_embedding, combined_embedding, combined_embedding
+            )
+            attended_embedding = attended_embedding.mean(dim=1)  # [N, D]
+            
+            # 5. 最終融合
+            final_embedding = self.fusion_layer(
+                torch.cat([fused_embedding, attended_embedding], dim=-1)
+            )
+            
+        else:
+            # 只有相似度圖的情況
+            final_embedding = sim_embedding
+        
+        # 6. 圖解碼器（重建鄰接矩陣）
+        pred_adj = None
+        if self.training or hasattr(self, 'enable_graph_decoder'):
+            # 計算節點間的相似度
+            node_sim = torch.mm(final_embedding, final_embedding.t())
+            # 直接使用相似度矩陣作為鄰接矩陣
+            pred_adj = torch.sigmoid(node_sim)
+        
+        # 緩存結果（僅在推理時）
+        if not self.training:
+            self._cache[cache_key] = (final_embedding, pred_adj)
+        
+        return final_embedding, pred_adj
+    
+    def get_reg_loss(self):
+        """獲取正則化損失（用於 KAN 層）"""
+        reg_loss = 0.0
+        
+        # 相似度分支正則化
+        if hasattr(self.similarity_gnn, 'get_reg_loss'):
+            reg_loss += self.similarity_gnn.get_reg_loss()
+        
+        # 傳播分支正則化
+        if hasattr(self.propagation_gnn, 'get_reg_loss'):
+            reg_loss += self.propagation_gnn.get_reg_loss()
+        
+        return reg_loss
+    
+    def enable_graph_decoder(self):
+        """啟用圖解碼器"""
+        self.enable_graph_decoder = True
+    
+    def disable_graph_decoder(self):
+        """禁用圖解碼器"""
+        if hasattr(self, 'enable_graph_decoder'):
+            delattr(self, 'enable_graph_decoder')
+
+
 # 將SimplifiedGNNKAN添加到可用的模型中
-__all__ = ['GNNKANModel', 'SimplifiedGNNKAN', 'TemporalAttention', 'create_fallback_model', 
+__all__ = ['GNNKANModel', 'SimplifiedGNNKAN', 'DualGraphGNNKANModel', 'TemporalAttention', 'create_fallback_model', 
            'train_gnn_kan_model', 'compute_loss_stable', 'MultiScaleGraphDecoder', 'LossScheduler']

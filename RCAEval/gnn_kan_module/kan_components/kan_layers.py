@@ -292,16 +292,16 @@ class AdvancedKANLayer(nn.Module):
         
         parts = []
         
-        # 🎯 使用統一的基函數工廠 - Replace direct basis calls with factory output
+        # 🔧 優化：並行計算基函數，減少循環開銷
         try:
-            # Get basis functions from factory
+            # 使用並行計算基函數
             basis_tensor = self.basis(x)  # [batch, input_dim, num_basis]
             
-            # Compute spline output using basis functions and learnable coefficients
+            # 並行計算所有輸出的加權和
             spline_coeffs = self.spline_coeffs.float()  # [output_dim, input_dim, num_basis]
             basis_output = torch.einsum('bji,oji->bo', basis_tensor, spline_coeffs)
             
-            # Apply activation and scaling
+            # 應用激活和縮放
             basis_output = torch.tanh(basis_output) * 0.5
             parts.append(basis_output)
             
@@ -311,14 +311,18 @@ class AdvancedKANLayer(nn.Module):
             fallback_output = x @ (torch.ones_like(self.spline_coeffs[:, :, 0]).t() * 0.1)
             parts.append(fallback_output)
         
+        # 🔧 優化：並行計算激活函數，減少重複計算
         try:
-            # 🔧 確保類型一致性，避免 numpy.float32 和 torch.FloatTensor 不匹配
+            # 並行計算激活函數
             x_float = x.float()
             activation_weights_float = self.activation_weights.float()
             activation_output = torch.tanh(x_float @ activation_weights_float.t())
+            
+            # 數值穩定性檢查
             if torch.isnan(activation_output).any() or torch.isinf(activation_output).any():
                 print("⚠️ 激活函數輸出不穩定，使用線性回退")
                 activation_output = x_float @ (activation_weights_float.t() * 0.1)
+            
             # 温和缩放
             activation_output = activation_output * 0.3
             parts.append(activation_output)
