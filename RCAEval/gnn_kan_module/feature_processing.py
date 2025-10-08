@@ -1369,6 +1369,21 @@ def rca_aware_metric_processing(metrics_df: pd.DataFrame,
             pre_end = mid_point
             post_start = mid_point
 
+        # 延遲場景的自適應窗口（若偵測到延遲相關欄位則擴大後窗口以捕捉傳播）
+        try:
+            latency_cols = [col for col in columns if any(k in col.lower() for k in ['lat', 'delay', 'response', 'duration'])]
+            if latency_cols and (post_start < len(df)):
+                total_len = len(service_series)
+                # 擴大post窗口視野（上限為序列長度）
+                extra = max(0, min(total_len // 6, total_len - post_start))
+                post_slice_end_adaptive = min(len(service_series), post_start + extra)
+                # 僅用於本函數內部延遲相關特徵的視野，不改變pre_data/post_data切分
+                adaptive_context = (post_start, post_slice_end_adaptive)
+            else:
+                adaptive_context = (post_start, len(service_series))
+        except Exception:
+            adaptive_context = (post_start, len(service_series))
+
         pre_data = service_series[:pre_end]
         post_data = service_series[post_start:]
 
@@ -1445,71 +1460,71 @@ def rca_aware_metric_processing(metrics_df: pd.DataFrame,
         else:
             features.append(0.0)
 
-        # 5.5 多尺度特徵（短/中/長窗口）
+        # 5.5 延遲敏感特徵（DELAY強化）
+        # 多lag互相關、峰值偏移、波動/方差變化
         try:
-            total_len = len(service_series)
-            # 定義多尺度窗口大小（以樣本數為單位）
-            short_win = max(8, total_len // 12)   # 約 ~1/12 長度
-            medium_win = max(16, total_len // 4) # 約 ~1/4 長度
-            long_win = total_len                 # 全序列
+            if len(post_data) >= 3 and len(sli_data) >= post_start + 3:
+                sli_post = sli_data[post_start:]
+                # 限制比較序列長度一致
+                L = min(len(post_data), len(sli_post))
+                x = np.asarray(post_data[:L])
+                y = np.asarray(sli_post[:L])
 
-            scales = [
-                ("short", short_win),
-                ("medium", medium_win),
-                ("long", long_win),
-            ]
+                # 掃描多個lag（含正負），抓取最佳與平均相關
+                max_lag_range = max(3, min(12, L // 3))
+                lag_candidates = list(range(-max_lag_range, max_lag_range + 1))
+                xcorr_vals = []
+                for lag_val in lag_candidates:
+                    if lag_val > 0:
+                        x_l = x[lag_val:]
+                        y_l = y[:len(x_l)]
+                    elif lag_val < 0:
+                        y_l = y[-lag_val:]
+                        x_l = x[:len(y_l)]
+                    else:
+                        x_l, y_l = x, y
+                    if len(x_l) >= 3 and len(y_l) >= 3:
+                        try:
+                            cc = np.corrcoef(x_l, y_l)[0, 1]
+                        except Exception:
+                            cc = 0.0
+                        if not np.isfinite(cc):
+                            cc = 0.0
+                        xcorr_vals.append((cc, lag_val))
 
-            for _, win in scales:
-                if win < 3:
-                    # 窗口過短，填充佔位
-                    features.extend([0.0, 0.0, 0.0])
-                    continue
-
-                # 針對當前窗口重建 pre/post 區段
-                pre_slice_start = max(0, pre_end - win)
-                pre_slice_end = pre_end
-                post_slice_start = post_start
-                post_slice_end = min(total_len, post_start + win)
-
-                pre_slice = service_series[pre_slice_start:pre_slice_end]
-                post_slice = service_series[post_slice_start:post_slice_end]
-
-                if len(pre_slice) < 2 or len(post_slice) < 2:
-                    features.extend([0.0, 0.0, 0.0])
-                    continue
-
-                # 多尺度均值變化
-                ms_mean_change = float(np.nanmean(post_slice) - np.nanmean(pre_slice))
-
-                # 多尺度與 SLI 的相關（同步）
-                if len(sli_data) >= max(post_slice_end, pre_slice_end):
-                    try:
-                        sli_pre = sli_data[pre_slice_start:pre_slice_end]
-                        sli_post = sli_data[post_slice_start:post_slice_end]
-                        # 使用 post 段與 SLI 的相關性作為代表
-                        if len(sli_post) >= 2 and len(post_slice) >= 2:
-                            ms_sync_corr = float(np.corrcoef(post_slice, sli_post)[0, 1])
-                        else:
-                            ms_sync_corr = 0.0
-                    except Exception:
-                        ms_sync_corr = 0.0
+                if xcorr_vals:
+                    best_cc, best_lg = max(xcorr_vals, key=lambda t: abs(t[0]))
+                    avg_abs_cc = float(np.mean([abs(v) for v, _ in xcorr_vals]))
                 else:
-                    ms_sync_corr = 0.0
+                    best_cc, best_lg, avg_abs_cc = 0.0, 0, 0.0
 
-                # 多尺度 lag（互相關最大值位置，限制在窗口內）
+                # 峰值偏移（post峰值 vs SLI峰值）
                 try:
-                    xcorr_val, lag_val = _compute_cross_correlation_with_lag(
-                        post_slice, sli_data[post_slice_start:post_slice_end] if len(sli_data) >= post_slice_end else post_slice
-                    )
-                    # 只取 lag，xcorr 已在上方提供同步度量
-                    ms_lag = float(lag_val)
+                    peak_x = int(np.argmax(x))
+                    peak_y = int(np.argmax(y))
+                    peak_offset = float(peak_x - peak_y)
                 except Exception:
-                    ms_lag = 0.0
+                    peak_offset = 0.0
 
-                features.extend([ms_mean_change, ms_sync_corr, ms_lag])
+                # 波動/方差變化
+                var_pre = float(np.var(pre_data)) if len(pre_data) > 1 else 0.0
+                var_post = float(np.var(post_data)) if len(post_data) > 1 else 0.0
+                var_ratio = float(var_post / (var_pre + 1e-8))
+
+                # 中位絕對偏差變化（volatility）
+                def _mad(arr):
+                    if len(arr) < 2:
+                        return 0.0
+                    med = np.median(arr)
+                    return float(np.median(np.abs(arr - med)))
+                mad_change = float(_mad(post_data) - _mad(pre_data))
+
+                features.extend([float(best_cc), float(best_lg), float(avg_abs_cc), float(peak_offset), float(var_ratio), float(mad_change)])
+            else:
+                features.extend([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         except Exception:
-            # 忽略多尺度提取失敗，保持向後相容
-            pass
+            # 若延遲敏感特徵計算失敗，使用零填充以保持健壯性
+            features.extend([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
         # 6. 填充到目標維度
         if len(features) >= target_dim:
@@ -1525,22 +1540,12 @@ def rca_aware_metric_processing(metrics_df: pd.DataFrame,
     # 7. 特徵後處理
     feature_matrix = np.array(all_features)
 
-    # 標準化特徵（每列）+ 穩健回退
+    # 標準化特徵（每列）
     if feature_matrix.shape[0] > 1:
         for col in range(feature_matrix.shape[1]):
             col_data = feature_matrix[:, col]
-            std_val = float(np.std(col_data))
-            if std_val > 0:
-                feature_matrix[:, col] = (col_data - np.mean(col_data)) / std_val
-            else:
-                # Robust scaling 回退：使用 IQR
-                q1 = np.percentile(col_data, 25)
-                q3 = np.percentile(col_data, 75)
-                iqr = float(q3 - q1)
-                if iqr > 0:
-                    median = np.median(col_data)
-                    feature_matrix[:, col] = (col_data - median) / iqr
-                # 否則保持原值
+            if np.std(col_data) > 0:
+                feature_matrix[:, col] = (col_data - np.mean(col_data)) / np.std(col_data)
 
     # 處理NaN和無限值
     feature_matrix = np.nan_to_num(feature_matrix, nan=0.0, posinf=1.0, neginf=-1.0)

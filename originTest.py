@@ -297,7 +297,7 @@ def process(data_path):
                 use_optimized_input=True,
                 sparsity_lambda=2e-3,           # 大幅增加稀疏性權重
                 # 🎯 高精度訓練參數
-                learning_rate=(args.learning_rate if args.learning_rate is not None else 2.856334e-8),           # 優化學習率
+                learning_rate=(args.learning_rate if args.learning_rate is not None else 1.07655e-7),           # 優化學習率
                 num_epochs=400,                 # 大幅增加訓練輪數
                 kan_grid_size=20,               # 大幅增加KAN網格
                 hidden_dim=128,                 # 增加隱藏維度
