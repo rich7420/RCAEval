@@ -5,9 +5,70 @@ import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import pandas as pd
-from causallearn.utils.cit import chisq
+from causallearn.utils.cit import chisq, CIT
 from causallearn.utils.PCUtils import SkeletonDiscovery
 from sklearn.preprocessing import KBinsDiscretizer
+import sys
+import os
+
+# Try to import local_skeleton_discovery from lib directory or installed package
+HAS_LOCAL_SKELETON = False
+local_skeleton_discovery = None
+
+# First try from lib directory (local implementation)
+# We need to ensure lib directory is checked before installed packages
+lib_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'lib')
+lib_skeleton_path = os.path.join(lib_path, 'causallearn', 'utils', 'PCUtils', 'SkeletonDiscovery.py')
+
+if os.path.exists(lib_skeleton_path):
+    # Import directly from lib directory
+    import importlib.util
+    # Temporarily remove installed causallearn from path to force using lib version
+    import causallearn.utils.PCUtils.SkeletonDiscovery as installed_sd
+    installed_sd_path = installed_sd.__file__
+    
+    # Load lib version
+    spec = importlib.util.spec_from_file_location("lib_skeleton_discovery", lib_skeleton_path)
+    lib_skeleton_module = importlib.util.module_from_spec(spec)
+    # Need to handle imports in the lib module
+    import causallearn.graph.GraphClass
+    import causallearn.utils.cit
+    import causallearn.utils.PCUtils.Helper
+    # Import necessary modules for lib_skeleton_module
+    lib_skeleton_module.CausalGraph = causallearn.graph.GraphClass.CausalGraph
+    lib_skeleton_module.chisq = causallearn.utils.cit.chisq
+    lib_skeleton_module.gsq = causallearn.utils.cit.gsq
+    try:
+        from causallearn.utils.PCUtils import Helper
+        lib_skeleton_module.append_value = Helper.append_value
+    except:
+        # Fallback if Helper doesn't have append_value
+        def append_value(d, key, value):
+            if key not in d:
+                d[key] = []
+            d[key].append(value)
+        lib_skeleton_module.append_value = append_value
+    lib_skeleton_module.np = np
+    lib_skeleton_module.combinations = __import__('itertools').combinations
+    try:
+        lib_skeleton_module.tqdm = __import__('tqdm.auto').tqdm
+    except:
+        lib_skeleton_module.tqdm = lambda x, **kwargs: x
+    
+    spec.loader.exec_module(lib_skeleton_module)
+    
+    if hasattr(lib_skeleton_module, 'local_skeleton_discovery'):
+        local_skeleton_discovery = lib_skeleton_module.local_skeleton_discovery
+        HAS_LOCAL_SKELETON = True
+else:
+    # Try from installed package
+    try:
+        from causallearn.utils.PCUtils.SkeletonDiscovery import local_skeleton_discovery
+        HAS_LOCAL_SKELETON = True
+    except (ImportError, AttributeError):
+        # If local_skeleton_discovery is not available, we'll use skeleton_discovery as fallback
+        HAS_LOCAL_SKELETON = False
+        local_skeleton_discovery = None
 
 from RCAEval.io.time_series import drop_extra
 
@@ -77,33 +138,180 @@ def run_pc(data, alpha, localized=False, labels={}, mi=[], verbose=VERBOSE):
     if localized:
         f_node = np_data.shape[1] - 1
         # Localized PC
-        cg = SkeletonDiscovery.local_skeleton_discovery(
-            np_data,
-            f_node,
-            alpha,
-            indep_test=CI_TEST,
-            mi=mi,
-            labels=labels,
-            verbose=verbose,
-        )
+        # Try to use local_skeleton_discovery if available, otherwise fall back to skeleton_discovery
+        if HAS_LOCAL_SKELETON and local_skeleton_discovery is not None:
+            try:
+                # For lib version, use CI_TEST (string) directly
+                # For installed version, we'd need CIT object, but lib version uses string
+                cg = local_skeleton_discovery(
+                    np_data,
+                    f_node,
+                    alpha,
+                    indep_test=CI_TEST,
+                    mi=mi,
+                    labels=labels,
+                    verbose=verbose,
+                )
+            except (AttributeError, TypeError) as e:
+                if verbose:
+                    print(f"Warning: local_skeleton_discovery failed, using skeleton_discovery: {e}")
+                # Fallback: use regular skeleton_discovery
+                import inspect
+                sig = inspect.signature(SkeletonDiscovery.skeleton_discovery)
+                # Create CIT object for the installed causallearn version
+                try:
+                    cit_obj = CIT(np_data, method=CI_TEST)
+                except:
+                    cit_obj = CI_TEST
+                    
+                if 'labels' in sig.parameters:
+                    cg = SkeletonDiscovery.skeleton_discovery(
+                        np_data,
+                        alpha,
+                        indep_test=CI_TEST,
+                        background_knowledge=None,
+                        stable=False,
+                        verbose=verbose,
+                        labels=labels,
+                        show_progress=False,
+                    )
+                elif 'node_names' in sig.parameters:
+                    # Convert labels dict to list of node names
+                    node_names = [labels.get(i, str(i)) for i in range(len(labels))]
+                    cg = SkeletonDiscovery.skeleton_discovery(
+                        np_data,
+                        alpha,
+                        indep_test=cit_obj,
+                        background_knowledge=None,
+                        stable=False,
+                        verbose=verbose,
+                        node_names=node_names,
+                        show_progress=False,
+                    )
+                else:
+                    cg = SkeletonDiscovery.skeleton_discovery(
+                        np_data,
+                        alpha,
+                        indep_test=cit_obj,
+                        background_knowledge=None,
+                        stable=False,
+                        verbose=verbose,
+                        show_progress=False,
+                    )
+        else:
+            # Fallback: use regular skeleton_discovery if local_skeleton_discovery is not available
+            if verbose:
+                print("Warning: local_skeleton_discovery not available, using skeleton_discovery")
+            # Check if skeleton_discovery accepts labels or node_names parameter
+            import inspect
+            sig = inspect.signature(SkeletonDiscovery.skeleton_discovery)
+            # Create CIT object for the installed causallearn version
+            try:
+                cit_obj = CIT(np_data, method=CI_TEST)
+            except:
+                cit_obj = CI_TEST
+                
+            if 'labels' in sig.parameters:
+                cg = SkeletonDiscovery.skeleton_discovery(
+                    np_data,
+                    alpha,
+                    indep_test=CI_TEST,
+                    background_knowledge=None,
+                    stable=False,
+                    verbose=verbose,
+                    labels=labels,
+                    show_progress=False,
+                )
+            elif 'node_names' in sig.parameters:
+                # Convert labels dict to list of node names
+                node_names = [labels.get(i, str(i)) for i in range(len(labels))]
+                cg = SkeletonDiscovery.skeleton_discovery(
+                    np_data,
+                    alpha,
+                    indep_test=cit_obj,
+                    background_knowledge=None,
+                    stable=False,
+                    verbose=verbose,
+                    node_names=node_names,
+                    show_progress=False,
+                )
+            else:
+                cg = SkeletonDiscovery.skeleton_discovery(
+                    np_data,
+                    alpha,
+                    indep_test=cit_obj,
+                    background_knowledge=None,
+                    stable=False,
+                    verbose=verbose,
+                    show_progress=False,
+                )
     else:
-        cg = SkeletonDiscovery.skeleton_discovery(
-            np_data,
-            alpha,
-            indep_test=CI_TEST,
-            background_knowledge=None,
-            stable=False,
-            verbose=verbose,
-            labels=labels,
-            show_progress=False,
-        )
+        # Check if skeleton_discovery accepts labels or node_names parameter
+        import inspect
+        sig = inspect.signature(SkeletonDiscovery.skeleton_discovery)
+        # Create CIT object for the installed causallearn version
+        try:
+            cit_obj = CIT(np_data, method=CI_TEST)
+        except:
+            cit_obj = CI_TEST
+            
+        if 'labels' in sig.parameters:
+            cg = SkeletonDiscovery.skeleton_discovery(
+                np_data,
+                alpha,
+                indep_test=CI_TEST,
+                background_knowledge=None,
+                stable=False,
+                verbose=verbose,
+                labels=labels,
+                show_progress=False,
+            )
+        elif 'node_names' in sig.parameters:
+            # Convert labels dict to list of node names
+            node_names = [labels.get(i, str(i)) for i in range(len(labels))]
+            cg = SkeletonDiscovery.skeleton_discovery(
+                np_data,
+                alpha,
+                indep_test=cit_obj,
+                background_knowledge=None,
+                stable=False,
+                verbose=verbose,
+                node_names=node_names,
+                show_progress=False,
+            )
+        else:
+            cg = SkeletonDiscovery.skeleton_discovery(
+                np_data,
+                alpha,
+                indep_test=cit_obj,
+                background_knowledge=None,
+                stable=False,
+                verbose=verbose,
+                show_progress=False,
+            )
 
     cg.to_nx_graph()
     return cg
 
 
 def get_fnode_child(G):
-    return [*G.successors(F_NODE)]
+    # F_NODE might be named differently in the graph (e.g., "X1", "X2", etc.)
+    # Try to find the F-node by checking all nodes
+    if F_NODE in G:
+        return [*G.successors(F_NODE)]
+    # If F_NODE is not found, try to find it by checking node names
+    # The F-node is typically the last node (highest index)
+    if len(G.nodes()) > 0:
+        # Get the last node (F-node should be the last column)
+        nodes = list(G.nodes())
+        # Try to find node that matches F_NODE pattern or is the last one
+        for node in reversed(nodes):
+            if str(node) == F_NODE or (isinstance(node, str) and F_NODE in str(node)):
+                return [*G.successors(node)]
+        # If still not found, return successors of the last node
+        if nodes:
+            return [*G.successors(nodes[-1])]
+    return []
 
 
 def save_graph(graph, file):
@@ -189,23 +397,79 @@ def run_psi_pc(
     for i in np.arange(_alpha, ALPHA_LIMIT, ALPHA_STEP):
         cg = _run_pc(i)
         G = cg.nx_graph
-        no_ci += cg.no_ci_tests
+        # Handle different versions of CausalGraph
+        if hasattr(cg, 'no_ci_tests'):
+            no_ci += cg.no_ci_tests
+        # If no_ci_tests doesn't exist, we can't track it, so skip
 
         if G is None:
             continue
 
         f_neigh = get_fnode_child(G)
-        new_neigh = [x for x in f_neigh if x not in rc]
+        # Convert node objects/indices to column names
+        new_neigh = []
+        for x in f_neigh:
+            # Convert node to column name
+            if isinstance(x, (int, np.integer)):
+                # If it's an integer index, convert to column name
+                col_name = i_to_labels.get(x)
+                if col_name is not None and col_name not in rc:
+                    new_neigh.append(col_name)
+            else:
+                # If it's already a string/column name
+                col_name = str(x)
+                if col_name not in rc:
+                    new_neigh.append(col_name)
+        
         if len(new_neigh) == 0:
             continue
         else:
-            f_p_values = cg.p_values[-1][[labels_to_i.get(key) for key in new_neigh]]
-            rc += _order_neighbors(new_neigh, f_p_values)
+            # Handle different versions of CausalGraph
+            if hasattr(cg, 'p_values') and cg.p_values is not None and len(new_neigh) > 0:
+                try:
+                    # Convert node names to indices
+                    node_indices = []
+                    for key in new_neigh:
+                        idx = labels_to_i.get(key)
+                        if idx is not None:
+                            node_indices.append(idx)
+                    
+                    if len(node_indices) > 0 and len(cg.p_values) > 0:
+                        # Access p_values safely
+                        if isinstance(cg.p_values, np.ndarray) and len(cg.p_values.shape) >= 2:
+                            # Ensure indices are valid
+                            valid_indices = [idx for idx in node_indices if 0 <= idx < cg.p_values.shape[1]]
+                            if len(valid_indices) == len(node_indices):
+                                f_p_values = cg.p_values[-1][node_indices]
+                                rc += _order_neighbors(new_neigh, f_p_values)
+                            else:
+                                # If some indices are invalid, just add neighbors without ordering
+                                rc += new_neigh
+                        else:
+                            # Try dict-like access
+                            try:
+                                f_p_values = np.array([cg.p_values.get((key,), 0.5) for key in new_neigh])
+                                rc += _order_neighbors(new_neigh, f_p_values)
+                            except:
+                                rc += new_neigh
+                    else:
+                        rc += new_neigh
+                except (IndexError, KeyError, TypeError, AttributeError) as e:
+                    # If p_values access fails, just add neighbors without ordering
+                    rc += new_neigh
+            else:
+                # If p_values doesn't exist, just add neighbors without ordering
+                rc += new_neigh
 
         if len(rc) == min_nodes:
             break
 
-    return (rc, G, _postprocess_mi(cg.mi), no_ci)
+    # Handle different versions of CausalGraph
+    if hasattr(cg, 'mi'):
+        mi_result = _postprocess_mi(cg.mi)
+    else:
+        mi_result = []
+    return (rc, G, mi_result, no_ci)
 
 
 def _order_neighbors(neigh, p_values):
@@ -400,7 +664,8 @@ def run_multi_phase(normal_df, anomalous_df, gamma, localized, bins, verbose):
     rc : list
         List of root causes
     """
-    f_child_union = normal_df.columns
+    # Convert columns to list to ensure it's a list of column names, not Index
+    f_child_union = list(normal_df.columns)
     mi_union = []
     i = 0
     prev = len(f_child_union)
@@ -408,6 +673,9 @@ def run_multi_phase(normal_df, anomalous_df, gamma, localized, bins, verbose):
     # Phase-1
     while True:
         start = time.time()
+        # Ensure f_child_union is a list of column names
+        if not isinstance(f_child_union, list):
+            f_child_union = list(f_child_union)
         f_child_union, mi, ci_tests = run_level(
             normal_df.loc[:, f_child_union],
             anomalous_df.loc[:, f_child_union],
@@ -432,6 +700,9 @@ def run_multi_phase(normal_df, anomalous_df, gamma, localized, bins, verbose):
     # Phase-2
     mi_union = []
     new_nodes = f_child_union
+    # Ensure new_nodes is a list of column names
+    if not isinstance(new_nodes, list):
+        new_nodes = list(new_nodes)
     rc, _, mi, ci = run_psi_pc(
         normal_df.loc[:, new_nodes],
         anomalous_df.loc[:, new_nodes],

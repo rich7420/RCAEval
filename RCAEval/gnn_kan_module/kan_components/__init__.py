@@ -1,9 +1,9 @@
 """
-KAN Components: 純粹KAN實現的核心組件
-專注於KAN取代MLP的核心價值
+KAN Components: Core components for pure KAN implementation
+Focus on core value of replacing MLP with KAN
 """
 
-# 基礎KAN層
+# Base KAN layers
 from .kan_layers import (
     SimplifiedKANLayer,
     OptimizedGNNKANEncoder,
@@ -12,35 +12,33 @@ from .kan_layers import (
     create_compatible_kan_layer
 )
 
-# 確保向後兼容性
+# Ensure backward compatibility
 KANLayer = SimplifiedKANLayer
 
-# 高容量穩定KAN - 已刪除，簡化版本
+# High capacity stable KAN - removed, simplified version
 HighCapacityGNNKANEncoder = None
 HighCapacityStableKANLayer = None
 
-# 梯度穩定器 - 已刪除，使用簡化版本
+# Gradient stabilizer - removed, use simplified version
 GradientStabilizer = None
 
-# 確保所有組件都可以被導入
+# Ensure all components can be imported
 __all__ = [
-    # 基礎KAN層
+    # Base KAN layers
     'AdvancedKANLayer',
     'SimplifiedKANLayer',
     'CompatibleSimplifiedKANLayer',
     'OptimizedGNNKANEncoder',
     'KANLayer',
     
-    # 高容量KAN
+    # High capacity KAN
     'HighCapacityGNNKANEncoder',
     'HighCapacityStableKANLayer',
     
-    # 穩定性組件  
+    # Stability components  
     'GradientStabilizer',
     
-    # 工具函數
+    # Utility functions
     'create_high_capacity_stable_model',
     'create_compatible_kan_layer'
 ]
-
-print("✅ KAN組件完全載入成功 - 專注於KAN取代MLP的核心價值")

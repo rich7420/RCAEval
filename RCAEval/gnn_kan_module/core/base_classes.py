@@ -1,5 +1,5 @@
 """
-基礎處理器類 - 統一特徵處理接口
+Base processor classes - unified feature processing interface
 """
 
 from abc import ABC, abstractmethod
@@ -11,16 +11,16 @@ from .data_interface import StandardizedData, UnifiedDataInterface
 
 
 class BaseFeatureProcessor(ABC):
-    """基礎特徵處理器 - 統一所有特徵處理的接口"""
+    """Base feature processor - unified interface for all feature processing"""
     
     def __init__(self, target_dim: int = 64, method: str = 'auto', **kwargs):
         """
-        初始化特徵處理器
+        Initialize feature processor
         
         Args:
-            target_dim: 目標特徵維度
-            method: 處理方法 ('ica', 'kpca', 'pca', 'simplified', 'auto')
-            **kwargs: 其他參數
+            target_dim: Target feature dimension
+            method: Processing method ('ica', 'kpca', 'pca', 'simplified', 'auto')
+            **kwargs: Other parameters
         """
         self.target_dim = target_dim
         self.method = method
@@ -31,55 +31,55 @@ class BaseFeatureProcessor(ABC):
     
     @abstractmethod
     def fit(self, data: Union[StandardizedData, Any], **kwargs) -> 'BaseFeatureProcessor':
-        """訓練特徵處理器"""
+        """Train feature processor"""
         pass
     
     @abstractmethod
     def transform(self, data: Union[StandardizedData, Any]) -> Tuple[np.ndarray, List[str]]:
-        """轉換數據為特徵"""
+        """Transform data to features"""
         pass
     
     def fit_transform(self, data: Union[StandardizedData, Any], **kwargs) -> Tuple[np.ndarray, List[str]]:
-        """訓練並轉換數據"""
+        """Train and transform data"""
         return self.fit(data, **kwargs).transform(data)
     
     def process(self, data: Any, **kwargs) -> Tuple[np.ndarray, List[str]]:
         """
-        統一的處理接口
+        Unified processing interface
         
         Args:
-            data: 任意格式的輸入數據
-            **kwargs: 其他參數
+            data: Input data in any format
+            **kwargs: Other parameters
             
         Returns:
-            features: 處理後的特徵矩陣
-            feature_names: 特徵名稱列表
+            features: Processed feature matrix
+            feature_names: List of feature names
         """
-        # 1. 數據標準化
+        # 1. Data standardization
         if not isinstance(data, StandardizedData):
             data = UnifiedDataInterface.standardize_input(data, **kwargs)
         
-        # 2. 特徵提取和轉換
+        # 2. Feature extraction and transformation
         features, feature_names = self.fit_transform(data, **kwargs)
         
-        # 3. 維度適配
+        # 3. Dimension adaptation
         features = self._adapt_dimensions(features)
         
-        # 4. 數值穩定化
+        # 4. Numerical stabilization
         features = self._stabilize_features(features)
         
-        # 更新特徵名稱
+        # Update feature names
         if len(feature_names) != features.shape[1]:
             feature_names = [f'{self.method}_feature_{i}' for i in range(features.shape[1])]
         
         return features, feature_names
     
     def _adapt_dimensions(self, features: np.ndarray) -> np.ndarray:
-        """適配維度到目標維度"""
+        """Adapt dimensions to target dimension"""
         if features.size == 0:
             return np.zeros((1, self.target_dim))
         
-        # 確保是二維數組
+        # Ensure it's a 2D array
         if features.ndim == 1:
             features = features.reshape(1, -1)
         elif features.ndim == 0:
@@ -90,51 +90,51 @@ class BaseFeatureProcessor(ABC):
         if current_dim == self.target_dim:
             return features
         elif current_dim > self.target_dim:
-            # PCA 降維
+            # PCA dimensionality reduction
             try:
                 from sklearn.decomposition import PCA
                 pca = PCA(n_components=self.target_dim, random_state=42)
                 features = pca.fit_transform(features)
             except:
-                # 簡單截斷
+                # Simple truncation
                 features = features[:, :self.target_dim]
         else:
-            # 零填充或特徵複製
+            # Zero padding or feature duplication
             if current_dim > 0:
-                # 重複特徵填充
+                # Repeat features for padding
                 repeat_times = (self.target_dim + current_dim - 1) // current_dim
                 repeated_features = np.tile(features, (1, repeat_times))
                 features = repeated_features[:, :self.target_dim]
             else:
-                # 零填充
+                # Zero padding
                 features = np.zeros((features.shape[0], self.target_dim))
         
         return features
     
     def _stabilize_features(self, features: np.ndarray) -> np.ndarray:
-        """數值穩定化處理"""
-        # 處理無效值
+        """Numerical stabilization processing"""
+        # Handle invalid values
         features = np.nan_to_num(features, nan=0.0, posinf=1.0, neginf=-1.0)
         
-        # 避免過大或過小的值
+        # Avoid values that are too large or too small
         features = np.clip(features, -1e6, 1e6)
         
         return features
     
     def get_feature_names(self) -> List[str]:
-        """獲取特徵名稱"""
+        """Get feature names"""
         return self.feature_names_
 
 
 class BaseGraphConstructor(ABC):
-    """基礎圖構建器"""
+    """Base graph constructor"""
     
     def __init__(self, config: Any = None):
         """
-        初始化圖構建器
+        Initialize graph constructor
         
         Args:
-            config: 配置對象
+            config: Configuration object
         """
         self.config = config
         self.is_learnable = getattr(config, 'learnable_graph', False) if config else False
@@ -142,31 +142,31 @@ class BaseGraphConstructor(ABC):
     @abstractmethod
     def build_graph(self, features: np.ndarray, node_names: List[str]) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        構建圖結構
+        Build graph structure
         
         Args:
-            features: 節點特徵矩陣
-            node_names: 節點名稱列表
+            features: Node feature matrix
+            node_names: List of node names
             
         Returns:
-            edge_index: 邊索引 [2, num_edges]
-            edge_weights: 邊權重 [num_edges]
+            edge_index: Edge indices [2, num_edges]
+            edge_weights: Edge weights [num_edges]
         """
         pass
     
     def _create_fully_connected_graph(self, num_nodes: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        """創建全連接圖"""
+        """Create fully connected graph"""
         edges = []
         weights = []
         
         for i in range(num_nodes):
             for j in range(num_nodes):
-                if i != j:  # 排除自環
+                if i != j:  # Exclude self-loops
                     edges.append([i, j])
                     weights.append(1.0)
         
         if not edges:
-            # 單節點情況
+            # Single node case
             edges = [[0, 0]]
             weights = [1.0]
         
@@ -176,14 +176,14 @@ class BaseGraphConstructor(ABC):
         return edge_index, edge_weights
     
     def _create_similarity_graph(self, features: np.ndarray, threshold: float = 0.5) -> Tuple[torch.Tensor, torch.Tensor]:
-        """基於相似度創建圖"""
+        """Create graph based on similarity"""
         from sklearn.metrics.pairwise import cosine_similarity
         
         try:
-            # 計算餘弦相似度
+            # Compute cosine similarity
             similarity_matrix = cosine_similarity(features)
             
-            # 應用閾值
+            # Apply threshold
             edges = []
             weights = []
             
@@ -195,7 +195,7 @@ class BaseGraphConstructor(ABC):
                         weights.append(similarity_matrix[i, j])
             
             if not edges:
-                # 如果沒有邊，回退到全連接
+                # If no edges, fallback to fully connected
                 return self._create_fully_connected_graph(num_nodes)
             
             edge_index = torch.tensor(edges, dtype=torch.long).t().contiguous()
@@ -204,25 +204,24 @@ class BaseGraphConstructor(ABC):
             return edge_index, edge_weights
             
         except Exception as e:
-            print(f"⚠️ 相似度圖構建失敗: {e}，使用全連接圖")
             return self._create_fully_connected_graph(features.shape[0])
 
 
 class BaseKANProcessor(ABC):
-    """基礎 KAN 處理器"""
+    """Base KAN processor"""
     
     def __init__(self, config: Any = None):
         """
-        初始化 KAN 處理器
+        Initialize KAN processor
         
         Args:
-            config: 配置對象
+            config: Configuration object
         """
         self.config = config
         self.kan_config = self._extract_kan_config(config)
     
     def _extract_kan_config(self, config: Any) -> Dict[str, Any]:
-        """提取 KAN 相關配置"""
+        """Extract KAN-related configuration"""
         kan_config = {
             'num_basis': getattr(config, 'kan_grid_size', 8),
             'grid_size': getattr(config, 'kan_grid_size', 8),
@@ -234,29 +233,29 @@ class BaseKANProcessor(ABC):
     
     @abstractmethod
     def create_kan_layer(self, input_dim: int, output_dim: int) -> nn.Module:
-        """創建 KAN 層"""
+        """Create KAN layer"""
         pass
     
     @abstractmethod  
     def process_with_kan(self, data: torch.Tensor) -> torch.Tensor:
-        """使用 KAN 處理數據"""
+        """Process data with KAN"""
         pass
     
     def get_kan_parameters(self) -> Dict[str, Any]:
-        """獲取 KAN 參數配置"""
+        """Get KAN parameter configuration"""
         return self.kan_config.copy()
 
 
-# 工具函數
+# Utility functions
 def create_processor_factory(processor_type: str) -> BaseFeatureProcessor:
     """
-    處理器工廠函數
+    Processor factory function
     
     Args:
-        processor_type: 處理器類型 ('metrics', 'logs', 'traces', 'multimodal')
+        processor_type: Processor type ('metrics', 'logs', 'traces', 'multimodal')
         
     Returns:
-        對應的處理器實例
+        Corresponding processor instance
     """
     if processor_type == 'metrics':
         from ..feature_processing import MetricProcessor
@@ -271,38 +270,38 @@ def create_processor_factory(processor_type: str) -> BaseFeatureProcessor:
         from ..feature_processing import MultiModalProcessor
         return MultiModalProcessor()
     else:
-        raise ValueError(f"未知的處理器類型: {processor_type}")
+        raise ValueError(f"Unknown processor type: {processor_type}")
 
 
 def validate_processor_config(config: Dict[str, Any]) -> List[str]:
     """
-    驗證處理器配置
+    Validate processor configuration
     
     Args:
-        config: 配置字典
+        config: Configuration dictionary
         
     Returns:
-        問題列表（空列表表示無問題）
+        List of issues (empty list means no issues)
     """
     issues = []
     
-    # 檢查必需的配置項
+    # Check required configuration items
     required_keys = ['target_dim', 'method']
     for key in required_keys:
         if key not in config:
-            issues.append(f"缺少必需配置項: {key}")
+            issues.append(f"Missing required configuration item: {key}")
     
-    # 檢查數值範圍
+    # Check numeric ranges
     if 'target_dim' in config:
         target_dim = config['target_dim']
         if not isinstance(target_dim, int) or target_dim <= 0:
-            issues.append(f"target_dim 必須是正整數，當前值: {target_dim}")
+            issues.append(f"target_dim must be a positive integer, current value: {target_dim}")
     
-    # 檢查方法名稱
+    # Check method name
     if 'method' in config:
         method = config['method']
         valid_methods = ['ica', 'kpca', 'pca', 'simplified', 'auto']
         if method not in valid_methods:
-            issues.append(f"無效的方法名稱: {method}，支持的方法: {valid_methods}")
+            issues.append(f"Invalid method name: {method}, supported methods: {valid_methods}")
     
     return issues 

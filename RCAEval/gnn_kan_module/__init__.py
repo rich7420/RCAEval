@@ -1,43 +1,41 @@
 """
-GNN-KAN Module: 簡化的純粹KAN實現
-專注核心功能，移除冗餘組件
+GNN-KAN Module: Simplified pure KAN implementation
+Focus on core functionality, remove redundant components
 """
 
-# 核心配置
+# Core configuration
 from .config import (
     GNNKANConfig,
     SimplifiedGNNKANConfig,
     create_config
 )
 
-# 核心模型
+# Core models
 from .models import (
     GNNKANModel,
     SimplifiedGNNKAN
 )
 
-# 訓練模組
+# Training module
 from .training import (
     train_gnn_kan_model,
 )
 
-# 特徵處理
+# Feature processing
 from .feature_processing import (
     ica_metric_processing,
     simplified_metric_processing,
     enhanced_ica_with_temporal_contrast
 )
 
-# KAN 組件
+# KAN components
 from .kan_components import (
     AdvancedKANLayer,
     SimplifiedKANLayer
 )
 
-# 輸入優化器
+# Input optimizer
 from .optimized_input_processor import (
     GNNKANInputOptimizer,
     KANOptimizedData
 )
-
-print("✅ 簡化版 GNN-KAN 模組載入成功")

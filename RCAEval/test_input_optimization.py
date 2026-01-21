@@ -1,6 +1,6 @@
 """
-GNN+KAN 輸入優化測試
-比較優化前後的性能差異
+GNN+KAN input optimization test
+Compare performance differences before and after optimization
 """
 
 import time
@@ -9,7 +9,7 @@ import pandas as pd
 import sys
 import os
 
-# 添加路徑
+# Add path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.insert(0, parent_dir)
@@ -21,41 +21,41 @@ from RCAEval.gnn_kan_module.config import SimplifiedGNNKANConfig
 
 
 def generate_test_data(num_samples=1000, num_services=9):
-    """生成測試數據"""
+    """Generate test data"""
     services = ['adservice', 'cartservice', 'checkoutservice', 'currencyservice', 
                 'emailservice', 'paymentservice', 'productcatalogservice', 
                 'recommendationservice', 'shippingservice'][:num_services]
     
     data = {}
     
-    # 為每個服務生成多種指標
+    # Generate multiple metrics for each service
     for service in services:
         for metric in ['cpu_usage', 'memory_usage', 'latency_p90', 'error_rate']:
             col_name = f"{service}_{metric}"
-            # 生成帶噪聲的時序數據
+            # Generate time series data with noise
             base_value = np.random.uniform(0.1, 0.8)
             noise = np.random.normal(0, 0.1, num_samples)
             trend = np.linspace(0, 0.2, num_samples) * np.random.choice([-1, 1])
             data[col_name] = base_value + noise + trend
     
-    # 添加時間列
+    # Add time column
     data['time'] = np.arange(num_samples)
     
     return pd.DataFrame(data)
 
 
 def test_original_method(data):
-    """測試原始方法"""
-    print("🔧 測試原始方法...")
+    """Test original method"""
+    print("Testing original method...")
     start_time = time.time()
     
     config = SimplifiedGNNKANConfig()
     
-    # 原始特徵提取
+    # Original feature extraction
     feature_extractor = MultiModalFeatureExtractor(config)
     features, node_names = feature_extractor.extract_features(data)
     
-    # 原始圖構建
+    # Original graph construction
     graph_constructor = SimplifiedGraphConstructor(config)
     edge_index, edge_weights = graph_constructor.build_graph(features, node_names)
     
@@ -71,8 +71,8 @@ def test_original_method(data):
 
 
 def test_optimized_method(data, feature_method='ica'):
-    """測試優化方法"""
-    print(f"🚀 測試優化方法 (feature_method={feature_method})...")
+    """Test optimized method"""
+    print(f"Testing optimized method (feature_method={feature_method})...")
     start_time = time.time()
     
     optimized_data = optimize_gnn_kan_input(
@@ -94,41 +94,41 @@ def test_optimized_method(data, feature_method='ica'):
 
 
 def run_performance_comparison():
-    """運行性能比較測試"""
+    """Run performance comparison test"""
     print("=" * 60)
-    print("🎯 GNN+KAN 輸入優化性能測試")
+    print("GNN+KAN Input Optimization Performance Test")
     print("=" * 60)
     
-    # 生成不同規模的測試數據
+    # Generate test data of different scales
     test_configs = [
-        {'num_samples': 500, 'num_services': 5, 'name': '小規模'},
-        {'num_samples': 1000, 'num_services': 9, 'name': '中規模'},
-        {'num_samples': 2000, 'num_services': 12, 'name': '大規模'}
+        {'num_samples': 500, 'num_services': 5, 'name': 'Small scale'},
+        {'num_samples': 1000, 'num_services': 9, 'name': 'Medium scale'},
+        {'num_samples': 2000, 'num_services': 12, 'name': 'Large scale'}
     ]
     
     results = []
     
     for config in test_configs:
-        print(f"\n📊 測試 {config['name']} 數據 (樣本數: {config['num_samples']}, 服務數: {config['num_services']})")
+        print(f"\nTesting {config['name']} data (samples: {config['num_samples']}, services: {config['num_services']})")
         
-        # 生成測試數據
+        # Generate test data
         test_data = generate_test_data(config['num_samples'], config['num_services'])
-        print(f"✓ 生成測試數據: {test_data.shape}")
+        print(f"Generated test data: {test_data.shape}")
         
         try:
-            # 測試原始方法
+            # Test original method
             original_result = test_original_method(test_data)
-            print(f"✓ 原始方法: {original_result['processing_time']:.3f}秒")
+            print(f"Original method: {original_result['processing_time']:.3f}s")
             
-            # 測試優化方法 - ICA
+            # Test optimized method - ICA
             optimized_ica_result = test_optimized_method(test_data, 'ica')
-            print(f"✓ 優化方法(ICA): {optimized_ica_result['processing_time']:.3f}秒")
+            print(f"Optimized method (ICA): {optimized_ica_result['processing_time']:.3f}s")
             
-            # 測試優化方法 - 統計
+            # Test optimized method - Statistical
             optimized_stat_result = test_optimized_method(test_data, 'simplified')
-            print(f"✓ 優化方法(統計): {optimized_stat_result['processing_time']:.3f}秒")
+            print(f"Optimized method (Statistical): {optimized_stat_result['processing_time']:.3f}s")
             
-            # 計算性能提升
+            # Calculate performance improvement
             speedup_ica = original_result['processing_time'] / optimized_ica_result['processing_time']
             speedup_stat = original_result['processing_time'] / optimized_stat_result['processing_time']
             
@@ -143,52 +143,52 @@ def run_performance_comparison():
             
             results.append(result)
             
-            print(f"🚀 性能提升: ICA方法 {speedup_ica:.2f}x, 統計方法 {speedup_stat:.2f}x")
+            print(f"Performance improvement: ICA method {speedup_ica:.2f}x, Statistical method {speedup_stat:.2f}x")
             
         except Exception as e:
-            print(f"❌ 測試失敗: {e}")
+            print(f"Test failed: {e}")
             continue
     
-    # 打印總結
+    # Print summary
     print("\n" + "=" * 60)
-    print("📈 性能測試總結")
+    print("Performance Test Summary")
     print("=" * 60)
     
     for result in results:
         config = result['config']
-        print(f"\n{config['name']} 數據:")
-        print(f"  數據規模: {config['num_samples']} 樣本, {config['num_services']} 服務")
-        print(f"  原始方法: {result['original']['processing_time']:.3f}秒")
-        print(f"  優化ICA: {result['optimized_ica']['processing_time']:.3f}秒 (提升 {result['speedup_ica']:.2f}x)")
-        print(f"  優化統計: {result['optimized_stat']['processing_time']:.3f}秒 (提升 {result['speedup_stat']:.2f}x)")
-        print(f"  節點數比較: {result['original']['num_nodes']} vs {result['optimized_ica']['num_nodes']}")
-        print(f"  邊數比較: {result['original']['num_edges']} vs {result['optimized_ica']['num_edges']}")
+        print(f"\n{config['name']} data:")
+        print(f"  Data scale: {config['num_samples']} samples, {config['num_services']} services")
+        print(f"  Original method: {result['original']['processing_time']:.3f}s")
+        print(f"  Optimized ICA: {result['optimized_ica']['processing_time']:.3f}s (improvement {result['speedup_ica']:.2f}x)")
+        print(f"  Optimized Statistical: {result['optimized_stat']['processing_time']:.3f}s (improvement {result['speedup_stat']:.2f}x)")
+        print(f"  Node count comparison: {result['original']['num_nodes']} vs {result['optimized_ica']['num_nodes']}")
+        print(f"  Edge count comparison: {result['original']['num_edges']} vs {result['optimized_ica']['num_edges']}")
     
-    # 計算平均性能提升
+    # Calculate average performance improvement
     if results:
         avg_speedup_ica = np.mean([r['speedup_ica'] for r in results])
         avg_speedup_stat = np.mean([r['speedup_stat'] for r in results])
         
-        print(f"\n🎯 平均性能提升:")
-        print(f"  ICA優化方法: {avg_speedup_ica:.2f}x")
-        print(f"  統計優化方法: {avg_speedup_stat:.2f}x")
+        print(f"\nAverage performance improvement:")
+        print(f"  ICA optimization method: {avg_speedup_ica:.2f}x")
+        print(f"  Statistical optimization method: {avg_speedup_stat:.2f}x")
         
-        print(f"\n✅ 優化效果顯著！推薦使用優化後的輸入處理器")
+        print(f"\nOptimization effect is significant! Recommend using optimized input processor")
 
 
 def test_feature_quality():
-    """測試特徵質量"""
+    """Test feature quality"""
     print("\n" + "=" * 60)
-    print("🔍 特徵質量測試")
+    print("Feature Quality Test")
     print("=" * 60)
     
     test_data = generate_test_data(1000, 9)
     
-    # 測試不同特徵方法
+    # Test different feature methods
     methods = ['ica', 'simplified']
     
     for method in methods:
-        print(f"\n📊 測試 {method} 方法:")
+        print(f"\nTesting {method} method:")
         
         optimized_data = optimize_gnn_kan_input(
             data=test_data,
@@ -198,63 +198,63 @@ def test_feature_quality():
         
         features = optimized_data.node_features.numpy()
         
-        print(f"  特徵形狀: {features.shape}")
-        print(f"  特徵範圍: [{features.min():.3f}, {features.max():.3f}]")
-        print(f"  特徵均值: {features.mean():.3f}")
-        print(f"  特徵標準差: {features.std():.3f}")
-        print(f"  NaN數量: {np.isnan(features).sum()}")
-        print(f"  Inf數量: {np.isinf(features).sum()}")
-        print(f"  節點名稱: {optimized_data.node_names}")
+        print(f"  Feature shape: {features.shape}")
+        print(f"  Feature range: [{features.min():.3f}, {features.max():.3f}]")
+        print(f"  Feature mean: {features.mean():.3f}")
+        print(f"  Feature std: {features.std():.3f}")
+        print(f"  NaN count: {np.isnan(features).sum()}")
+        print(f"  Inf count: {np.isinf(features).sum()}")
+        print(f"  Node names: {optimized_data.node_names}")
         
-        # 檢查特徵質量
+        # Check feature quality
         if np.isnan(features).sum() == 0 and np.isinf(features).sum() == 0:
-            print(f"  ✅ {method} 方法特徵質量良好")
+            print(f"  {method} method feature quality is good")
         else:
-            print(f"  ⚠️ {method} 方法特徵包含無效值")
+            print(f"  {method} method features contain invalid values")
 
 
 def test_memory_usage():
-    """測試內存使用"""
+    """Test memory usage"""
     import psutil
     import os
     
     print("\n" + "=" * 60)
-    print("💾 內存使用測試")
+    print("Memory Usage Test")
     print("=" * 60)
     
     process = psutil.Process(os.getpid())
     
-    # 基準內存
+    # Baseline memory
     baseline_memory = process.memory_info().rss / 1024 / 1024  # MB
-    print(f"基準內存使用: {baseline_memory:.1f} MB")
+    print(f"Baseline memory usage: {baseline_memory:.1f} MB")
     
-    # 生成大數據集
+    # Generate large dataset
     large_data = generate_test_data(5000, 15)
     after_data_memory = process.memory_info().rss / 1024 / 1024
-    print(f"數據加載後: {after_data_memory:.1f} MB (+{after_data_memory - baseline_memory:.1f} MB)")
+    print(f"After data loading: {after_data_memory:.1f} MB (+{after_data_memory - baseline_memory:.1f} MB)")
     
-    # 測試優化方法內存使用
+    # Test optimized method memory usage
     optimized_data = optimize_gnn_kan_input(large_data, feature_method='ica')
     after_processing_memory = process.memory_info().rss / 1024 / 1024
-    print(f"優化處理後: {after_processing_memory:.1f} MB (+{after_processing_memory - after_data_memory:.1f} MB)")
+    print(f"After optimized processing: {after_processing_memory:.1f} MB (+{after_processing_memory - after_data_memory:.1f} MB)")
     
-    print(f"✅ 內存使用合理，處理開銷: {after_processing_memory - after_data_memory:.1f} MB")
+    print(f"Memory usage is reasonable, processing overhead: {after_processing_memory - after_data_memory:.1f} MB")
 
 
 if __name__ == "__main__":
     try:
-        # 運行性能比較
+        # Run performance comparison
         run_performance_comparison()
         
-        # 測試特徵質量
+        # Test feature quality
         test_feature_quality()
         
-        # 測試內存使用
+        # Test memory usage
         test_memory_usage()
         
-        print("\n🎉 所有測試完成！")
+        print("\nAll tests completed!")
         
     except Exception as e:
-        print(f"❌ 測試過程中出現錯誤: {e}")
+        print(f"Error during testing: {e}")
         import traceback
         traceback.print_exc() 

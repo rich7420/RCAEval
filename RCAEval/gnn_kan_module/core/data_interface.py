@@ -1,6 +1,6 @@
 """
-統一數據接口 - 標準化所有 input 格式
-解決不同檔案對相同數據類型處理方式不一致的問題
+Unified data interface - standardize all input formats
+Solve the problem of inconsistent handling of the same data types across different files
 """
 
 import numpy as np
@@ -15,7 +15,7 @@ warnings.filterwarnings("ignore")
 
 
 class DataType(Enum):
-    """數據類型枚舉"""
+    """Data type enumeration"""
     METRICS = "metrics"
     LOGS = "logs" 
     TRACES = "traces"
@@ -25,7 +25,7 @@ class DataType(Enum):
 
 @dataclass
 class StandardizedData:
-    """標準化數據對象"""
+    """Standardized data object"""
     data: np.ndarray
     feature_names: List[str]
     node_names: List[str]
@@ -34,38 +34,38 @@ class StandardizedData:
     metadata: Dict[str, Any]
     
     def __post_init__(self):
-        """數據驗證和清理"""
-        # 確保數據是numpy數組
+        """Data validation and cleanup"""
+        # Ensure data is numpy array
         if not isinstance(self.data, np.ndarray):
             self.data = np.array(self.data)
         
-        # 處理無效值
+        # Handle invalid values
         self.data = np.nan_to_num(self.data, nan=0.0, posinf=1.0, neginf=-1.0)
         
-        # 確保特徵名稱列表長度正確
+        # Ensure feature names list length is correct
         if len(self.feature_names) != self.data.shape[1] if self.data.ndim > 1 else 1:
             self.feature_names = [f'feature_{i}' for i in range(self.data.shape[1] if self.data.ndim > 1 else 1)]
     
     @property
     def shape(self) -> Tuple[int, ...]:
-        """數據形狀"""
+        """Data shape"""
         return self.data.shape
     
     @property
     def num_samples(self) -> int:
-        """樣本數量"""
+        """Number of samples"""
         return self.data.shape[0] if self.data.ndim > 0 else 1
     
     @property 
     def num_features(self) -> int:
-        """特徵數量"""
+        """Number of features"""
         return self.data.shape[1] if self.data.ndim > 1 else 1
     
     def to_tensor(self, device: str = 'cpu') -> torch.Tensor:
-        """轉換為PyTorch張量 - 確保類型安全"""
-        # 🔧 確保數據類型一致性，避免 numpy.float32 到 torch.FloatTensor 不匹配
+        """Convert to PyTorch tensor - ensure type safety"""
+        # Ensure data type consistency, avoid numpy.float32 to torch.FloatTensor mismatch
         if isinstance(self.data, np.ndarray):
-            # 先轉換為 float64，再轉為 torch.float32
+            # First convert to float64, then to torch.float32
             data_safe = self.data.astype(np.float64)
         else:
             data_safe = self.data
@@ -73,7 +73,7 @@ class StandardizedData:
 
 
 class UnifiedDataInterface:
-    """統一數據接口 - 標準化所有 input 格式"""
+    """Unified data interface - standardize all input formats"""
     
     @staticmethod
     def standardize_input(data: Any, 
@@ -81,29 +81,29 @@ class UnifiedDataInterface:
                          node_names: Optional[List[str]] = None,
                          inject_time: Optional[float] = None) -> StandardizedData:
         """
-        標準化輸入數據格式
+        Standardize input data format
         
         Args:
-            data: 任意格式的輸入數據
-            data_type: 數據類型 ('metrics', 'logs', 'traces', 'multimodal', 'auto')
-            node_names: 節點名稱列表
-            inject_time: 故障注入時間
+            data: Input data in any format
+            data_type: Data type ('metrics', 'logs', 'traces', 'multimodal', 'auto')
+            node_names: List of node names
+            inject_time: Fault injection time
             
         Returns:
-            StandardizedData: 標準化的數據對象
+            StandardizedData: Standardized data object
         """
-        # 轉換數據類型
+        # Convert data type
         if isinstance(data_type, str):
             try:
                 data_type = DataType(data_type)
             except ValueError:
                 data_type = DataType.UNKNOWN
         
-        # 自動檢測數據類型
+        # Auto-detect data type
         if data_type == DataType.UNKNOWN or data_type.value == 'auto':
             data_type = UnifiedDataInterface._detect_data_type(data)
         
-        # 根據數據類型進行標準化
+        # Standardize based on data type
         if data_type == DataType.MULTIMODAL:
             return UnifiedDataInterface._standardize_multimodal(data, node_names, inject_time)
         elif data_type == DataType.METRICS:
@@ -117,9 +117,9 @@ class UnifiedDataInterface:
     
     @staticmethod
     def _detect_data_type(data: Any) -> DataType:
-        """自動檢測數據類型"""
+        """Auto-detect data type"""
         if isinstance(data, dict):
-            # 檢查是否包含多模態數據的關鍵字
+            # Check if contains keywords for multimodal data
             keys = set(data.keys())
             multimodal_keys = {'metrics', 'logs', 'traces', 'node_names'}
             if multimodal_keys.intersection(keys):
@@ -131,7 +131,7 @@ class UnifiedDataInterface:
             else:
                 return DataType.METRICS
         elif isinstance(data, pd.DataFrame):
-            # 根據列名檢測
+            # Detect based on column names
             columns = [str(col).lower() for col in data.columns]
             if any('trace' in col or 'span' in col for col in columns):
                 return DataType.TRACES
@@ -140,15 +140,15 @@ class UnifiedDataInterface:
             else:
                 return DataType.METRICS
         else:
-            # 默認為指標數據
+            # Default to metrics data
             return DataType.METRICS
     
     @staticmethod
     def _standardize_multimodal(data: Dict[str, Any], 
                                node_names: Optional[List[str]] = None,
                                inject_time: Optional[float] = None) -> StandardizedData:
-        """標準化多模態數據"""
-        # 提取各種模態的數據
+        """Standardize multimodal data"""
+        # Extract data from various modalities
         metrics_data = data.get('metrics', None)
         logs_data = data.get('logs', None)
         traces_data = data.get('traces', None)
@@ -157,43 +157,43 @@ class UnifiedDataInterface:
         features_list = []
         feature_names_list = []
         
-        # 處理指標數據
+        # Process metrics data
         if metrics_data is not None:
             metrics_std = UnifiedDataInterface._standardize_metrics(metrics_data, extracted_node_names)
             features_list.append(metrics_std.data)
             feature_names_list.extend([f'metrics_{name}' for name in metrics_std.feature_names])
         
-        # 處理日誌數據
+        # Process logs data
         if logs_data is not None:
             logs_std = UnifiedDataInterface._standardize_logs(logs_data, extracted_node_names)
             features_list.append(logs_std.data)
             feature_names_list.extend([f'logs_{name}' for name in logs_std.feature_names])
         
-        # 處理鏈路追蹤數據
+        # Process traces data
         if traces_data is not None:
             traces_std = UnifiedDataInterface._standardize_traces(traces_data, extracted_node_names, inject_time)
             features_list.append(traces_std.data)
             feature_names_list.extend([f'traces_{name}' for name in traces_std.feature_names])
         
-        # 合併特徵
+        # Merge features
         if features_list:
-            # 確保所有特徵矩陣具有相同的樣本數
+            # Ensure all feature matrices have the same number of samples
             max_samples = max(f.shape[0] for f in features_list)
             aligned_features = []
             
             for features in features_list:
                 if features.shape[0] < max_samples:
-                    # 重複最後一行以匹配樣本數
+                    # Repeat last row to match number of samples
                     padding = np.tile(features[-1:], (max_samples - features.shape[0], 1))
                     features = np.vstack([features, padding])
                 elif features.shape[0] > max_samples:
-                    # 截斷到最大樣本數
+                    # Truncate to maximum number of samples
                     features = features[:max_samples]
                 aligned_features.append(features)
             
             combined_features = np.hstack(aligned_features)
         else:
-            # 沒有有效數據，創建默認特徵
+            # No valid data, create default features
             combined_features = np.array([[0.0]])
             feature_names_list = ['default_feature']
         
@@ -213,8 +213,8 @@ class UnifiedDataInterface:
     
     @staticmethod
     def _standardize_metrics(data: Any, node_names: Optional[List[str]] = None) -> StandardizedData:
-        """標準化指標數據"""
-        # 轉換為DataFrame
+        """Standardize metrics data"""
+        # Convert to DataFrame
         if isinstance(data, pd.DataFrame):
             df = data.select_dtypes(include=[np.number])
         elif isinstance(data, np.ndarray):
@@ -224,11 +224,11 @@ class UnifiedDataInterface:
         else:
             df = pd.DataFrame({'metric': [float(data)] if np.isscalar(data) else data})
         
-        # 處理缺失值
+        # Handle missing values
         df = df.fillna(method='ffill').fillna(0)
         df = df.replace([np.inf, -np.inf], 0)
         
-        # 提取特徵名稱和節點名稱
+        # Extract feature names and node names
         feature_names = list(df.columns)
         if not node_names:
             node_names = feature_names if len(feature_names) > 0 else ['metric_node']
@@ -244,8 +244,8 @@ class UnifiedDataInterface:
     
     @staticmethod
     def _standardize_logs(data: Any, node_names: Optional[List[str]] = None) -> StandardizedData:
-        """標準化日誌數據"""
-        # 基本日誌特徵提取
+        """Standardize logs data"""
+        # Basic log feature extraction
         if isinstance(data, list):
             text_data = ' '.join(str(item) for item in data)
         elif isinstance(data, str):
@@ -259,14 +259,14 @@ class UnifiedDataInterface:
         else:
             text_data = str(data)
         
-        # 簡單的文本特徵
+        # Simple text features
         features = np.array([[
-            len(text_data),                           # 文本長度
-            len(text_data.split()),                   # 單詞數量
-            text_data.lower().count('error'),         # 錯誤計數
-            text_data.lower().count('warning'),       # 警告計數
-            text_data.lower().count('exception'),     # 異常計數
-            len(set(text_data.split()))               # 唯一單詞數
+            len(text_data),                           # Text length
+            len(text_data.split()),                   # Word count
+            text_data.lower().count('error'),         # Error count
+            text_data.lower().count('warning'),       # Warning count
+            text_data.lower().count('exception'),     # Exception count
+            len(set(text_data.split()))               # Unique word count
         ]])
         
         feature_names = ['text_length', 'word_count', 'error_count', 'warning_count', 'exception_count', 'unique_words']
@@ -287,27 +287,27 @@ class UnifiedDataInterface:
     def _standardize_traces(data: Any, 
                            node_names: Optional[List[str]] = None,
                            inject_time: Optional[float] = None) -> StandardizedData:
-        """標準化鏈路追蹤數據"""
+        """Standardize traces data"""
         if isinstance(data, pd.DataFrame) and not data.empty:
-            # 提取基本追蹤特徵
+            # Extract basic trace features
             features = []
             
-            # 基本統計特徵
+            # Basic statistical features
             features.extend([
-                len(data),                                    # 追蹤數量
-                data.get('duration', [0]).mean(),            # 平均持續時間
-                data.get('duration', [0]).std(),             # 持續時間標準差
-                data.get('duration', [0]).max(),             # 最大持續時間
+                len(data),                                    # Number of traces
+                data.get('duration', [0]).mean(),            # Average duration
+                data.get('duration', [0]).std(),             # Duration standard deviation
+                data.get('duration', [0]).max(),             # Maximum duration
             ])
             
-            # 服務相關特徵
+            # Service-related features
             if 'serviceName' in data.columns:
                 unique_services = data['serviceName'].nunique()
                 features.append(unique_services)
             else:
                 features.append(1)
             
-            # 錯誤相關特徵
+            # Error-related features
             if 'tags' in data.columns:
                 error_traces = data['tags'].astype(str).str.contains('error', case=False, na=False).sum()
                 features.append(error_traces)
@@ -317,11 +317,11 @@ class UnifiedDataInterface:
             features = np.array([features])
             feature_names = ['trace_count', 'avg_duration', 'duration_std', 'max_duration', 'unique_services', 'error_traces']
             
-            # 提取節點名稱
+            # Extract node names
             if not node_names and 'serviceName' in data.columns:
                 node_names = data['serviceName'].unique().tolist()
         else:
-            # 空數據的默認特徵
+            # Default features for empty data
             features = np.array([[0, 0, 0, 0, 0, 0]])
             feature_names = ['trace_count', 'avg_duration', 'duration_std', 'max_duration', 'unique_services', 'error_traces']
         
@@ -341,8 +341,8 @@ class UnifiedDataInterface:
     def _standardize_generic(data: Any, 
                             node_names: Optional[List[str]] = None,
                             data_type: DataType = DataType.UNKNOWN) -> StandardizedData:
-        """標準化通用數據"""
-        # 嘗試轉換為數值數組
+        """Standardize generic data"""
+        # Try to convert to numeric array
         if isinstance(data, (list, tuple)):
             array_data = np.array(data, dtype=float)
         elif isinstance(data, np.ndarray):
@@ -352,10 +352,10 @@ class UnifiedDataInterface:
         elif np.isscalar(data):
             array_data = np.array([[float(data)]])
         else:
-            # 最後回退
+            # Final fallback
             array_data = np.array([[0.0]])
         
-        # 確保是二維數組
+        # Ensure it's a 2D array
         if array_data.ndim == 1:
             array_data = array_data.reshape(1, -1)
         elif array_data.ndim == 0:
@@ -377,7 +377,7 @@ class UnifiedDataInterface:
     
     @staticmethod
     def get_dimensions(data: Any) -> Dict[str, int]:
-        """獲取數據維度信息"""
+        """Get data dimension information"""
         if isinstance(data, np.ndarray):
             return {
                 'samples': data.shape[0] if data.ndim > 0 else 1,
@@ -404,7 +404,7 @@ class UnifiedDataInterface:
     
     @staticmethod
     def validate_data(data: Any) -> Dict[str, Any]:
-        """驗證數據完整性"""
+        """Validate data integrity"""
         validation_result = {
             'is_valid': True,
             'issues': [],
@@ -412,44 +412,44 @@ class UnifiedDataInterface:
         }
         
         try:
-            # 基本類型檢查
+            # Basic type check
             if data is None:
                 validation_result['is_valid'] = False
-                validation_result['issues'].append("數據為空")
+                validation_result['issues'].append("Data is empty")
                 return validation_result
             
-            # 數值數據檢查
+            # Numeric data check
             if isinstance(data, (np.ndarray, pd.DataFrame)):
                 if isinstance(data, pd.DataFrame):
                     numeric_data = data.select_dtypes(include=[np.number])
                     if numeric_data.empty:
-                        validation_result['issues'].append("DataFrame不包含數值數據")
-                        validation_result['suggestions'].append("確保DataFrame包含數值列")
+                        validation_result['issues'].append("DataFrame does not contain numeric data")
+                        validation_result['suggestions'].append("Ensure DataFrame contains numeric columns")
                     data_to_check = numeric_data.values
                 else:
                     data_to_check = data
                 
                 if data_to_check.size > 0:
-                    # 檢查無效值
+                    # Check for invalid values
                     nan_count = np.isnan(data_to_check).sum()
                     inf_count = np.isinf(data_to_check).sum()
                     
                     if nan_count > 0:
-                        validation_result['issues'].append(f"包含 {nan_count} 個 NaN 值")
-                        validation_result['suggestions'].append("使用 fillna() 處理缺失值")
+                        validation_result['issues'].append(f"Contains {nan_count} NaN values")
+                        validation_result['suggestions'].append("Use fillna() to handle missing values")
                     
                     if inf_count > 0:
-                        validation_result['issues'].append(f"包含 {inf_count} 個無窮大值")
-                        validation_result['suggestions'].append("使用 replace([np.inf, -np.inf], value) 處理無窮大值")
+                        validation_result['issues'].append(f"Contains {inf_count} infinite values")
+                        validation_result['suggestions'].append("Use replace([np.inf, -np.inf], value) to handle infinite values")
             
-            # 如果有問題但不是致命的，仍然認為數據有效
+            # If there are issues but not fatal, still consider data valid
             if validation_result['issues'] and len(validation_result['issues']) < 3:
-                validation_result['suggestions'].append("數據可以使用但建議清理")
+                validation_result['suggestions'].append("Data is usable but cleaning is recommended")
             elif len(validation_result['issues']) >= 3:
                 validation_result['is_valid'] = False
             
         except Exception as e:
             validation_result['is_valid'] = False
-            validation_result['issues'].append(f"驗證過程中出錯: {str(e)}")
+            validation_result['issues'].append(f"Error during validation: {str(e)}")
         
         return validation_result 

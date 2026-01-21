@@ -1,27 +1,27 @@
 """
-E2E RCA Package - 清理版本
-統一導入路徑，消除重複定義
+E2E RCA Package - Clean version
+Unified import paths, eliminate duplicate definitions
 """
 
-# 🔧 簡單的 @rca 裝飾器實現（用於向後兼容）
+# Simple @rca decorator implementation (for backward compatibility)
 def rca(func):
     """
-    簡單的 RCA 裝飾器，主要用於標記函數為 RCA 方法
-    在實際使用中這個裝飾器不會改變函數行為
+    Simple RCA decorator, mainly used to mark functions as RCA methods
+    In actual use, this decorator does not change function behavior
     """
     func.is_rca_method = True
     return func
 
-# 🎯 延遲導入 GNN-KAN 相關模組，避免在其他方法運行時觸發 log
+# Lazy import GNN-KAN related modules to avoid triggering logs when other methods run
 def _lazy_import_gnn_kan():
-    """延遲導入 GNN-KAN 模組，只在需要時觸發"""
+    """Lazy import GNN-KAN module, only triggered when needed"""
     try:
         from .gnnkan import gnn_kan_rca, GNNKANEndToEnd
         
-        # 🔧 從gnn_kan_module導入依賴組件
+        # Import dependency components from gnn_kan_module
         from ..gnn_kan_module import (
             SimplifiedGNNKANConfig,
-            # HighCapacityGNNKANConfig,  # 已移除 
+            # HighCapacityGNNKANConfig,  # Removed 
             FastGNNKANConfig,
             MultiModalFeatureExtractor,
             SimplifiedGraphConstructor,
@@ -29,7 +29,6 @@ def _lazy_import_gnn_kan():
             train_gnn_kan_model
         )
         
-        print("✅ E2E GNN-KAN模組載入成功 - 主進入點：gnnkan.py")
         return True, {
             'gnn_kan_rca': gnn_kan_rca,
             'GNNKANEndToEnd': GNNKANEndToEnd,
@@ -41,12 +40,11 @@ def _lazy_import_gnn_kan():
             'train_gnn_kan_model': train_gnn_kan_model
         }
     except ImportError as e:
-        print(f"❌ GNN-KAN導入失敗: {e}")
         return False, {}
 
-# 🔧 標準 RCA 方法導入（不涉及 GNN-KAN）
+# Standard RCA method imports (not involving GNN-KAN)
 try:
-    # 導入所有標準 RCA 方法
+    # Import all standard RCA methods
     from .baro import baro
     from .circa import circa
     from .pc_pagerank import pc_pagerank, cmlp_pagerank, ntlr_pagerank
@@ -57,7 +55,31 @@ try:
     from .granger_pagerank import granger_pagerank
     from .run import run
     
-    # 其他方法
+    # Pure GNN methods
+    try:
+        from .gnn import gnn_rca
+    except ImportError:
+        gnn_rca = None
+    
+    # GAT method (fair baseline)
+    try:
+        from .gat import gat_rca
+    except ImportError:
+        gat_rca = None
+    
+    # GATv2 method (improved GAT)
+    try:
+        from .gatv2 import gatv2_rca
+    except ImportError:
+        gatv2_rca = None
+    
+    # Graph Transformer method (modern GNN)
+    try:
+        from .graph_transformer import graph_transformer_rca
+    except ImportError:
+        graph_transformer_rca = None
+    
+    # Other methods
     try:
         from .causalai import causalai
     except ImportError:
@@ -128,20 +150,17 @@ try:
     except ImportError:
         micro_diag = None
     
-    print("✅ 標準 RCA 方法導入成功")
-    
 except ImportError as e:
-    print(f"❌ 標準 RCA 方法導入失敗: {e}")
+    pass
 
-# 🎯 創建兼容性函數
+# Create compatibility functions
 def get_gnn_kan_rca():
-    """獲取 GNN-KAN RCA 函數（延遲導入）"""
+    """Get GNN-KAN RCA function (lazy import)"""
     success, components = _lazy_import_gnn_kan()
     if success:
         return components['gnn_kan_rca']
     else:
         def fallback_gnn_kan_rca(data, inject_time=None, **kwargs):
-            print("⚠️ 使用回退實現 - 請檢查gnn_kan_module安裝")
             return {
                 "adj": [],
                 "node_names": [], 
@@ -150,14 +169,14 @@ def get_gnn_kan_rca():
             }
         return fallback_gnn_kan_rca
 
-# 延遲導入的 GNN-KAN 組件
+# Lazy imported GNN-KAN components
 def get_gnn_kan_components():
-    """獲取所有 GNN-KAN 組件（延遲導入）"""
+    """Get all GNN-KAN components (lazy import)"""
     success, components = _lazy_import_gnn_kan()
     if success:
         return components
     else:
-        # 返回空的組件
+        # Return empty components
         return {
             'gnn_kan_rca': get_gnn_kan_rca(),
             'GNNKANEndToEnd': None,
@@ -169,12 +188,12 @@ def get_gnn_kan_components():
             'train_gnn_kan_model': None
         }
 
-# 🎯 統一導出清單
+# Unified export list
 __all__ = [
-    # 裝飾器
+    # Decorator
     'rca',
     
-    # 標準 RCA 方法
+    # Standard RCA methods
     'baro',
     'circa',
     'pc_pagerank', 'cmlp_pagerank', 'ntlr_pagerank',
@@ -185,7 +204,7 @@ __all__ = [
     'granger_pagerank',
     'run',
     
-    # 可選方法
+    # Optional methods
     'causalai',
     'cloudranger',
     'dummy',
@@ -201,7 +220,11 @@ __all__ = [
     'mmrcd',
     'micro_diag',
     
-    # GNN-KAN 延遲導入函數
+    # GNN methods
+    'gnn_rca',
+    'gat_rca',
+    
+    # GNN-KAN lazy import functions
     'get_gnn_kan_rca',
     'get_gnn_kan_components',
 ]

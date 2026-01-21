@@ -1,6 +1,6 @@
 """
-簡化的 GNN-KAN 配置模組
-移除過多可選項，專注核心功能
+Simplified GNN-KAN configuration module
+Remove excessive options, focus on core functionality
 """
 
 import torch
@@ -9,62 +9,70 @@ import numpy as np
 
 class GNNKANConfig:
     """
-    簡化的 GNN-KAN 配置 - 移除過多可選項
-    專注核心功能，確保方法結構清晰
+    Simplified GNN-KAN configuration - remove excessive options
+    Focus on core functionality, ensure clear method structure
     """
     
     def __init__(self):
-        #  大幅提升KAN表達能力
-        self.kan_grid_size = 20              # 從8大幅增加到20
-        self.kan_spline_order = 5            # 從3增加到5
-        self.kan_num_basis = 12              # 從4增加到12
+        # Significantly enhance KAN expressiveness
+        self.kan_grid_size = 20              # Increased from 8 to 20
+        self.kan_spline_order = 5            # Increased from 3 to 5
+        self.kan_num_basis = 12              # Increased from 4 to 12
         self.learnable_activation = True
         
-        # 🎯 基函數選擇配置 - Single source of truth for basis function selection
+        # Basis function selection configuration - single source of truth
         self.basis_function = 'chebyshev'    # Default to chebyshev for backward compatibility
         self.basis_kwargs = {}               # Additional parameters for specific basis functions
         
-        #  增加模型容量和深度
-        self.input_dim = 128                 # 從64增加到128
-        self.hidden_dims = [128, 96, 64]     # 從[32,16]增加到[128,96,64]
-        self.output_dim = 96                 # 從16增加到96
-        self.num_gnn_layers = 4              # 從2增加到4
-        self.dropout = 0.1                   # 從0.2減少到0.1
+        # Increase model capacity and depth
+        self.input_dim = 128                 # Increased from 64 to 128
+        self.hidden_dims = [128, 96, 64]     # Increased from [32,16] to [128,96,64]
+        self.output_dim = 96                 # Increased from 16 to 96
+        self.num_gnn_layers = 4              # Increased from 2 to 4
+        self.dropout = 0.1                   # Reduced from 0.2 to 0.1
         
-        #  優化特徵處理
-        self.feature_method = 'enhanced_ica' # 使用更強的特徵提取
-        self.target_feature_dim = 128        # 從64增加到128
+        # Optimize feature processing
+        self.feature_method = 'enhanced_ica' # Use stronger feature extraction
+        self.target_feature_dim = 128        # Increased from 64 to 128
         
-        # 🎯 調整訓練策略
-        self.learning_rate = 2e-4            # 從1e-3調整到2e-4
-        self.weight_decay = 5e-6             # 從1e-4減少到5e-6
-        self.num_epochs = 400                # 從100大幅增加到400
-        self.batch_size = 8                  # 從32減少到8，提高穩定性
-        self.patience = 60                   # 從25增加到60
-        self.min_delta = 1e-6                # 從1e-5減少到1e-6
-        self.min_epochs = 30                 # 新增：最小訓練輪數保證
+        # Adjust training strategy
+        self.learning_rate = 2e-4            # Adjusted from 1e-3 to 2e-4
+        self.weight_decay = 5e-6             # Reduced from 1e-4 to 5e-6
+        self.num_epochs = 400                # Significantly increased from 100 to 400
+        self.batch_size = 8                  # Reduced from 32 to 8 for better stability
+        self.patience = 60                   # Increased from 25 to 60
+        self.min_delta = 1e-6                # Reduced from 1e-5 to 1e-6
+        self.min_epochs = 30                 # New: minimum training epochs guarantee
         
-        # 🎯 優化圖構建
-        self.similarity_threshold = 0.2      # 從0.5大幅降低到0.2
-        self.max_edges_per_node = 15         # 從4大幅增加到15
+        # Optimize graph construction
+        self.similarity_threshold = 0.2      # Significantly reduced from 0.5 to 0.2
+        self.max_edges_per_node = 15         # Significantly increased from 4 to 15
         
-        #  穩定性配置
-        self.gradient_clip_norm = 0.5        # 從1.0減少到0.5
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.use_cuda = torch.cuda.is_available()
+        # Stability configuration
+        self.gradient_clip_norm = 0.5        # Reduced from 1.0 to 0.5
+        # Support CUDA, MPS (Apple Silicon), CPU
+        if torch.cuda.is_available():
+            self.device = 'cuda'
+            self.use_cuda = True
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            self.device = 'mps'
+            self.use_cuda = True  # MPS also treated as GPU acceleration
+        else:
+            self.device = 'cpu'
+            self.use_cuda = False
     
     def update_for_kan_purity(self):
-        """更新配置以確保 KAN 純粹性"""
-        pass  # 簡化版本不需要額外配置
+        """Update configuration to ensure KAN purity"""
+        pass  # Simplified version doesn't need additional configuration
         
     def get_device(self):
-        """獲取計算設備"""
+        """Get computation device"""
         return self.device
 
 
-# 便捷的配置創建函數
+# Convenient configuration creation function
 def create_config(**kwargs):
-    """創建配置並應用自定義參數"""
+    """Create configuration and apply custom parameters"""
     config = GNNKANConfig()
     for key, value in kwargs.items():
         if hasattr(config, key):
@@ -72,5 +80,5 @@ def create_config(**kwargs):
     return config
     
 
-# 兼容性別名
+# Compatibility alias
 SimplifiedGNNKANConfig = GNNKANConfig

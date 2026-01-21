@@ -365,7 +365,7 @@ class PQCGpuBasis(nn.Module):
             for layer in range(2):  # 2 layers of parameterized gates
                 # Rotation gates
                 for i in range(self.num_qubits):
-                    # 確保索引不超出範圍
+                    # Ensure index is within range
                     idx_base = i * 3
                     if idx_base + 2 < len(theta):
                         self.qml.RX(theta[idx_base], wires=i)

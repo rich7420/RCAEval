@@ -436,7 +436,7 @@ def calculate_spectrum_without_delay_list(
             result[node] = (spectrum[node]["ef"] + spectrum[node]["np"]) / (spectrum[node]["ef"] +
                                                                             spectrum[node]["np"] + 2 * spectrum[node]["nf"] + 2 * spectrum[node]["ep"])
 
-    # Top-n节点列表
+    # Top-n node list
     top_list = []
     score_list = []
     for index, score in enumerate(sorted(result.items(), key=lambda x: x[1], reverse=True)):
@@ -646,8 +646,56 @@ def get_pagerank_graph(df):
 def microrank(data, inject_time=None, dataset=None, **kwargs):
     # span_df = pd.read_csv("./data/mm-ob/checkoutservice_delay/1/traces.csv")
     span_df = data
-    span_df["methodName"] = span_df["methodName"].fillna(span_df["operationName"])
+    # Handle missing methodName column
+    if "methodName" not in span_df.columns:
+        if "operationName" in span_df.columns:
+            span_df["methodName"] = span_df["operationName"]
+        else:
+            # If neither exists, create a dummy methodName
+            span_df["methodName"] = "unknown"
+    else:
+        # Fill missing values with operationName if available
+        if "operationName" in span_df.columns:
+            span_df["methodName"] = span_df["methodName"].fillna(span_df["operationName"])
+        else:
+            span_df["methodName"] = span_df["methodName"].fillna("unknown")
+    
+    # Handle missing serviceName column
+    if "serviceName" not in span_df.columns:
+        if "service" in span_df.columns:
+            span_df["serviceName"] = span_df["service"]
+        elif "service_name" in span_df.columns:
+            span_df["serviceName"] = span_df["service_name"]
+        else:
+            # If neither exists, create a dummy serviceName
+            span_df["serviceName"] = "unknown"
+    
     span_df["operation"] = span_df["serviceName"] + "_" + span_df["methodName"]
+
+    # Handle missing startTime column
+    if "startTime" not in span_df.columns:
+        if "start_time" in span_df.columns:
+            span_df["startTime"] = span_df["start_time"]
+        elif "timestamp" in span_df.columns:
+            span_df["startTime"] = span_df["timestamp"]
+        else:
+            raise ValueError("microrank requires 'startTime' column (or 'start_time' or 'timestamp')")
+    
+    # Handle missing duration column
+    if "duration" not in span_df.columns:
+        if "latency" in span_df.columns:
+            span_df["duration"] = span_df["latency"]
+        else:
+            raise ValueError("microrank requires 'duration' column (or 'latency')")
+    
+    # Handle missing traceID column
+    if "traceID" not in span_df.columns:
+        if "trace_id" in span_df.columns:
+            span_df["traceID"] = span_df["trace_id"]
+        elif "traceId" in span_df.columns:
+            span_df["traceID"] = span_df["traceId"]
+        else:
+            raise ValueError("microrank requires 'traceID' column (or 'trace_id' or 'traceId')")
 
     # inject_time = int(inject_time) * 1_000_000  # convert from seconds to microseconds
 

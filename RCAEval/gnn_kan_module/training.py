@@ -1,6 +1,6 @@
 """
 Training Module for GNN-KAN
-訓練模組 - 處理GNN-KAN模型的訓練和優化
+Training module - handles training and optimization of GNN-KAN models
 """
 
 import time
@@ -14,13 +14,13 @@ import math
 from torch_geometric.utils import negative_sampling
 
 # Use the centralized, full implementation of GradientStabilizer
-# GradientStabilizer 已移除，使用簡化版本
+# GradientStabilizer removed, use simplified version
 from .config import SimplifiedGNNKANConfig
 
 
 def learning_rate_scheduler(optimizer, current_epoch, total_epochs):
-    """Cosine annealing learning rate scheduler - 平滑減少LR"""
-    lr_max = 5e-4  # 初始LR提高到5e-4, 讓早期訓練更快
+    """Cosine annealing learning rate scheduler - smoothly reduce LR"""
+    lr_max = 5e-4  # Increase initial LR to 5e-4, make early training faster
     min_lr = 1e-6
     # Cosine curve for smooth decay
     cos_anneal = 0.5 * (1 + math.cos(math.pi * current_epoch / total_epochs))
@@ -31,22 +31,22 @@ def learning_rate_scheduler(optimizer, current_epoch, total_epochs):
 # Import the model from the models module, not a local copy
 from .models import SimplifiedGNNKAN, GNNKANModel, TemporalAttention
 
-# 修復模型導入
+# Fix model import
 try:
     from .models import SimplifiedGNNKAN
 except ImportError:
-    print("⚠️ 使用models.py中的統一實現...")
+    pass
 
 
 def create_model_with_config(config):
     """
-    根據配置創建模型 - 重定向到models.py的統一實現
+    Create model based on configuration - redirect to unified implementation in models.py
     
     Args:
-        config: SimplifiedGNNKANConfig 配置對象
+        config: SimplifiedGNNKANConfig configuration object
         
     Returns:
-        model: 創建的模型實例
+        model: Created model instance
     """
     from .models import create_model_with_config as _create_model
     return _create_model(config)
@@ -54,36 +54,35 @@ def create_model_with_config(config):
 
 def create_model_from_checkpoint(checkpoint_path, config=None):
     """
-    🔄 從檢查點加載模型
+    Load model from checkpoint
     
     Args:
-        checkpoint_path: 檢查點文件路徑
-        config: 配置對象（可選）
+        checkpoint_path: Checkpoint file path
+        config: Configuration object (optional)
         
     Returns:
-        model: 加載的模型
-        metadata: 檢查點元數據
+        model: Loaded model
+        metadata: Checkpoint metadata
     """
-    print(f"📂 Loading model from checkpoint: {checkpoint_path}")
     
     try:
         checkpoint = torch.load(checkpoint_path, map_location='cpu')
         
-        # 從檢查點獲取配置
+        # Get configuration from checkpoint
         if 'config' in checkpoint and config is None:
             config = checkpoint['config']
         
-        # 創建模型
+        # Create model
         if config:
             model = create_model_with_config(config)
         else:
-            # 從state_dict推斷模型結構
+            # Infer model structure from state_dict
             model = _infer_model_from_state_dict(checkpoint['model_state_dict'])
         
-        # 加載權重
+        # Load weights
         model.load_state_dict(checkpoint['model_state_dict'])
         
-        # 獲取元數據
+        # Get metadata
         metadata = {
             'epoch': checkpoint.get('epoch', 0),
             'loss': checkpoint.get('loss', None),
@@ -91,28 +90,25 @@ def create_model_from_checkpoint(checkpoint_path, config=None):
             'timestamp': checkpoint.get('timestamp', None)
         }
         
-        print(f"✅ Model loaded from epoch {metadata['epoch']}")
         return model, metadata
         
     except Exception as e:
-        print(f"❌ Failed to load checkpoint: {e}")
         if config:
-            print("Creating new model with provided config...")
             return create_model_with_config(config), {}
         else:
             raise e
 
 
 def _infer_model_from_state_dict(state_dict):
-    """從state_dict推斷模型結構"""
-    # 分析state_dict的鍵來推斷模型參數
+    """Infer model structure from state_dict"""
+    # Analyze state_dict keys to infer model parameters
     keys = list(state_dict.keys())
     
-    # 推斷層數
+    # Infer number of layers
     conv_layers = [k for k in keys if 'conv_layers' in k and 'weight' in k]
     num_layers = len(set(k.split('.')[1] for k in conv_layers))
     
-    # 推斷維度
+    # Infer dimensions
     first_conv = [k for k in keys if 'conv_layers.0' in k and 'weight' in k]
     if first_conv:
         first_weight = state_dict[first_conv[0]]
@@ -124,7 +120,7 @@ def _infer_model_from_state_dict(state_dict):
     else:
         input_dim = hidden_dim = 64
     
-    # 創建模型
+    # Create model
     model = SimplifiedGNNKAN(
         input_dim=input_dim,
         hidden_dim=hidden_dim,
@@ -136,7 +132,7 @@ def _infer_model_from_state_dict(state_dict):
 
 
 class ModelManager:
-    """🎯 模型管理器 - 統一管理模型創建、訓練、保存"""
+    """Model manager - unified management of model creation, training, saving"""
     
     def __init__(self, config):
         self.config = config
@@ -145,23 +141,23 @@ class ModelManager:
         self.scheduler = None
         
     def create_model(self):
-        """創建模型"""
+        """Create model"""
         self.model = create_model_with_config(self.config)
         return self.model
     
     def setup_training(self):
-        """設置訓練組件"""
+        """Setup training components"""
         if self.model is None:
             self.create_model()
         
-        # 優化器
+        # Optimizer
         self.optimizer = optim.AdamW(
             self.model.parameters(),
             lr=getattr(self.config, 'learning_rate', 0.001),
             weight_decay=getattr(self.config, 'weight_decay', 1e-5)
         )
         
-        # 學習率調度器
+        # Learning rate scheduler
         self.scheduler = lr_scheduler.ReduceLROnPlateau(
             self.optimizer, mode='min', factor=0.8, patience=10
         )
@@ -169,7 +165,7 @@ class ModelManager:
         return self.optimizer, self.scheduler
     
     def train_model(self, node_features, edge_index):
-        """訓練模型"""
+        """Train model"""
         if self.model is None or self.optimizer is None:
             self.setup_training()
         
@@ -178,20 +174,20 @@ class ModelManager:
         )
     
     def save_checkpoint(self, epoch, loss, metrics, save_path):
-        """保存檢查點"""
+        """Save checkpoint"""
         # This function is being consolidated into utils.py
         # save_model_checkpoint(
         #     self.model, self.optimizer, epoch, loss, metrics, save_path, self.config
         # )
     
     def load_checkpoint(self, checkpoint_path):
-        """加載檢查點"""
+        """Load checkpoint"""
         self.model, metadata = create_model_from_checkpoint(checkpoint_path, self.config)
         return metadata
 
 
 class GNNKANLoss(nn.Module):
-    """GNN-KAN專用損失函數 - 階段1改進：解決過度凝聚/擬合"""
+    """GNN-KAN specific loss function - Stage 1 improvement: solve over-condensation/overfitting"""
     
     def __init__(self, config):
         super(GNNKANLoss, self).__init__()
@@ -199,186 +195,185 @@ class GNNKANLoss(nn.Module):
         self.bce_loss = nn.BCELoss()
         self.mse_loss = nn.MSELoss()
         
-        # 🔧 階段1：動態損失權重，防止凝聚
-        self.polar_weight = getattr(config, 'polar_weight', 0.8)  # 降低Polar權重
-        self.contrast_weight = getattr(config, 'contrast_weight', 1.5)  # 提升Contrast權重
-        self.sparsity_target = getattr(config, 'sparsity_target', 0.3)  # 目標稀疏性
+        # Stage 1: Dynamic loss weights, prevent condensation
+        self.polar_weight = getattr(config, 'polar_weight', 0.8)  # Reduce Polar weight
+        self.contrast_weight = getattr(config, 'contrast_weight', 1.5)  # Increase Contrast weight
+        self.sparsity_target = getattr(config, 'sparsity_target', 0.3)  # Target sparsity
         
     def forward(self, pred_adj, true_adj, node_embeddings=None):
         """
-        計算組合損失 - 階段1改進：解決過度凝聚/擬合
+        Compute combined loss - Stage 1 improvement: solve over-condensation/overfitting
         
         Args:
-            pred_adj: 預測的鄰接矩陣
-            true_adj: 真實的鄰接矩陣  
-            node_embeddings: 節點嵌入（可選）
+            pred_adj: Predicted adjacency matrix
+            true_adj: True adjacency matrix  
+            node_embeddings: Node embeddings (optional)
         """
-        # 🔧 修復CUDA斷言錯誤：確保pred_adj在[0,1]範圍內
+        # Fix CUDA assertion error: ensure pred_adj is in [0,1] range
         pred_adj_safe = torch.clamp(pred_adj, min=1e-7, max=1.0-1e-7)
         true_adj_safe = torch.clamp(true_adj, min=0.0, max=1.0)
         
-        # 數值穩定性檢查
+        # Numerical stability check
         has_nan = torch.isnan(pred_adj_safe).any()
         has_inf = torch.isinf(pred_adj_safe).any()
         
         if has_nan or has_inf:
-            print("⚠️ 預測鄰接矩陣包含無效值，使用MSE損失")
             pred_adj_clean = torch.nan_to_num(pred_adj, nan=0.0, posinf=1.0, neginf=0.0)
             recon_loss = self.mse_loss(pred_adj_clean, true_adj_safe)
         else:
-            # 重構損失
+            # Reconstruction loss
             recon_loss = self.bce_loss(pred_adj_safe, true_adj_safe)
         
         total_loss = recon_loss
         
-        # 🎯 動態權重調整策略 - 根據訓練進度調整損失權重
+        # Dynamic weight adjustment strategy - adjust loss weights based on training progress
         epoch = getattr(self, 'current_epoch', 0)
         total_epochs = getattr(self, 'total_epochs', 100)
         
-        # 修正動態權重計算 - 平衡各損失項
-        w_recon = 0.5  # 進一步降低重構損失權重
-        w_polar = 0.2 + 0.5 * (epoch / max(total_epochs, 1))  # 極化損失增強
-        w_contrast = min(8.0, 2.0 + epoch * 0.1 )  # 對比損失更激進增強
-        w_sparsity = min(0.8, 0.1 + epoch * 0.01)  # 降低稀疏性約束壓力
+        # Corrected dynamic weight computation - balance loss terms
+        w_recon = 0.5  # Further reduce reconstruction loss weight
+        w_polar = 0.2 + 0.5 * (epoch / max(total_epochs, 1))  # Polarization loss enhancement
+        w_contrast = min(8.0, 2.0 + epoch * 0.1 )  # More aggressive contrast loss enhancement
+        w_sparsity = min(0.8, 0.1 + epoch * 0.01)  # Reduce sparsity constraint pressure
         
-        # 🔧 改進的稀疏性懲罰
+        # Improved sparsity penalty
         current_sparsity = (pred_adj_safe > 0.1).float().mean().item()
         sparsity_penalty = torch.mean(torch.abs(pred_adj_safe)) * (1 - current_sparsity)
         total_loss += sparsity_penalty * w_sparsity
         
-        # 🔧 增強的對比損失
+        # Enhanced contrastive loss
         if node_embeddings is not None:
             contrast_loss = self.enhanced_contrastive_loss(node_embeddings, pred_adj_safe)
             total_loss += contrast_loss * w_contrast
             
-            # L2正則化
+            # L2 regularization
             l2_reg = torch.norm(node_embeddings, p=2)
             total_loss += self.config.l2_lambda * l2_reg
             
-            # 🎯 新增: 方差正則化 - 鼓勵節點表示有足夠判別性
+            # New: Variance regularization - encourage node representations to have sufficient discriminability
             std_per_dim = torch.clamp(node_embeddings.std(dim=0), 1e-3, None)
             var_loss = torch.relu(1.0 - std_per_dim).mean()
             total_loss += 0.05 * var_loss
             
-            # 平滑性正則化
+            # Smoothness regularization
             if node_embeddings.size(0) > 1:
                 diff = torch.diff(node_embeddings, dim=0)
                 smoothness_reg = torch.norm(diff, p=2)
                 total_loss += self.config.smoothness_lambda * smoothness_reg
         
-        # 🔧 穩定化的極化損失
+        # Stabilized polarization loss
         polar_loss = self.stabilized_polar_loss(pred_adj_safe, alpha=0.5)
         total_loss += polar_loss * w_polar
         
-        # 🎯 細微Margin Loss - 微調確保top/bottom差距
+        # Fine Margin Loss - fine-tune to ensure top/bottom gap
         if node_embeddings is not None:
-            margin = 0.08  # 微調差距要求
+            margin = 0.08  # Fine-tune gap requirement
             margin_loss = self.discriminative_loss(pred_adj_safe.flatten(), margin)
             total_loss += 0.15 * margin_loss
         
-        # 🎯 方向3: Ranking Loss - 直接優化排名 (後期啟用)
+        # Direction 3: Ranking Loss - directly optimize ranking (enabled later)
         if epoch > 50 and node_embeddings is not None:
             try:
-                # 生成pseudo ranks
+                # Generate pseudo ranks
                 ground_truth_ranks = self.generate_pseudo_ranks(pred_adj_safe)
                 
-                # 計算PageRank分數作為pr_scores
-                pr_scores = pred_adj_safe.sum(dim=1)  # 簡化版PageRank分數
+                # Compute PageRank scores as pr_scores
+                pr_scores = pred_adj_safe.sum(dim=1)  # Simplified PageRank scores
                 
-                # 應用ListNet loss
+                # Apply ListNet loss
                 rank_loss = self.listnet_loss(pr_scores, ground_truth_ranks)
                 total_loss += 0.2 * rank_loss
                 
-                if epoch % 10 == 0:  # 每10個epoch打印一次
-                    print(f"  Ranking Loss: {rank_loss.item():.4f}")
+                if epoch % 10 == 0:  # Print every 10 epochs
+                    pass
             except Exception as e:
-                print(f"⚠️ Ranking Loss計算失敗: {e}")
+                pass
         
         return total_loss
     
     def enhanced_contrastive_loss(self, embeddings, adj_matrix, 
                              base_temp=0.2, min_temp=0.1, max_temp=0.5):
         """
-        修正版對比學習 - 確保與其他損失項量級一致
-        * 無需故障類型信息 *
+        Revised contrastive learning - ensure consistent magnitude with other loss terms
+        * No fault type information needed *
         """
         batch_size = embeddings.shape[0]
         norm_embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
         
-        # 計算余弦相似度
+        # Compute cosine similarity
         logits = torch.mm(norm_embeddings, norm_embeddings.t())
         
-        # 關鍵修正: 使用鄰接矩陣作為正樣本強度，但強化差異
-        # 將鄰接權重從[0.5, 0.73]映射到[-1.0, 1.0]以擴大差異
-        weights = (adj_matrix - 0.62) * 10.0  # 中心點設為值域中點
+        # Key fix: use adjacency matrix as positive sample strength, but strengthen differences
+        # Map adjacency weights from [0.5, 0.73] to [-1.0, 1.0] to expand differences
+        weights = (adj_matrix - 0.62) * 10.0  # Center point set to range midpoint
         
-        # 限制在合理範圍 [-1.0, 1.0]
+        # Limit to reasonable range [-1.0, 1.0]
         weights = torch.clamp(weights, -1.0, 1.0)
         
-        # 關鍵修正: 增強高價值連接
+        # Key fix: enhance high-value connections
         strong_connections = (adj_matrix > 0.68).float()
         weights = weights + strong_connections * 0.3
         
-        # 移除自連接
+        # Remove self-connections
         eye = torch.eye(batch_size, device=embeddings.device)
         weights = weights * (1 - eye)
         
-        # 修正: 使用加權相似度計算損失
+        # Fix: use weighted similarity to compute loss
         positive_logits = logits * weights * (1 - eye)
         negative_logits = logits * (1 - weights) * (1 - eye)
         
-        # 關鍵修正: 提升對比損失量級，確保數值穩定性
+        # Key fix: increase contrastive loss magnitude, ensure numerical stability
         pos_exp = torch.exp(torch.clamp(positive_logits.sum(dim=1) / 10.0, -10, 10))
         neg_exp = torch.exp(torch.clamp(negative_logits.sum(dim=1) / 10.0, -10, 10))
         
-        # 避免除零和log(0)
+        # Avoid division by zero and log(0)
         ratio = pos_exp / (neg_exp + 1e-8)
         ratio = torch.clamp(ratio, min=1e-8, max=1e8)
         
         contrastive_loss = -torch.log(ratio).mean()
         
-        # 檢查NaN並處理
+        # Check NaN and handle
         if torch.isnan(contrastive_loss):
             contrastive_loss = torch.tensor(0.0, device=embeddings.device)
         
-        # 關聯約束: 確保節點表示與鄰接矩陣一致
+        # Association constraint: ensure node representations are consistent with adjacency matrix
         recon_loss = torch.nn.functional.mse_loss(
             torch.mm(norm_embeddings, norm_embeddings.t()),
             adj_matrix.detach()
         ) * 0.1
         
-        return contrastive_loss * 5.0 + recon_loss  # 明確提升對比損失權重
+        return contrastive_loss * 5.0 + recon_loss  # Explicitly increase contrastive loss weight
     
     def discriminative_loss(self, pr_scores, margin=0.1):
         """
-        辨識度損失 - 直接優化top-1分離度
-        pr_scores: PageRank分數列表 (已排序)
-        margin: 最小間距要求
+        Discriminative loss - directly optimize top-1 separation
+        pr_scores: PageRank score list (sorted)
+        margin: Minimum gap requirement
         """
         if len(pr_scores) < 2:
             return torch.tensor(0.0, device=pr_scores[0].device)
         
-        # 確保分數是tensor
+        # Ensure scores are tensor
         if not isinstance(pr_scores, torch.Tensor):
             pr_scores = torch.tensor(pr_scores, dtype=torch.float32)
         
-        # 排序分數
+        # Sort scores
         sorted_scores, _ = torch.sort(pr_scores, descending=True)
         
-        # 計算top-1與top-2的差距
+        # Calculate gap between top-1 and top-2
         score_diff = sorted_scores[0] - sorted_scores[1]
         
-        # 損失: 當差異小於margin時產生損失
+        # Loss: generate loss when difference is less than margin
         loss = torch.relu(margin - score_diff)
         
         return loss
     
     def listnet_loss(self, pr_scores, ground_truth_ranks, temperature=1.0):
-        """ListNet ranking loss - 優化PageRank排名, 無需故障類型"""
-        # 轉為概率distribution
+        """ListNet ranking loss - optimize PageRank ranking, no fault type needed"""
+        # Convert to probability distribution
         predicted_probs = torch.softmax(pr_scores / temperature, dim=0)
         
-        # 基於ground_truth_ranks生成理想分布 (數據驅動: 高rank應該高prob)
+        # Generate ideal distribution based on ground_truth_ranks (data-driven: high rank should have high prob)
         ideal_probs = torch.zeros_like(predicted_probs)
         for idx, rank in ground_truth_ranks.items():
             ideal_probs[idx] = rank / sum(ground_truth_ranks.values())
@@ -393,31 +388,31 @@ class GNNKANLoss(nn.Module):
         return kl_div
     
     def generate_pseudo_ranks(self, adj_matrix):
-        """生成pseudo label (數據驅動)"""
+        """Generate pseudo label (data-driven)"""
         row_sums = adj_matrix.sum(dim=1).detach()
         pseudo_ranks = row_sums / row_sums.max()
         return {i: pseudo_ranks[i].item() for i in range(adj_matrix.shape[0])}
     
     def stabilized_polar_loss(self, adj_matrix, alpha=0.5):
         """
-        穩定化極化損失，避免梯度爆炸
-        alpha: 控制稀疏和密集的平衡(0=純稀疏, 1=純密集)
+        Stabilized polarization loss, avoid gradient explosion
+        alpha: Control balance between sparse and dense (0=pure sparse, 1=pure dense)
         """
-        # 先應用sigmoid確保值域在[0,1]
+        # First apply sigmoid to ensure value range is [0,1]
         adj_probs = torch.sigmoid(adj_matrix)
         
-        # 結合兩種目標：稀疏與有結構
+        # Combine two objectives: sparse and structured
         sparse_loss = torch.mean(adj_probs) * (1 - alpha)
         structured_loss = torch.var(adj_probs) * alpha
         
-        # 添加梯度穩定項
+        # Add gradient stabilization term
         stable_term = 0.001 * torch.log(torch.var(adj_probs) + 1e-8)
         
         return sparse_loss + structured_loss - stable_term
 
 
 class LossScheduler:
-    """無需故障類型的損失權重自適應調控器"""
+    """Loss weight adaptive controller without fault type"""
     
     def __init__(self, initial_weights, window_size=10):
         self.weights = initial_weights.copy()
@@ -425,35 +420,35 @@ class LossScheduler:
         self.history = []
     
     def update_weights(self, metrics):
-        """基於訓練動態自動調整權重"""
+        """Automatically adjust weights based on training dynamics"""
         self.history.append(metrics)
         if len(self.history) > self.window_size:
             self.history.pop(0)
         
-        # 1. 根據對比損失表現動態調整
+        # 1. Dynamically adjust based on contrast loss performance
         if len(self.history) >= 2:
             contrast_trend = (self.history[-1]['contrast'] - 
                              self.history[-2]['contrast'])
             
-            # 對比損失下降過快？可能學習不足
+            # Contrast loss decreasing too fast? May indicate insufficient learning
             if contrast_trend < -0.05:
                 self.weights['contrast'] = min(3.0, 
                                              self.weights['contrast'] * 1.1)
-            # 對比損失停滯？減少關注
+            # Contrast loss stagnant? Reduce attention
             elif abs(contrast_trend) < 0.01:
                 self.weights['contrast'] = max(0.5, 
                                              self.weights['contrast'] * 0.95)
         
-        # 2. 基於圖稀疏度自動調整極化損失
+        # 2. Automatically adjust polarization loss based on graph sparsity
         sparsity = 1.0 - metrics['density']
-        if sparsity < 0.3:  # 圖太密
+        if sparsity < 0.3:  # Graph too dense
             self.weights['polar'] = min(2.0, self.weights['polar'] * 1.05)
-        elif sparsity > 0.7:  # 圖太稀疏
+        elif sparsity > 0.7:  # Graph too sparse
             self.weights['polar'] = max(0.1, self.weights['polar'] * 0.95)
         
-        # 3. 自動平衡重構與結構損失
+        # 3. Automatically balance reconstruction and structure loss
         recon_ratio = metrics['recon'] / (metrics['sparsity'] + 1e-5)
-        if recon_ratio > 0.5:  # 重構需求高
+        if recon_ratio > 0.5:  # High reconstruction demand
             self.weights['recon'] = min(2.0, self.weights['recon'] * 1.02)
         
         return self.weights.copy()
@@ -463,57 +458,55 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
     """
     🚨 ISSUE 6: 實時性能力不足分析
     
-    實時性問題：
-    1. **訓練時間過長**：
-       - 當前需要200輪訓練，平均60-180秒
-       - 實際故障響應要求：<10秒內給出初步分析
-       - On-the-fly訓練在生產環境不可行
+    Real-time issues:
+    1. **Training time too long**:
+       - Currently requires 200 epochs, average 60-180 seconds
+       - Actual fault response requirement: <10 seconds for preliminary analysis
+       - On-the-fly training not feasible in production environment
     
-    2. **冷啟動問題**：
-       - 新系統或新故障類型需要重新訓練
-       - 缺乏預訓練模型或遷移學習機制
-       - 無法利用歷史相似故障的經驗
+    2. **Cold start problem**:
+       - New systems or new fault types require retraining
+       - Lack of pretrained models or transfer learning mechanisms
+       - Cannot leverage experience from historically similar faults
     
-    3. **增量學習缺失**：
-       - 每次都是完全重新訓練
-       - 無法持續從新故障中學習
-       - 模型不能隨時間演化改進
+    3. **Missing incremental learning**:
+       - Complete retraining every time
+       - Cannot continuously learn from new faults
+       - Model cannot evolve and improve over time
     
-    4. **推理複雜度**：
-       - O(V²)的鄰接矩陣計算在推理時仍然需要
-       - KAN層的B-spline計算比MLP的矩陣乘法更耗時
-       - 多階段後處理增加了響應延遲
+    4. **Inference complexity**:
+       - O(V²) adjacency matrix computation still needed during inference
+       - KAN layer B-spline computation more time-consuming than MLP matrix multiplication
+       - Multi-stage post-processing increases response latency
     
-    🔧 實時化改進建議：
-    1. 預訓練+微調策略：
+    Real-time improvement suggestions:
+    1. Pretraining + fine-tuning strategy:
        # pretrained_model = load_universal_pretrained_model()
        # quick_adapted = few_shot_adaptation(pretrained_model, current_data)
     
-    2. 模型壓縮：
+    2. Model compression:
        # compressed_model = knowledge_distillation(full_model, student_model)
        # quantized_model = dynamic_quantization(compressed_model)
     
-    3. 近似推理：
+    3. Approximate inference:
        # sparse_adj = approximate_adjacency(embeddings, top_k=20)
        # fast_pagerank = power_iteration_early_stop(sparse_adj, max_iter=10)
     
-    4. 分級響應：
+    4. Tiered response:
        # immediate_response = fast_heuristic_ranking(raw_features)  # <1s
        # refined_response = simplified_kan_inference(processed_data)  # <5s  
        # detailed_analysis = full_gnn_kan_pipeline(all_data)  # <30s
     
     Current implementation - NOT suitable for real-time production
     """
-    # 🔧 修正6：實時性改進 - 添加快速模式
+    # Fix 6: Real-time improvement - add fast mode
     fast_mode = getattr(config, 'fast_mode', False) or sparsity_lambda is None
     if fast_mode:
-        print("🚀 啟用快速訓練模式")
-        # 快速模式：減少訓練輪數，提高收斂速度
+        # Fast mode: reduce training epochs, increase convergence speed
         config.num_epochs = min(50, config.num_epochs)
-        config.learning_rate = config.learning_rate * 1.5  # 更激進的學習率
-        print(f"   快速模式配置：{config.num_epochs}輪訓練，學習率×1.5")
+        config.learning_rate = config.learning_rate * 1.5  # More aggressive learning rate
     
-    # 設置稀疏性參數
+    # Set sparsity parameters
     if sparsity_lambda is None:
         sparsity_lambda = 1e-5 if fast_mode else 1e-4
     
@@ -525,14 +518,14 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
     optimizer = optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
     scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=config.patience, factor=0.5)
     
-    # 🔧 階段1：改進的早停機制 / Improved early stopping mechanism
+    # Stage 1: Improved early stopping mechanism
     from .models import EarlyStopping
     early_stopping = EarlyStopping(patience=config.patience, min_delta=config.min_delta)
     
-    # 🔧 階段1：驗證數據準備 / Validation data preparation
+    # Stage 1: Validation data preparation
     val_data = kwargs.get('val_data', None)
     
-    # 初始化損失函數
+    # Initialize loss function
     loss_fn = GNNKANLoss(config)
     val_ground_truth = kwargs.get('val_ground_truth', None)
     monitor_metric = kwargs.get('monitor_metric', 'val_precision')
@@ -540,37 +533,35 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
     best_val_metric = 0.0
     patience_counter = 0
     
-    print(f"🚀 Starting GNN-KAN training on {device}...")
-    print(f"   Config: lr={config.learning_rate}, epochs={config.num_epochs}, batch_size={config.batch_size}, sparsity_lambda={sparsity_lambda}")
     
     training_history = {'loss': [], 'adj_min': [], 'adj_max': [], 'adj_mean': [], 'sparsity_01': [], 'sparsity_03': [], 'sparsity_05': []}
     
-    # 🔥 創建加權的真實鄰接矩陣 - 基於特徵相似性而非簡單二值化
+    # Create weighted true adjacency matrix - based on feature similarity rather than simple binarization
     with torch.no_grad():
         num_nodes = node_features.size(0)
         true_adj = torch.zeros(num_nodes, num_nodes, device=device)
         
-        # 基於節點特徵計算相似性作為真實權重
+        # Compute similarity based on node features as true weights
         if num_nodes > 1:
-            # 歸一化特徵
+            # Normalize features
             norm_features = F.normalize(node_features, p=2, dim=1)
-            # 計算餘弦相似性
+            # Compute cosine similarity
             similarity_matrix = torch.mm(norm_features, norm_features.t())
-            # 將相似性轉換為 [0,1] 範圍的權重
+            # Convert similarity to [0,1] range weights
             true_adj = (similarity_matrix + 1) / 2
-            # 移除自環的影響
+            # Remove self-loop influence
             true_adj.fill_diagonal_(0)
             
-            # 🎯 增強: 根據原始邊強化重要連接 (來自改進方案)
+            # Enhancement: strengthen important connections based on original edges (from improvement scheme)
             if edge_index.size(1) > 0:
-                # 對原始邊給予額外權重 - 提升到0.3
+                # Give additional weight to original edges - increase to 0.3
                 edge_boost = 0.3
                 true_adj[edge_index[0], edge_index[1]] += edge_boost
                 true_adj[edge_index[1], edge_index[0]] += edge_boost
-                # 確保權重在[0,1]範圍內
+                # Ensure weights are in [0,1] range
                 true_adj = torch.clamp(true_adj, 0, 1)
         else:
-            # 單節點情況的回退
+            # Fallback for single node case
             if edge_index.size(1) > 0:
                 true_adj[edge_index[0], edge_index[1]] = 1
                 true_adj[edge_index[1], edge_index[0]] = 1
@@ -579,26 +570,26 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
         model.train()
         optimizer.zero_grad()
         
-        # 🎯 方向2: 學習率調度 - 平滑減少LR
+        # Direction 2: Learning rate scheduling - smoothly reduce LR
         current_lr = learning_rate_scheduler(optimizer, epoch, config.num_epochs)
         
-        # 設置當前epoch信息供損失函數使用
+        # Set current epoch information for loss function use
         if hasattr(loss_fn, 'current_epoch'):
             loss_fn.current_epoch = epoch
         if hasattr(loss_fn, 'total_epochs'):
             loss_fn.total_epochs = config.num_epochs
             
-        # 前向傳播 - 使用故障類型感知
+        # Forward propagation - use fault type awareness
         node_embedding, pred_adj = model(node_features, edge_index, fault_type)
             
-        # 損失計算 - 處理KNN Baseline情況
+        # Loss computation - handle KNN Baseline case
         if pred_adj is None:
-            # 使用KNN Baseline，跳過重建損失計算
+            # Use KNN Baseline, skip reconstruction loss computation
             recon_loss = torch.tensor(0.0, device=node_embedding.device, requires_grad=True)
             pred_adj_sigmoid = torch.eye(node_embedding.size(0), device=node_embedding.device)
         else:
-            # 使用Graph Decoder的情況
-            # 若pred_adj已在[0,1]，視為概率直接用 BCE；否則視為logits用 BCEWithLogits
+            # Graph Decoder case
+            # If pred_adj is already in [0,1], treat as probability and use BCE directly; otherwise treat as logits and use BCEWithLogits
             try:
                 pred_min = float(pred_adj.detach().min())
                 pred_max = float(pred_adj.detach().max())
@@ -613,105 +604,105 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
                 recon_loss = F.binary_cross_entropy_with_logits(pred_adj, true_adj, reduction='mean')
                 pred_adj_sigmoid = torch.sigmoid(pred_adj)
         
-        # 🎯 強化極化損失 - 使用更激進的策略
-        # 方法1: 獎勵接近0和1的值，懲罰中間值
+        # Strengthen polarization loss - use more aggressive strategy
+        # Method 1: Reward values close to 0 and 1, penalize middle values
         distance_from_center = torch.abs(pred_adj_sigmoid - 0.5)
-        polarization_loss = -torch.mean(distance_from_center ** 2) * 6  # 降低力度避免極端化
+        polarization_loss = -torch.mean(distance_from_center ** 2) * 6  # Reduce intensity to avoid extremization
         
-        # 🎯 方法2: 添加 top-k 對比損失 - 強化最重要的邊
-        if pred_adj_sigmoid.numel() > 4:  # 確保有足夠的元素
+        # Method 2: Add top-k contrast loss - strengthen most important edges
+        if pred_adj_sigmoid.numel() > 4:  # Ensure enough elements
             flat_probs = pred_adj_sigmoid.flatten()
-            k = max(2, len(flat_probs) // 4)  # 選擇前25%
+            k = max(2, len(flat_probs) // 4)  # Select top 25%
             top_k_vals, _ = torch.topk(flat_probs, k)
             bottom_k_vals, _ = torch.topk(flat_probs, k, largest=False)
             
-            # 鼓勵top-k接近1，bottom-k接近0
+            # Encourage top-k close to 1, bottom-k close to 0
             top_contrast = -torch.mean((1 - top_k_vals) ** 2)
             bottom_contrast = -torch.mean(bottom_k_vals ** 2)
             contrast_enhance = (top_contrast + bottom_contrast) * 0.5
             polarization_loss += contrast_enhance
         
-        # 🎯 新增: top-K/bottom-K 對比增強判別力 (來自改進方案)
-        if pred_adj_sigmoid.numel() > 8:  # 確保有足夠的元素進行對比
+        # New: top-K/bottom-K contrast to enhance discriminability (from improvement scheme)
+        if pred_adj_sigmoid.numel() > 8:  # Ensure enough elements for contrast
             flat_adj = pred_adj_sigmoid.flatten()
-            top_k = min(5, len(flat_adj) // 4)  # 選擇前25%或最多5個
+            top_k = min(5, len(flat_adj) // 4)  # Select top 25% or at most 5
             bottom_k = min(5, len(flat_adj) // 4)
             
             top_k_vals = torch.topk(flat_adj, top_k)[0]
             bottom_k_vals = torch.topk(flat_adj, bottom_k, largest=False)[0]
             
-            # 適度強化判別力：top-K接近1，bottom-K接近0
+            # Moderately strengthen discriminability: top-K close to 1, bottom-K close to 0
             top_contrast_loss = torch.mean((1 - top_k_vals) ** 2) * 5
             bottom_contrast_loss = torch.mean(bottom_k_vals ** 2) * 5
             
-            # 新增：適度分數差異損失
+            # New: moderate score difference loss
             if len(top_k_vals) > 0 and len(bottom_k_vals) > 0:
                 score_diff_loss = torch.mean((top_k_vals[0] - bottom_k_vals[0]) ** 2) * 6
                 polarization_loss += score_diff_loss
             
-            # 添加到極化損失中
+            # Add to polarization loss
             polarization_loss += top_contrast_loss + bottom_contrast_loss
         
-        # 🎯 改進2: 添加對比損失，鼓勵學習有意義的表示
+        # Improvement 2: Add contrastive loss, encourage learning meaningful representations
         contrast_loss = 0
         if node_embedding.size(0) > 1:
-            # 計算節點嵌入的相似性
+            # Compute node embedding similarity
             embedding_sim = torch.mm(F.normalize(node_embedding, dim=1), F.normalize(node_embedding, dim=1).t())
-            # 與真實鄰接矩陣對比
+            # Contrast with true adjacency matrix
             contrast_loss = F.mse_loss(embedding_sim, true_adj) * 0.1
         
-        # 2. KAN 正則化損失 (應保留)
+        # 2. KAN regularization loss (should be retained)
         kan_reg_loss = 0
         if hasattr(model, 'get_reg_loss'):
-            # 確保 kan_reg_loss 是一個純量
+            # Ensure kan_reg_loss is a scalar
             reg_loss = model.get_reg_loss()
             if isinstance(reg_loss, torch.Tensor):
                 kan_reg_loss = reg_loss
-            else: # 假設它是一個列表或元組
+            else: # Assume it's a list or tuple
                 kan_reg_loss = sum(reg_loss)
 
-        # 🎯 改進3: 更有效的稀疏性損失
+        # Improvement 3: More effective sparsity loss
         if sparsity_lambda > 0:
             adj_probs_for_loss = pred_adj_sigmoid
-            # 使用 L1 正則化而非簡單平均
+            # Use L1 regularization instead of simple mean
             sparsity_loss = torch.mean(torch.abs(adj_probs_for_loss))
         else:
             sparsity_loss = torch.tensor(0.0, device=device)
         
-        # 🎯 新增: 分數差異化的 margin-based 損失，強制 top 與 bottom 至少相差 margin
+        # New: Score differentiation margin-based loss, force top and bottom to differ by at least margin
         margin_loss = 0
         flat_probs_for_margin = pred_adj_sigmoid.flatten()
         if flat_probs_for_margin.numel() >= 2:
             max_val = torch.max(flat_probs_for_margin)
             min_val = torch.min(flat_probs_for_margin)
-            # 動態margin：小圖使用更高margin
+            # Dynamic margin: use higher margin for small graphs
             margin = 0.5 if flat_probs_for_margin.numel() < 50 else 0.3
-            # 使用 hinge-style：max(0, margin - (max - min))
-            # 從4.0提升到8.0以增強分數差異化
+            # Use hinge-style: max(0, margin - (max - min))
+            # Increased from 4.0 to 8.0 to enhance score differentiation
             margin_loss = torch.relu(margin - (max_val - min_val)) * 8.0
 
-        # 🎯 新增: 訓練期特徵去相關正則化
+        # New: Training period feature decorrelation regularization
         decor_loss = 0
         if node_embedding.size(0) > 1 and node_embedding.size(1) > 1:
-            # 計算嵌入的協方差矩陣
+            # Compute embedding covariance matrix
             embeddings_mean = node_embedding.mean(dim=0)
             centered = node_embedding - embeddings_mean
             cov = (centered.T @ centered) / (centered.shape[0] - 1)
-            # 懲罰非對角線元素（去相關）
+            # Penalize off-diagonal elements (decorrelation)
             off_diag_cov = cov - torch.diag(cov.diag())
-            decor_loss = torch.mean(off_diag_cov ** 2) * 0.1  # 小權重避免過度懲罰
+            decor_loss = torch.mean(off_diag_cov ** 2) * 0.1  # Small weight to avoid over-penalization
         
-        # 🎯 新增: 圖稀疏性損失 - 鼓勵平衡密度
+        # New: Graph sparsity loss - encourage balanced density
         graph_sparsity_loss = 0
         if pred_adj_sigmoid.numel() > 0:
-            # 計算圖密度
+            # Compute graph density
             graph_density = (pred_adj_sigmoid > 0.1).float().mean().item()
-            # 目標密度 0.3-0.5，懲罰過密或過疏
+            # Target density 0.3-0.5, penalize too dense or too sparse
             target_density = 0.4
             density_penalty = torch.abs(torch.tensor(graph_density - target_density)) * 2.0
             graph_sparsity_loss = density_penalty
         
-        # 🎯 改進4: 調整損失權重確保有效學習（以重建為主，對比/極化為輔），並支持配置覆寫
+        # Improvement 4: Adjust loss weights to ensure effective learning (reconstruction primary, contrast/polarization secondary), support config override
         w_recon = getattr(config, 'w_recon', 1.2)
         w_contrast = getattr(config, 'w_contrast', 0.3)
         w_polar = getattr(config, 'w_polar', 0.2)
@@ -731,24 +722,17 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
             + w_graph * graph_sparsity_loss
         )
         
-        # 🎯 改進5: 確保損失在合理範圍內（僅在非有限或明顯退化時調整）
+        # Improvement 5: Ensure loss is within reasonable range (only adjust when non-finite or clearly degraded)
         if not torch.isfinite(total_loss):
-            print(f"⚠️ 損失非有限 ({total_loss.item() if total_loss.numel()==1 else 'tensor'})，重設為重建導向")
             total_loss = recon_loss + kan_reg_loss
         elif total_loss.item() < 0 and recon_loss.item() < 0.01:
-            # 僅在總損失為負且重建項極小時視為退化，避免噪音式警告
-            print(f"⚠️ 損失退化 (total={total_loss.item():.4f}, recon={recon_loss.item():.4f})，切換為重建優先")
+            # Only consider degraded when total loss is negative and reconstruction term is very small, avoid noise-like warnings
             total_loss = recon_loss + contrast_loss + (sparsity_lambda * sparsity_loss)
         
-        # 🔥 關鍵修復：NaN值檢測和處理
+        # Critical fix: NaN value detection and handling
         if torch.isnan(total_loss) or torch.isinf(total_loss):
-            print(f"⚠️ 檢測到NaN/Inf損失，進行修復")
-            print(f"  recon_loss: {recon_loss.item() if not torch.isnan(recon_loss) else 'NaN'}")
-            print(f"  contrast_loss: {contrast_loss:.4f}")
-            print(f"  polarization_loss: {polarization_loss.item() if not torch.isnan(polarization_loss) else 'NaN'}")
-            print(f"  margin_loss: {margin_loss:.4f}")
             
-            # 使用安全的損失值
+            # Use safe loss values
             safe_recon = torch.tensor(0.0, device=recon_loss.device) if torch.isnan(recon_loss) else recon_loss
             safe_contrast = torch.tensor(0.0, device=node_features.device) if contrast_loss == 0 else torch.tensor(contrast_loss, device=node_features.device)
             safe_polar = torch.tensor(0.0, device=node_features.device) if torch.isnan(polarization_loss) else polarization_loss
@@ -756,18 +740,17 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
             
             total_loss = w_recon * safe_recon + w_contrast * safe_contrast + w_polar * safe_polar + w_margin * safe_margin
             
-            # 如果仍然有問題，使用最小損失
+            # If still problematic, use minimum loss
             if torch.isnan(total_loss) or torch.isinf(total_loss):
                 total_loss = torch.tensor(0.1, device=total_loss.device, requires_grad=True)
-                print(f"  ⚠️ 使用最小安全損失: {total_loss.item()}")
         
-        # 反向傳播
+        # Backward propagation
         total_loss.backward()
         
-        # 🔧 新增：全局梯度裁剪 - 基于您的建议
+        # New: Global gradient clipping
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         
-        # 🔧 新增：KAN系数正则化
+        # New: KAN coefficient regularization
         kan_reg = 0.0
         for m in model.modules():
             if hasattr(m, 'spline_coeffs'):
@@ -781,19 +764,19 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
         
         optimizer.step()
         
-        # 記錄和打印
+        # Record and print
         training_history['loss'].append(total_loss.item())
         
-        # 計算鄰接矩陣統計
+        # Compute adjacency matrix statistics
         with torch.no_grad():
             if pred_adj is not None:
-                # 使用前面已根據數值域決定的機率矩陣，避免再次sigmoid壓縮
+                # Use probability matrix already determined by value range, avoid sigmoid compression again
                 adj_probs = pred_adj_sigmoid
                 adj_min = adj_probs.min().item()
                 adj_max = adj_probs.max().item()
                 adj_mean = adj_probs.mean().item()
             else:
-                # KNN Baseline情況
+                # KNN Baseline case
                 adj_min = 0.0
                 adj_max = 1.0
                 adj_mean = 0.5
@@ -803,7 +786,7 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
                 sparsity_03 = (adj_probs < 0.3).float().mean().item()
                 sparsity_05 = (adj_probs < 0.5).float().mean().item()
             else:
-                # KNN Baseline情況
+                # KNN Baseline case
                 sparsity_01 = 0.5
                 sparsity_03 = 0.3
                 sparsity_05 = 0.1
@@ -815,11 +798,11 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
         training_history['sparsity_03'].append(sparsity_03)
         training_history['sparsity_05'].append(sparsity_05)
 
-        # 🔧 階段1：驗證和早停檢查 / Validation and early stopping check
-        if val_data is not None and (epoch + 1) % 5 == 0:  # 每5個epoch驗證一次
+        # Stage 1: Validation and early stopping check
+        if val_data is not None and (epoch + 1) % 5 == 0:  # Validate every 5 epochs
             model.eval()
             with torch.no_grad():
-                # 取出 val_edge_index 後，先過濾再送模型
+                # Extract val_edge_index, filter before sending to model
                 val_node_features = val_data['node_features'].to(device)
                 val_edge_index = val_data['edge_index'].to(device)
 
@@ -831,123 +814,112 @@ def train_gnn_kan_model(model, node_features, edge_index, config, sparsity_lambd
 
                 val_embeddings, val_pred_adj = model(val_node_features, val_used_edge_index)
                 
-                # 計算驗證精度
+                # Compute validation accuracy
                 if val_pred_adj is not None:
                     val_adj_sigmoid = torch.sigmoid(val_pred_adj)
                     val_density = (val_adj_sigmoid > 0.1).float().mean().item()
                 else:
-                    # KNN Baseline情況
+                    # KNN Baseline case
                     val_density = 0.3
                 
-                # 計算PageRank排序
+                # Compute PageRank ranking
                 from ..graph_heads.page_rank import page_rank
                 if val_pred_adj is not None:
                     val_ranks = page_rank(val_adj_sigmoid.cpu().numpy())
                 else:
-                    # KNN Baseline情況，使用單位矩陣
+                    # KNN Baseline case, use identity matrix
                     val_ranks = page_rank(torch.eye(val_embeddings.size(0)).numpy())
                 
-                # 計算precision@1
+                # Compute precision@1
                 if val_ground_truth and val_ranks:
                     val_precision = 1.0 if val_ground_truth in val_ranks[:1] else 0.0
                 else:
                     val_precision = 0.0
                 
-                # 更新最佳驗證指標
+                # Update best validation metric
                 if val_precision > best_val_metric:
                     best_val_metric = val_precision
                     patience_counter = 0
-                    # 保存最佳模型
+                    # Save best model
                     best_model_state = model.state_dict().copy()
                 else:
                     patience_counter += 1
                 
-                print(f"  Val: Precision@1={val_precision:.3f}, Density={val_density:.3f}, Best={best_val_metric:.3f}, Patience={patience_counter}/{config.patience}")
             
             model.train()
         
-        # 添加最小訓練輪數檢查
+        # Add minimum training epochs check
         if epoch + 1 < config.min_epochs:
             continue
 
-        # 🎯 改進：智能早停與銳化協調機制
+        # Improvement: Intelligent early stopping and sharpening coordination mechanism
         early_stop_triggered = early_stopping(total_loss.item()) or patience_counter >= config.patience
         
         if early_stop_triggered:
-            # 分析早停原因並決定銳化策略
+            # Analyze early stopping reason and decide sharpening strategy
             convergence_state = _analyze_convergence_state(
                 training_history, epoch, patience_counter, config.patience
             )
             
             if patience_counter >= config.patience:
-                print(f"🛑 Early stopping at epoch {epoch+1} (validation patience exceeded)")
-                # 恢復最佳模型
+                # Restore best model
                 if 'best_model_state' in locals():
                     model.load_state_dict(best_model_state)
                 
-                # 根據收斂狀態決定是否銳化
+                # Decide whether to sharpen based on convergence state
                 if convergence_state['needs_sharpening']:
-                    print(f"🔧 檢測到收斂但差距不足，應用智能銳化 (gap={convergence_state['score_gap']:.4f})")
                     _apply_adaptive_sharpening(model, convergence_state)
             else:
-                print(f"🛑 Early stopping at epoch {epoch+1} (loss plateau)")
-                # 損失平台早停通常不需要銳化，因為模型可能過擬合
+                # Loss plateau early stopping usually doesn't need sharpening, as model may be overfitting
                 if convergence_state['needs_sharpening'] and convergence_state['is_healthy_convergence']:
-                    print(f"🔧 檢測到健康收斂但差距不足，應用輕度銳化")
                     _apply_adaptive_sharpening(model, convergence_state, intensity='light')
             break
         
         if (epoch + 1) % 10 == 0 or epoch == 0:
-            # 🎯 改進6: 更詳細的訓練信息 - 添加極化損失跟蹤和密度監控
+            # Improvement 6: More detailed training information - add polarization loss tracking and density monitoring
             adj_density = pred_adj_sigmoid.mean().item()
-            print(f"Epoch [{epoch+1}/{config.num_epochs}], Total: {total_loss.item():.6f}, Recon: {recon_loss.item():.4f}, "
-                  f"Polar: {polarization_loss.item():.4f}, Contrast: {contrast_loss:.4f}, KAN: {kan_reg_loss:.4f}, Sparsity: {sparsity_loss.item():.6f} | "
-                  f"Adj Probs(min/max/mean): {adj_min:.4f}/{adj_max:.4f}/{adj_mean:.4f} | "
-                  f"Graph Sparsity: {sparsity_03:.4f} (0.1:{sparsity_01:.3f}, 0.3:{sparsity_03:.3f}, 0.5:{sparsity_05:.3f}) | "
-                  f"Adj Density: {adj_density:.3f}")
 
-    print("✅ Training finished.")
     return model, training_history
 
 
 def _analyze_convergence_state(training_history, epoch, patience_counter, max_patience):
     """
-    分析收斂狀態，決定是否需要銳化
+    Analyze convergence state, decide if sharpening is needed
     
     Args:
-        training_history: 訓練歷史
-        epoch: 當前epoch
-        patience_counter: 耐心計數器
-        max_patience: 最大耐心值
+        training_history: Training history
+        epoch: Current epoch
+        patience_counter: Patience counter
+        max_patience: Maximum patience value
         
     Returns:
-        dict: 收斂狀態分析結果
+        dict: Convergence state analysis results
     """
-    # 分析損失趨勢
+    # Analyze loss trend
     recent_losses = training_history['loss'][-10:] if len(training_history['loss']) >= 10 else training_history['loss']
     loss_trend = np.polyfit(range(len(recent_losses)), recent_losses, 1)[0] if len(recent_losses) > 1 else 0
     
-    # 分析鄰接矩陣統計
+    # Analyze adjacency matrix statistics
     recent_adj_max = training_history['adj_max'][-5:] if len(training_history['adj_max']) >= 5 else training_history['adj_max']
     recent_adj_min = training_history['adj_min'][-5:] if len(training_history['adj_min']) >= 5 else training_history['adj_min']
     
-    # 計算值域差距
+    # Compute value range gap
     avg_max = np.mean(recent_adj_max) if recent_adj_max else 0.5
     avg_min = np.mean(recent_adj_min) if recent_adj_min else 0.0
     score_gap = avg_max - avg_min
     
-    # 判斷收斂類型
+    # Judge convergence type
     is_healthy_convergence = (
-        loss_trend < 0.001 and  # 損失基本穩定
-        patience_counter >= max_patience * 0.7 and  # 耐心值較高
-        score_gap > 0.1  # 有一定判別性
+        loss_trend < 0.001 and  # Loss is basically stable
+        patience_counter >= max_patience * 0.7 and  # Patience value is high
+        score_gap > 0.1  # Has some discriminability
     )
     
-    # 判斷是否需要銳化
+    # Judge if sharpening is needed
     needs_sharpening = (
-        score_gap < 0.15 and  # 差距不足
-        avg_max < 0.8 and  # 最大值不夠高
-        avg_min > 0.2  # 最小值不夠低
+        score_gap < 0.15 and  # Gap is insufficient
+        avg_max < 0.8 and  # Maximum value is not high enough
+        avg_min > 0.2  # Minimum value is not low enough
     )
     
     return {
@@ -963,14 +935,14 @@ def _analyze_convergence_state(training_history, epoch, patience_counter, max_pa
 
 def _apply_adaptive_sharpening(model, convergence_state, intensity='adaptive'):
     """
-    應用自適應銳化策略
+    Apply adaptive sharpening strategy
     
     Args:
-        model: 訓練好的模型
-        convergence_state: 收斂狀態分析結果
-        intensity: 銳化強度 ('light', 'adaptive', 'strong')
+        model: Trained model
+        convergence_state: Convergence state analysis results
+        intensity: Sharpening intensity ('light', 'adaptive', 'strong')
     """
-    # 根據收斂狀態和強度決定銳化參數
+    # Decide sharpening parameters based on convergence state and intensity
     score_gap = convergence_state['score_gap']
     
     if intensity == 'light':
@@ -980,7 +952,7 @@ def _apply_adaptive_sharpening(model, convergence_state, intensity='adaptive'):
         gamma = 3.0
         min_gap = 0.12
     else:  # adaptive
-        # 根據差距動態調整
+        # Dynamically adjust based on gap
         if score_gap < 0.05:
             gamma = 2.5
             min_gap = 0.10
@@ -991,37 +963,35 @@ def _apply_adaptive_sharpening(model, convergence_state, intensity='adaptive'):
             gamma = 1.8
             min_gap = 0.06
     
-    print(f"🔧 應用自適應銳化: gamma={gamma:.1f}, min_gap={min_gap:.3f}")
     
-    # 在模型上設置銳化參數（如果模型支持）
+    # Set sharpening parameters on model (if model supports it)
     if hasattr(model, 'set_sharpening_params'):
         model.set_sharpening_params(gamma=gamma, min_gap=min_gap)
     
-    # 如果模型有銳化方法，直接應用
+    # If model has sharpening method, apply directly
     if hasattr(model, 'apply_sharpening'):
         model.apply_sharpening(gamma=gamma, min_gap=min_gap)
 
 
 class AdvancedGNNKANTrainer:
-    """高級GNN-KAN訓練器 - 包含更多訓練策略"""
+    """Advanced GNN-KAN trainer - includes more training strategies"""
     
     def __init__(self, config):
         self.config = config
         
     def train_with_curriculum(self, model, node_features, edge_index):
         """
-        課程學習訓練策略
+        Curriculum learning training strategy
         
         Args:
-            model: GNN-KAN模型
-            node_features: 節點特徵
-            edge_index: 邊索引
+            model: GNN-KAN model
+            node_features: Node features
+            edge_index: Edge indices
             
         Returns:
-            model: 訓練後的模型
-            training_history: 訓練歷史
+            model: Trained model
+            training_history: Training history
         """
-        print("Starting curriculum learning training...")
         
         device = next(model.parameters()).device
         node_features = node_features.to(device)
@@ -1033,8 +1003,7 @@ class AdvancedGNNKANTrainer:
             'epochs': []
         }
         
-        # 階段1：簡單任務（少量節點）
-        print("Phase 1: Training on subset of nodes...")
+        # Phase 1: Simple task (few nodes)
         subset_size = min(10, node_features.size(0))
         subset_features = node_features[:subset_size]
         subset_edge_index = self._filter_edge_index(edge_index, subset_size)
@@ -1045,9 +1014,8 @@ class AdvancedGNNKANTrainer:
             phase_name="Phase 1"
         )
         
-        # 階段2：中等複雜度
+        # Phase 2: Medium complexity
         if node_features.size(0) > subset_size:
-            print("Phase 2: Training on larger subset...")
             medium_size = min(20, node_features.size(0))
             medium_features = node_features[:medium_size]
             medium_edge_index = self._filter_edge_index(edge_index, medium_size)
@@ -1058,8 +1026,7 @@ class AdvancedGNNKANTrainer:
                 phase_name="Phase 2"
             )
         
-        # 階段3：完整訓練
-        print("Phase 3: Full training...")
+        # Phase 3: Full training
         model = self._train_phase(
             model, node_features, edge_index,
             epochs=self.config.num_epochs // 3,
@@ -1069,12 +1036,12 @@ class AdvancedGNNKANTrainer:
         return model, training_history
     
     def _filter_edge_index(self, edge_index, max_nodes):
-        """過濾邊索引，只保留涉及前max_nodes個節點的邊"""
+        """Filter edge indices, only keep edges involving first max_nodes nodes"""
         mask = (edge_index[0] < max_nodes) & (edge_index[1] < max_nodes)
         return edge_index[:, mask]
     
     def _train_phase(self, model, features, edge_index, epochs, phase_name):
-        """訓練一個階段"""
+        """Train one phase"""
         optimizer = optim.AdamW(
             model.parameters(),
             lr=self.config.learning_rate,
@@ -1083,12 +1050,12 @@ class AdvancedGNNKANTrainer:
         
         criterion = GNNKANLoss(self.config)
         
-        # 創建目標鄰接矩陣 - 修復邊索引越界問題
+        # Create target adjacency matrix - fix edge index out-of-bounds issue
         num_nodes = features.size(0)
         device = features.device
         target_adj = torch.zeros(num_nodes, num_nodes, device=device)
 
-        used_edge_index = edge_index  # 預設
+        used_edge_index = edge_index  # Default
         if edge_index.size(1) > 0:
             valid_edges_mask = (edge_index[0] < num_nodes) & (edge_index[1] < num_nodes)
             valid_edge_index = edge_index[:, valid_edges_mask]
@@ -1098,9 +1065,8 @@ class AdvancedGNNKANTrainer:
                 ones = torch.ones_like(src, dtype=target_adj.dtype)
                 target_adj.index_put_((src, dst), ones, accumulate=True)
                 target_adj.index_put_((dst, src), ones, accumulate=True)
-                used_edge_index = valid_edge_index  # 關鍵：之後都用過濾後的邊
+                used_edge_index = valid_edge_index  # Key: use filtered edges afterwards
             else:
-                print(f"⚠️ {phase_name}: 所有邊索引都超出範圍，使用單位矩陣")
                 target_adj = torch.eye(num_nodes, device=device) * 0.1
                 used_edge_index = torch.empty((2, 0), dtype=torch.long, device=device)
 
@@ -1116,12 +1082,8 @@ class AdvancedGNNKANTrainer:
                     loss.backward()
                     torch.nn.utils.clip_grad_norm_(model.parameters(), self.config.gradient_clip_norm)
                     optimizer.step()
-                
-                if epoch % 10 == 0:
-                    print(f"{phase_name} Epoch {epoch}: Loss={loss.item():.6f}")
                     
             except Exception as e:
-                print(f"Error in {phase_name} at epoch {epoch}: {e}")
                 break
         
         return model
@@ -1143,12 +1105,12 @@ def create_adaptive_targets(node_features, edge_index, method='similarity'):
     device = node_features.device
     
     if method == 'similarity':
-        # 基於特徵相似性創建目標
+        # Create target based on feature similarity
         features_np = node_features.detach().cpu().numpy()
         from sklearn.metrics.pairwise import cosine_similarity
         
         similarity = cosine_similarity(features_np)
-        # 閾值化
+        # Thresholding
         threshold = np.percentile(similarity, 80)
         target_adj = torch.tensor(
             (similarity > threshold).astype(float),
@@ -1157,7 +1119,7 @@ def create_adaptive_targets(node_features, edge_index, method='similarity'):
         )
     
     elif method == 'knn':
-        # 基於k近鄰創建目標
+        # Create target based on k-nearest neighbors
         from sklearn.neighbors import kneighbors_graph
         features_np = node_features.detach().cpu().numpy()
         
@@ -1172,7 +1134,7 @@ def create_adaptive_targets(node_features, edge_index, method='similarity'):
         )
     
     else:
-        # 默認：基於邊索引
+        # Default: based on edge indices
         target_adj = torch.zeros(num_nodes, num_nodes, device=device)
         if edge_index.size(1) > 0:
             src = edge_index[0]
