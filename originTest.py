@@ -3,6 +3,7 @@ import glob
 import json
 import os
 import shutil
+import sys
 import warnings
 from datetime import datetime, timedelta
 from multiprocessing import Pool
@@ -30,7 +31,11 @@ from RCAEval.utility import (
     download_train_ticket_dataset,
     download_re1_dataset,
     download_re2_dataset,
-    download_re3_dataset, 
+    download_re3_dataset,
+    download_syn_circa_dataset,
+    download_syn_rcd_dataset,
+    download_syn_causil_dataset,
+    download_multi_source_sample,
 )
 
 
@@ -60,6 +65,7 @@ if is_py310():
         ntlr_randomwalk,
         pc_pagerank,
         pc_randomwalk,
+        rcd,
         run,
         tracerca,
     )
@@ -70,17 +76,126 @@ if is_py310():
     except ImportError as e:
         print(f"⚠️ GNN+KAN import failed: {e}")
         gnn_kan_rca = None
+    
+    # Add pure GNN method
+    try:
+        from RCAEval.e2e.gnn import gnn_rca
+        print("✅ Pure GNN method imported successfully")
+    except ImportError as e:
+        print(f"⚠️ Pure GNN import failed: {e}")
+        gnn_rca = None
+    
+    # Add GAT method (fair baseline for GNN-KAN)
+    try:
+        from RCAEval.e2e.gat import gat_rca
+        print("✅ GAT method imported successfully")
+    except ImportError as e:
+        print(f"⚠️ GAT import failed: {e}")
+        gat_rca = None
+    
+    # Add GATv2 method (improved GAT)
+    try:
+        from RCAEval.e2e.gatv2 import gatv2_rca
+        print("✅ GATv2 method imported successfully")
+    except ImportError as e:
+        print(f"⚠️ GATv2 import failed: {e}")
+        gatv2_rca = None
+    
+    # Add Graph Transformer method (modern GNN)
+    try:
+        from RCAEval.e2e.graph_transformer import graph_transformer_rca
+        print("✅ Graph Transformer method imported successfully")
+    except ImportError as e:
+        print(f"⚠️ Graph Transformer import failed: {e}")
+        graph_transformer_rca = None
 
 elif is_py38():
     from RCAEval.e2e import dummy, e_diagnosis, ht, rcd, mmrcd
     gnn_kan_rca = None  # GNN+KAN requires Python 3.10+
+    gnn_rca = None  # Pure GNN also requires Python 3.9+
+    gat_rca = None  # GAT also requires Python 3.9+
+    gatv2_rca = None  # GATv2 also requires Python 3.9+
+    graph_transformer_rca = None  # Graph Transformer also requires Python 3.9+
+elif sys.version_info[:2] == (3, 9) or is_py310():
+    # Support Python 3.9 and 3.10+ by using the same imports
+    # Python 3.9 can use the same methods as Python 3.10
+    from RCAEval.e2e import (
+        baro,
+        causalrca,
+        circa,
+        cloudranger,
+        cmlp_pagerank,
+        dummy,
+        e_diagnosis,
+        easyrca,
+        fci_pagerank,
+        fci_randomwalk,
+        ges_pagerank,
+        granger_pagerank,
+        granger_randomwalk,
+        lingam_pagerank,
+        lingam_randomwalk,
+        micro_diag,
+        microcause,
+        microrank,
+        mscred,
+        nsigma,
+        ntlr_pagerank,
+        ntlr_randomwalk,
+        pc_pagerank,
+        pc_randomwalk,
+        rcd,
+        run,
+        tracerca,
+    )
+    # Add GNN+KAN method
+    try:
+        from RCAEval.e2e.gnnkan import gnn_kan_rca
+        print("✅ GNN+KAN method imported successfully")
+    except ImportError as e:
+        print(f"⚠️ GNN+KAN import failed: {e}")
+        gnn_kan_rca = None
+    
+    # Add pure GNN method
+    try:
+        from RCAEval.e2e.gnn import gnn_rca
+        print("✅ Pure GNN method imported successfully")
+    except ImportError as e:
+        print(f"⚠️ Pure GNN import failed: {e}")
+        gnn_rca = None
+    
+    # Add GAT method (fair baseline for GNN-KAN)
+    try:
+        from RCAEval.e2e.gat import gat_rca
+        print("✅ GAT method imported successfully")
+    except ImportError as e:
+        print(f"⚠️ GAT import failed: {e}")
+        gat_rca = None
+    
+    # Add GATv2 method (improved GAT)
+    try:
+        from RCAEval.e2e.gatv2 import gatv2_rca
+        print("✅ GATv2 method imported successfully")
+    except ImportError as e:
+        print(f"⚠️ GATv2 import failed: {e}")
+        gatv2_rca = None
+    
+    # Add Graph Transformer method (modern GNN)
+    try:
+        from RCAEval.e2e.graph_transformer import graph_transformer_rca
+        print("✅ Graph Transformer method imported successfully")
+    except ImportError as e:
+        print(f"⚠️ Graph Transformer import failed: {e}")
+        graph_transformer_rca = None
 else:
-    print("Please use Python 3.8 or 3.10+")
+    print("Please use Python 3.8, 3.9, or 3.10+")
     exit(1)
 
 try:
     import torch
-    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+    # 不再全局禁用 GPU，讓各個方法自己決定是否使用 GPU
+    # 對於需要禁用 GPU 的方法（如 causalrca），可以在方法內部設置
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # 已移除：允許使用 GPU
     from RCAEval.e2e.causalrca import causalrca
 except ImportError:
     pass
@@ -91,7 +206,8 @@ def parse_args():
     parser.add_argument("--method", type=str, help="Choose a method.")
     parser.add_argument("--dataset", type=str, help="Choose a dataset.", choices=[
         "online-boutique", "sock-shop-1", "sock-shop-2", "train-ticket",
-        "re1-ob", "re1-ss", "re1-tt", "re2-ob", "re2-ss", "re2-tt", "re3-ob", "re3-ss", "re3-tt"
+        "re1-ob", "re1-ss", "re1-tt", "re2-ob", "re2-ss", "re2-tt", "re3-ob", "re3-ss", "re3-tt",
+        "syn_circa", "syn_rcd", "syn_causil", "multi-source"
     ])
     parser.add_argument("--length", type=int, default=20, help="Time series length (RQ4)")
     parser.add_argument("--tdelta", type=int, default=0, help="Specify $t_delta$ to simulate delay in anomaly detection")
@@ -111,18 +227,26 @@ def parse_args():
     )
     args = parser.parse_args()
 
-    # Check if method is available (including GNN+KAN)
+    # Check if method is available (including GNN+KAN and pure GNN)
     available_methods = []
-    if is_py310():
+    if is_py310() or sys.version_info[:2] == (3, 9):
         available_methods = [
             "baro", "causalrca", "circa", "cloudranger", "cmlp_pagerank", "dummy",
             "e_diagnosis", "easyrca", "fci_pagerank", "fci_randomwalk", "ges_pagerank",
             "granger_pagerank", "granger_randomwalk", "lingam_pagerank", "lingam_randomwalk",
             "micro_diag", "microcause", "microrank", "mscred", "nsigma", "ntlr_pagerank",
-            "ntlr_randomwalk", "pc_pagerank", "pc_randomwalk", "run", "tracerca"
+            "ntlr_randomwalk", "pc_pagerank", "pc_randomwalk", "rcd", "run", "tracerca"
         ]
         if gnn_kan_rca is not None:
             available_methods.append("gnn_kan_rca")
+        if gnn_rca is not None:
+            available_methods.append("gnn_rca")
+        if gat_rca is not None:
+            available_methods.append("gat_rca")
+        if gatv2_rca is not None:
+            available_methods.append("gatv2_rca")
+        if graph_transformer_rca is not None:
+            available_methods.append("graph_transformer_rca")
     elif is_py38():
         available_methods = ["dummy", "e_diagnosis", "ht", "rcd", "mmrcd"]
     
@@ -148,7 +272,11 @@ DATASET_MAP = {
     "re2-tt": "data/RE2/RE2-TT",
     "re3-ob": "data/RE3/RE3-OB",
     "re3-ss": "data/RE3/RE3-SS",
-    "re3-tt": "data/RE3/RE3-TT"
+    "re3-tt": "data/RE3/RE3-TT",
+    "syn_circa": "data/syn_circa",
+    "syn_rcd": "data/syn_rcd",
+    "syn_causil": "data/syn_causil",
+    "multi-source": "data/multi-source-data"
 }
 desired_dataset_path = DATASET_MAP.get(args.dataset)
 if desired_dataset_path is None:
@@ -167,6 +295,14 @@ if not os.path.exists(desired_dataset_path):
         download_re2_dataset()
     elif "re3" in args.dataset:
         download_re3_dataset()
+    elif "syn_circa" in args.dataset:
+        download_syn_circa_dataset()
+    elif "syn_rcd" in args.dataset:
+        download_syn_rcd_dataset()
+    elif "syn_causil" in args.dataset:
+        download_syn_causil_dataset()
+    elif "multi-source" in args.dataset:
+        download_multi_source_sample()
     else:
         raise Exception(f"{args.dataset} is not defined!")
 
@@ -211,7 +347,16 @@ def process(data_path):
 
     data_dir = dirname(data_path)
 
-    service, metric = basename(dirname(dirname(data_path))).split("_")
+    # 處理可能包含多個下劃線的目錄名稱
+    parent_dir_name = basename(dirname(dirname(data_path)))
+    parts = parent_dir_name.split("_")
+    if len(parts) >= 2:
+        service = parts[0]
+        metric = "_".join(parts[1:])  # 將剩餘部分重新組合為 metric
+    else:
+        # 如果沒有下劃線，嘗試其他分隔符或使用整個名稱
+        service = parent_dir_name
+        metric = "unknown"
     case = basename(dirname(data_path))
 
     rp = join(result_path, f"{service}_{metric}_{case}.json")
@@ -234,8 +379,45 @@ def process(data_path):
     data = data.fillna(method="ffill")
     data = data.fillna(0)
 
-    with open(join(data_dir, "inject_time.txt")) as f:
-        inject_time = int(f.readlines()[0].strip()) + args.tdelta
+    # 獲取注入時間 - 支持多種數據集格式
+    inject_time = None
+    inject_time_file = join(data_dir, "inject_time.txt")
+    
+    # 1. 嘗試讀取 inject_time.txt（標準數據集格式）
+    if os.path.exists(inject_time_file):
+        try:
+            with open(inject_time_file) as f:
+                inject_time = int(f.readlines()[0].strip()) + args.tdelta
+        except Exception as e:
+            print(f"⚠️ 讀取 inject_time.txt 失敗: {e}")
+    
+    # 2. 如果沒有 inject_time.txt，嘗試從 info.json 讀取（合成數據集格式）
+    if inject_time is None:
+        info_file = join(data_dir, "info.json")
+        if os.path.exists(info_file):
+            try:
+                import json
+                with open(info_file) as f:
+                    info = json.load(f)
+                if "length_normal" in info:
+                    inject_time = info["length_normal"]
+                    print(f"📅 從 info.json 讀取注入時間: {inject_time}")
+            except Exception as e:
+                print(f"⚠️ 讀取 info.json 失敗: {e}")
+    
+    # 3. 如果都沒有，使用數據本身推斷
+    if inject_time is None:
+        if "time" in data.columns:
+            inject_time = int(data["time"].median())
+            print(f"📅 使用時間列中位數作為注入時間: {inject_time}")
+        else:
+            inject_time = len(data) // 2
+            print(f"📅 使用數據中點作為注入時間: {inject_time}")
+    
+    # 確保數據有 time 列（合成數據集可能沒有）
+    if "time" not in data.columns:
+        data["time"] = data.index
+    
     # for metrics, minutes -> seconds // 2
     normal_df = data[data["time"] < inject_time].tail(args.length * 60 // 2)
     anomal_df = data[data["time"] >= inject_time].head(args.length * 60 // 2)
@@ -274,8 +456,29 @@ def process(data_path):
             sli = f"{service}_latency"
         elif "frontend_1" in data:
             sli = "frontend_1"
+    elif "syn_circa" in data_path or "syn_rcd" in data_path or "syn_causil" in data_path:
+        # 合成數據集：嘗試從數據中識別 SLI，如果沒有則設為 None
+        # 合成數據集通常沒有明確的 SLI，許多方法可以處理 sli=None
+        sli_candidates = [col for col in data.columns if any(keyword in str(col).lower() 
+                          for keyword in ['latency', 'error', 'lat', 'delay', 'response'])]
+        if sli_candidates:
+            sli = sli_candidates[0]
+            print(f"📊 合成數據集：使用 {sli} 作為 SLI")
+        else:
+            sli = None
+            print(f"📊 合成數據集：未找到明確的 SLI，將使用 None（某些方法可能不需要 SLI）")
+    elif "multi-source" in data_path:
+        # 多源數據集：嘗試識別 SLI
+        sli_candidates = [col for col in data.columns if any(keyword in str(col).lower() 
+                          for keyword in ['latency', 'error', 'lat', 'delay', 'response'])]
+        if sli_candidates:
+            sli = sli_candidates[0]
+            print(f"📊 多源數據集：使用 {sli} 作為 SLI")
+        else:
+            sli = None
+            print(f"📊 多源數據集：未找到明確的 SLI，將使用 None")
     else:
-        raise ValueError("SLI not implemented")
+        raise ValueError(f"SLI not implemented for dataset: {args.dataset}")
 
     # == PROCESS ==
     func = globals()[args.method]
@@ -316,6 +519,102 @@ def process(data_path):
                 basis_function=args.basis_function,  # 基函數選擇
                 sli=sli,
                 verbose=True
+            )
+        # Handle pure GNN method with specific parameters
+        elif args.method == "gnn_rca":
+            out = func(
+                data,
+                inject_time,
+                dataset=args.dataset,
+                config_type="simplified",
+                feature_method=(args.feature_method if args.feature_method is not None else "enhanced_ica"),
+                use_optimized_input=True,
+                learning_rate=1e-3,
+                num_epochs=100,
+                hidden_dim=64,
+                target_feature_dim=64,
+                similarity_threshold=0.3,
+                max_edges_per_node=5,
+                sli=sli,
+                verbose=False
+            )
+        # Handle GAT method with specific parameters (fair baseline for GNN-KAN)
+        elif args.method == "gat_rca":
+            out = func(
+                data,
+                inject_time,
+                dataset=args.dataset,
+                config_type="simplified",
+                feature_method=(args.feature_method if args.feature_method is not None else "enhanced_ica"),
+                use_optimized_input=True,
+                # 與 GNN-KAN 完全相同的參數，確保公平比較
+                learning_rate=2e-4,
+                num_epochs=400,
+                num_gnn_layers=4,
+                hidden_dims=[128, 96, 64],
+                output_dim=96,
+                input_dim=128,
+                target_feature_dim=128,
+                similarity_threshold=0.2,
+                max_edges_per_node=15,
+                dropout=0.1,
+                weight_decay=5e-6,
+                gradient_clip_norm=0.5,
+                patience=60,
+                sli=sli,
+                verbose=False
+            )
+        # Handle GATv2 method with specific parameters (improved GAT baseline)
+        elif args.method == "gatv2_rca":
+            out = func(
+                data,
+                inject_time,
+                dataset=args.dataset,
+                config_type="simplified",
+                feature_method=(args.feature_method if args.feature_method is not None else "enhanced_ica"),
+                use_optimized_input=True,
+                # 與 GNN-KAN 完全相同的參數，確保公平比較
+                learning_rate=2e-4,
+                num_epochs=400,
+                num_gnn_layers=4,
+                hidden_dims=[128, 96, 64],
+                output_dim=96,
+                input_dim=128,
+                target_feature_dim=128,
+                similarity_threshold=0.2,
+                max_edges_per_node=15,
+                dropout=0.1,
+                weight_decay=5e-6,
+                gradient_clip_norm=0.5,
+                patience=60,
+                sli=sli,
+                verbose=False
+            )
+        # Handle Graph Transformer method with specific parameters (modern GNN baseline)
+        elif args.method == "graph_transformer_rca":
+            out = func(
+                data,
+                inject_time,
+                dataset=args.dataset,
+                config_type="simplified",
+                feature_method=(args.feature_method if args.feature_method is not None else "enhanced_ica"),
+                use_optimized_input=True,
+                # 與 GNN-KAN 完全相同的參數，確保公平比較
+                learning_rate=2e-4,
+                num_epochs=400,
+                num_gnn_layers=4,
+                hidden_dims=[128, 96, 64],
+                output_dim=96,
+                input_dim=128,
+                target_feature_dim=128,
+                similarity_threshold=0.2,
+                max_edges_per_node=15,
+                dropout=0.1,
+                weight_decay=5e-6,
+                gradient_clip_norm=0.5,
+                patience=60,
+                sli=sli,
+                verbose=False
             )
         else:
             # Standard method execution
@@ -363,7 +662,16 @@ if args.test:
     # 所以我們需要讀取所有文件，但只評估當前運行的數據路徑
     rps = []
     for data_path in data_paths:
-        service, metric = basename(dirname(dirname(data_path))).split("_")
+        # 處理可能包含多個下劃線的目錄名稱
+        parent_dir_name = basename(dirname(dirname(data_path)))
+        parts = parent_dir_name.split("_")
+        if len(parts) >= 2:
+            service = parts[0]
+            metric = "_".join(parts[1:])  # 將剩餘部分重新組合為 metric
+        else:
+            # 如果沒有下劃線，嘗試其他分隔符或使用整個名稱
+            service = parent_dir_name
+            metric = "unknown"
         case = basename(dirname(data_path))
         rp = join(result_path, f"{service}_{metric}_{case}.json")
         if exists(rp):
@@ -374,6 +682,29 @@ else:
 
 services = sorted(list(set([basename(x).split("_")[0] for x in rps])))
 faults = sorted(list(set([basename(x).split("_")[1] for x in rps])))
+
+# 故障類型映射：將 f1-f5 映射到標準故障類型
+# 根據常見的故障類型順序：cpu, mem, disk, socket, delay, loss
+fault_type_mapping = {
+    'f1': 'cpu',
+    'f2': 'mem', 
+    'f3': 'disk',
+    'f4': 'socket',
+    'f5': 'delay',
+    'f6': 'loss',
+    # 標準故障類型保持不變
+    'cpu': 'cpu',
+    'mem': 'mem',
+    'disk': 'disk',
+    'socket': 'socket',
+    'delay': 'delay',
+    'loss': 'loss',
+}
+
+# 將故障類型映射到標準格式
+faults_mapped = [fault_type_mapping.get(f, f) for f in faults]
+# 去重並保持順序
+faults = sorted(list(set(faults_mapped)))
 
 eval_data = {
     "service-fault": [],
@@ -409,7 +740,9 @@ for service in services:
 
         for rp in rps:
             s, m = basename(rp).split("_")[:2]
-            if s != service or m != fault:
+            # 映射故障類型
+            m_mapped = fault_type_mapping.get(m, m)
+            if s != service or m_mapped != fault:
                 continue  # ignore
 
             data = load_json(rp)
