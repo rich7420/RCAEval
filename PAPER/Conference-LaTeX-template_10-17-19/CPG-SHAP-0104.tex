@@ -1,0 +1,559 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage[ruled,linesnumbered]{algorithm2e}
+\usepackage{url}
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\begin{document}
+
+\title{CPG-SHAP: Fine-Grained Root Cause Analysis for Microservices via Hybrid Causal Propagation Graph and SHAP Attribution}
+
+% \author{\IEEEauthorblockN{Yu-Chen Lai \quad Guan-Hao Huang \quad Kuan-Chou Lai}
+% \IEEEauthorblockA{\textit{Department of Computer Science and Information Engineering} \\
+% \textit{National Taichung University of Education}\\
+% Taichung, Taiwan \\
+% \{bcs113115, bcs113116\}@gm.ntcu.edu.tw, kclai@mail.ntcu.edu.tw}
+% }
+
+\maketitle
+
+\begin{abstract}
+Microservice architectures exhibit dynamic service dependencies, causing anomalies to propagate along invocation chains and resulting in root cause masking \cite{dynacausal}. Existing methods struggle to simultaneously handle multimodal data, fault propagation, and fine-grained responsibility attribution.
+
+This work introduces CPG-SHAP, a framework that constructs a weighted Causal Propagation Graph (CPG) by combining deterministic topological constraints from distributed traces with probabilistic causal discovery from monitoring metrics. CPG-SHAP employs SHAP values to compute the average marginal contribution of each service to terminal anomalies, distinguishing root causes from victim nodes through axiomatic attribution to address false positives caused by fault propagation.
+
+On the RCAEval benchmark platform, CPG-SHAP is evaluated on three real microservice systems (Online Boutique, Sock Shop, Train Ticket) and two data scenarios (metrics-only RE1, multimodal RE2). Compared to the statistical deviation paradigm represented by BARO, CPG-SHAP improves Avg@5 accuracy by 85\% in the large-scale Train Ticket system. In multimodal scenarios with traces, CPG-SHAP achieves a Top-1 accuracy of 0.9647 on Online Boutique, outperforming baseline methods that rely solely on metric anomaly ranking.
+\end{abstract}
+
+\begin{IEEEkeywords}
+root cause analysis, microservice systems, causal inference, SHAP values, causal propagation graph
+\end{IEEEkeywords}
+
+\section{Introduction}
+
+\subsection{Research Background}
+
+Microservice architectures are inherently dynamic due to frequent deployment and scaling. Consequently, service topology and load patterns change continuously. When a single service or infrastructure component fails, anomalies propagate along service invocations in a cascading effect, causing multiple downstream services to simultaneously exhibit increased latency or elevated error rates—a phenomenon known as fault propagation. During this process, the real root cause service may exhibit only minor resource anomalies, while victim services closer to users observe the most severe metric deviations, forming root cause masking \cite{dynacausal}. Therefore, rapidly and interpretably identifying the real root cause under conditions of concurrent fault propagation and root cause masking become a critical requirement for ensuring stable operation of microservice systems.
+
+\subsection{Challenges in Root Cause Localization}
+
+Existing microservice root cause analysis methods face two core challenges.
+
+\textbf{Challenge 1: Semantic Gap between Topology and Metrics.} A critical semantic gap exists between topology and metrics. Distributed traces provide deterministic structural constraints but lack dynamic performance context. Conversely, monitoring metrics capture detailed resource states but fail to reveal causal dependencies. Most existing methods either perform correlation analysis only in metric space while ignoring topological constraints, or execute graph algorithms on invocation graphs without properly addressing temporal anomaly statistics. This gap makes it difficult to model where anomalies originate and which paths they propagate along to reach the focal service, leading to challenges in eliminating fault propagation and root cause masking.
+
+\textbf{Challenge 2: Lack of Interpretability and Marginal Contribution in Causal Attribution.} In many graph-based or causality-based methods, node ranking relies on importance metrics such as PageRank, random walks, or graph centralities. These methods indicate which nodes are critical in the overall graph structure but cannot explain why a specific node drives the failure outcome given observed symptoms. They capture structural correlations rather than causal contributions to specific symptoms. When faults propagate through multiple paths, multiple nodes jointly contribute to the final anomaly. However, existing methods lack an attribution mechanism with cooperative game semantics, making it difficult to rigorously allocate responsibility. This results in insufficient interpretability and robustness, especially in multi-root-cause and long-chain propagation scenarios.
+
+\subsection{Contributions}
+
+The contributions of this work can be summarized from three perspectives: methodology, theoretical depth, and empirical evaluation.
+
+\textbf{Contribution 1 (Methodology): Hybrid Modeling of Deterministic Topological Constraints and Probabilistic Causal Discovery.} This work proposes a hybrid modeling approach that integrates deterministic topological constraints into probabilistic causal discovery. Specifically, static service invocation graphs constructed from distributed traces constrain the edge set that may have causal relationships. Leveraging this structural prior, the Peter-Clark (PC) algorithm estimates edge directions and strengths from multidimensional temporal metrics, ultimately forming a Causal Propagation Graph with probabilistic edge weights. This design not only reduces the search space and improves structure learning stability and efficiency, but also effectively bridges the semantic gap between traces and metrics.
+
+\textbf{Contribution 2 (Theoretical Depth): Introducing Cooperative Game Theory into Microservice Fault Propagation Models.} This paper systematically introduces the cooperative game theory into fault propagation models in the context of microservice root cause analysis. This work models anomaly propagation on the CPG as a cooperative game \cite{lundberg2017,heskes2020,janzing2020}, treating service nodes as players. Within this framework, this work employs Shapley values \cite{shapley} to establish an axiomatic mechanism for allocating responsibility for global anomalies, effectively handling complex multipath propagation. The CPG provides propagation paths with edge weights, but these weights alone cannot represent responsibility attribution when faults propagate through multiple paths as a cooperative effect. Shapley values address this limitation by quantifying the average marginal contribution of each node to the final focal symptom, satisfying axioms such as efficiency, symmetry, and null player, providing nodes with causal semantics and verifiable explanations.
+
+\textbf{Contribution 3 (Empirical): Robust Root Cause Localization for Distant Symptom Nodes in Multimodal Scenarios.} On multimodal datasets provided by the RCAEval platform (covering Online Boutique, Sock Shop, and Train Ticket systems, as well as metrics-only and metrics-plus-traces scenarios), this study empirically demonstrates that CPG-SHAP has robust identification capability for nodes that are topologically distant from the root cause but exhibit more severe symptoms. Experiments show that compared to BARO representing the statistical deviation paradigm, CPG-SHAP significantly reduces false positives and root cause masking caused by fault propagation in large-scale and long-chain propagation scenarios. CPG-SHAP particularly shows higher Top-k accuracy and consistency across fault types in Train Ticket and network latency/packet loss scenarios, demonstrating the practical value of the proposed hybrid modeling and cooperative game attribution.
+
+\section{Related Work}
+
+Research in microservice root cause analysis can be categorized into three main classes based on core techniques and data modality utilization strategies: trace-based methods, statistical/causal discovery-based methods, and graph centrality-based methods. This section analyzes the design principles, advantages, and fundamental limitations of each category.
+
+\subsection{Trace-based Methods}
+
+These methods use distributed tracing data as the core, leveraging the topological structure of service invocation chains for root cause localization. Representative methods include TraceRCA \cite{tracerca} and MicroRCA \cite{microrca}. Trace data provides deterministic priors for service invocation relationships and can effectively capture fault propagation paths along invocation chains. However, these methods lack awareness of resource metrics and cannot localize specific resource-level anomalies, showing clear insufficiency in scenarios requiring metric-level localization.
+
+\subsection{Statistical and Causal Discovery-based Methods}
+
+These methods attempt to directly learn causal structure from multidimensional temporal monitoring metrics to achieve fine-grained root cause localization. Representative methods include CausalRCA \cite{causalrca} and BARO \cite{baro2023}. These methods can achieve metric-level fine-grained diagnosis, but causal discovery becomes unreliable in high dimensions, easily producing spurious causal links. Additionally, these methods rely entirely on statistical correlation to infer causality, ignoring deterministic service topology information provided by distributed traces. Consequently, they cannot effectively distinguish real root cause nodes from symptom nodes affected by propagation effects.
+
+\subsection{Graph Centrality-based Methods}
+
+These methods use graph centrality algorithms such as PageRank and random walks to rank nodes. Representative methods include CIRCA \cite{circa} and MicroRCA \cite{microrca}. These methods offer simple implementation and computational efficiency, but their core logic measures node importance in the overall graph structure rather than causal contribution to specific anomaly outcomes. When faults propagate through multiple paths, the lack of rigorous attribution mechanisms results in insufficient interpretability and robustness when facing multi-root-cause and long-chain propagation scenarios.
+
+\subsection{Systematic Comparison and Positioning}
+
+Table~\ref{tab:method_compare} compares existing methods and the proposed CPG-SHAP framework across dimensions including data modality utilization, causal inference mechanisms, attribution methods, and diagnostic granularity.
+
+\begin{table*}[htbp]
+    \centering
+    \caption{Comparison of Microservice Root Cause Analysis Methods}
+    \label{tab:method_compare}
+    \footnotesize
+    \begin{tabular}{lccccc}
+        \toprule
+        \textbf{Feature} & \textbf{TraceRCA~\cite{tracerca}} & \textbf{MicroRCA~\cite{microrca}} & \textbf{BARO~\cite{baro2023}} & \textbf{CausalRCA~\cite{causalrca}} & \textbf{CPG-SHAP} \\
+        \midrule
+        Uses Trace Data & $\checkmark$ & $\checkmark$ & -- & -- & $\checkmark$ \\
+        Uses Metric Data & -- & -- & $\checkmark$ & $\checkmark$ & $\checkmark$ \\
+        Causal Inference & -- & -- & -- & $\checkmark$ & $\checkmark$ \\
+        Attribution Mechanism & Graph Centrality & Graph Centrality & Statistical Deviation & Graph Centrality & SHAP Values \\
+        Fine-grained Diagnosis & -- & -- & $\checkmark$ & $\checkmark$ & $\checkmark$ \\
+        Topology Constraint Fusion & Topology Only & Topology Only & None & None & Topology+Causal \\
+        \bottomrule
+    \end{tabular}
+\end{table*}
+
+Table~\ref{tab:method_compare} clearly shows that existing methods commonly suffer from structural deficiencies of single-modality dependence or lack of rigorous attribution. To address these systematic deficiencies, this work proposes the CPG-SHAP framework with core innovations in: (1) multimodal data fusion; (2) hybrid modeling of deterministic topological constraints and probabilistic causal discovery; (3) cooperative game theory attribution mechanism using SHAP values.
+
+\section{Methodology}
+
+This section describes the proposed CPG-SHAP framework for microservice root cause analysis.
+
+\subsection{Problem Formulation}
+
+\textbf{Microservice System Definition:} A microservice system $\mathcal{S}$ is formalized as a triple $\mathcal{S} = (V, E_{\text{trace}}, \mathcal{M})$. Here $V = \{s_1, s_2, \ldots, s_n\}$ represents a finite set of service nodes, where each service $s_i$ corresponds to an independent microservice instance. $E_{\text{trace}} \subseteq V \times V$ describes invocation dependency relationships between services. If service $s_i$ has invoked service $s_j$ during the observation period, then there exists a directed edge $(s_i, s_j) \in E_{\text{trace}}$. Note that anomaly propagation paths closely correlate with service invocation dependencies. This work assumes faults primarily propagate along these chains, serving as the physical constraint for causal discovery. $\mathcal{M} = \{M_1, M_2, \ldots, M_T\}$ contains temporal monitoring metric sets of all nodes within the time window, where $M_t$ represents the metric snapshot at time $t$, including multidimensional resource metrics (such as CPU utilization, memory throughput, network latency, error rate) for all services.
+
+\textbf{Anomaly Definition:} The anomaly state of service $s$ at time $t$ is defined as the deviation degree of its monitoring metrics relative to the normal baseline. Let $X_k(s,t)$ denote the observed value of the $k$-th metric of service $s$ at time $t$. The anomaly score $\text{AnomalyScore}(s,t) \in \mathbb{R}_{\geq 0}$ quantifies the anomaly intensity of the service at that moment. When $\text{AnomalyScore}(s,t) > \delta_{\text{th}}$ (where $\delta_{\text{th}}$ is the decision threshold), service $s$ is said to be in an anomalous state at time $t$.
+
+\textbf{Root Cause Definition:} Given a focus node $F \in V$, its anomalous state is regarded as the symptom of system failure. The root cause is defined as a service set $R \subseteq V$ satisfying: (1) \textbf{Causality}: there exists a causal propagation path from any service in $R$ to $F$; (2) \textbf{Minimality}: $R$ is the minimal set satisfying condition 1; (3) \textbf{Temporal Priority}: the anomaly start time of services in $R$ is no later than the anomaly start time of $F$.
+
+\textbf{Problem Objective:} The microservice root cause analysis problem is formalized as: given system $\mathcal{S}$, temporal metrics $\mathcal{M}$, trace data $E_{\text{trace}}$, and focus node $F$, find a ranked list $\mathcal{R} = [r_1, r_2, \ldots, r_k]$ of the root cause set $R$, where $r_i \in V$ and the ranking reflects the confidence or causal contribution of each service as a root cause.
+
+\subsection{CPG-SHAP System Architecture}
+
+The CPG-SHAP framework addresses the fine-grained attribution problem in root cause localization for microservice environments. The framework constructs a service-level weighted Causal Propagation Graph (CPG) through multimodal data fusion and causal structure learning to simulate anomaly state propagation dynamics in service networks. However, edge weights in the CPG alone cannot represent responsibility attribution when faults propagate through multiple paths as a cooperative effect. Therefore, this work introduces SHAP values from cooperative game theory to quantify the marginal contribution of each service node to terminal anomaly symptoms. The system workflow consists of five modules: (1) data abstraction and preprocessing, (2) local candidate subgraph extraction, (3) multimodal causal structure modeling, (4) SHAP value-based anomaly attribution, and (5) root cause ranking.
+
+\textbf{Focus Node Definition:} The analysis process begins with identifying the focus node $F$. $F$ is defined as the service node where symptoms are observed, typically corresponding to the entry service that triggers SLA violations or alerts. $F$ serves as the endpoint of causal propagation, and subsequent causal path tracing and contribution calculation are performed relative to the anomalous state of $F$.
+
+\subsection{Multimodal Data Abstraction and Preprocessing}
+
+This stage converts microservice monitoring data, including unstructured distributed traces and structured temporal metrics, into a unified structure.
+
+\subsubsection{Temporal Alignment and Resampling}
+
+Since trace data is triggered by request events while monitoring metrics are sampled at fixed intervals, there is a frequency difference between them. To achieve multimodal fusion, a unified time window $\mathcal{T}$ is established for alignment, mapping metric data to this window and performing resampling. For missing data, if the missing interval is smaller than a set threshold, linear interpolation is used; if the missing interval exceeds the threshold, that time point is marked as invalid and excluded.
+
+\subsubsection{Static Invocation Topology Construction}
+
+A global static service invocation graph $G_{\text{trace}} = (V, E_{\text{trace}})$ is constructed using span dependency relationships in distributed trace data. If there exists an invocation record from service $i$ to service $j$ during the observation period, a directed edge $(i, j) \in E_{\text{trace}}$ is created. This graph reflects physical connectivity between services and provides topological constraints.
+
+\subsubsection{Service-Level Anomaly Score Computation}
+
+Raw KPI sequences are converted into normalized service-level anomaly scores $\text{AnomalyScore}(s,t)$.
+
+\textbf{Metric-Level Robust Normalization:} Microservice monitoring metric data typically exhibits non-Gaussian distribution characteristics and contains many outliers arising from dynamic factors such as bursty traffic, resource competition, and network jitter. Traditional Z-score normalization based on mean and standard deviation is highly susceptible to extreme values. To address this problem, this work adopts a robust normalization method based on median and Median Absolute Deviation (MAD) \cite{leys2013}. MAD is defined as $\text{MAD}(X) = \text{median}(|X_i - \text{median}(X)|)$, with a breakdown point of 50\%.
+
+For the $k$-th metric sequence $X_k(s,\cdot)$ of service $s$, the robust normalized value $Z_k(s,t)$ is defined as:
+\begin{equation}
+Z_k(s,t) = \frac{X_k(s,t) - \text{median}(X_k(s,\cdot))}{\text{MAD}(X_k(s,\cdot)) + \epsilon},
+\end{equation}
+where $\epsilon$ is a small positive number (e.g., $10^{-6}$) to prevent numerical stability issues.
+
+\textbf{Multi-Metric Aggregation:} If service $s$ has a set of metrics $\mathcal{K}_s$, its service-level anomaly score at time $t$ is defined as the maximum of all normalized metrics: $\text{AnomalyScore}(s,t) = \max_{k \in \mathcal{K}_s} \big( \max(0, Z_k(s,t)) \big)$.
+
+\subsection{Local Candidate Subgraph Extraction}
+
+In microservice systems containing $n$ services, the time complexity of causal discovery algorithms such as PC-Stable \cite{pcstable} is $O(n^2 2^{n})$ in the worst case, making it impractical to construct the CPG directly on the global service set. To reduce computational complexity, this stage adopts a coarse-to-fine two-stage filtering strategy, extracting a local node set $U \subseteq V$ highly relevant to failures from the global service set $V$, such that $|U| \ll |V|$.
+
+\subsubsection{Statistical Neighborhood Filtering Based on Temporal Dynamics}
+
+\textbf{Lagged Cross-Correlation Analysis:} Fault propagation in microservice invocation chains has time delays. This work computes the maximum correlation coefficient between each service $s$ and the focus node $F$ within the lag window $[1, \tau_{\max}]$. The correlation at lag $\tau$ is defined as:
+{\small
+\begin{equation}
+\rho_{F,s}(\tau) = \text{corr}\big(\text{AS}(F,t\!+\!\tau), \text{AS}(s,t)\big)
+\end{equation}}%
+for $\tau = 1,\ldots,\tau_{\max}$, where $\text{AS}(\cdot)$ denotes AnomalyScore. The correlation score is defined as:
+\begin{equation}
+\text{CorrScore}(s) = \max_{\tau \in [1,\tau_{\max}]} |\rho_{F,s}(\tau)|.
+\end{equation}
+
+\textbf{Fine Filtering Based on Correlation Pattern Anomaly:} To further identify key nodes with unique correlation structures, this work introduces the Isolation Forest algorithm \cite{isoforest}. For service $s$ in the initial set $U_0$, a lag correlation feature vector of length $\tau_{\max}$ is constructed:
+\begin{equation}
+\mathbf{f}_s = [\rho_{F,s}(1), \rho_{F,s}(2), \ldots, \rho_{F,s}(\tau_{\max})],
+\end{equation}
+and isolation scores $I_s \in [0,1]$ are computed, where higher $I_s$ indicates statistically unique interaction patterns.
+
+\subsubsection{Topological Enhancement and Subgraph Generation}
+
+To repair potential causal chain breaks, $G_{\text{trace}}$ is used to topologically enhance $U_1$. Direct predecessors and successors of nodes in $U_1$ are included, forming the local service set:
+\begin{equation}
+U = U_1 \cup \bigcup_{s \in U_1} \big(\text{Pred}_{G_{\text{trace}}}(s) \cup \text{Succ}_{G_{\text{trace}}}(s)\big).
+\end{equation}
+
+\subsection{Multimodal Causal Propagation Graph Modeling}
+
+This section fuses temporal dynamics, static topology, and anomaly salience to construct a service-level weighted causal propagation graph $G_{\text{CPG}}$.
+
+\subsubsection{Anomaly Sequence Matrix and Instantaneous Causal Structure Learning}
+
+Let $U = \{s_1,\ldots,s_{|U|}\}$, and stack the corresponding anomaly time series into a matrix $\mathbf{X} \in \mathbb{R}^{|U| \times T}$, where row $i$ corresponds to the anomaly score sequence of service $s_i$. After preprocessing $\mathbf{X}$ (removing low-variance sequences, adding small noise, Z-score normalization), the PC-Stable \cite{pcstable} algorithm with partial correlation tests is used to learn the instantaneous dependency structure, obtaining instantaneous dependency strength $w_{\text{PC}}(i,j)$ normalized to $[0,1]$.
+
+\subsubsection{Adaptive Weight Fusion Based on Information Entropy}
+
+Given $K=3$ modal matrices: $M_1$ for topological weights ($W_{\text{trace}}$), $M_2$ for statistical causal strength ($W_{\text{PC}}$), $M_3$ for anomaly salience ($W_{\text{Iso}}$). After normalizing each modal matrix, element probabilities $p_{ij}^{(k)}$ and information entropy $E_k$ are computed:
+\begin{equation}
+E_k = - \frac{1}{\ln(|E|)} \sum_{(i,j) \in E} p_{ij}^{(k)} \ln p_{ij}^{(k)}.
+\end{equation}
+Adaptive weights for each modality based on entropy values:
+\begin{equation}
+\theta_k = \frac{1 - E_k}{\sum_{m=1}^{K} (1 - E_m)}.
+\end{equation}
+The final fused edge weight:
+\begin{equation}
+w_{\text{fused}}(i,j) = \sum_{k=1}^{K} \theta_k M_k(i,j).
+\end{equation}
+
+In-degree normalization is performed on the fused weight matrix:
+\begin{equation}
+\tilde{w}(i,j) = \frac{\max(0, w_{\text{fused}}(i,j))}{\sum_{k\in U} \max(0, w_{\text{fused}}(k,j))},
+\end{equation}
+obtaining the directed weighted graph $G_{\text{CPG}} = (U, E_{\text{CPG}}, \tilde{w})$.
+
+\subsection{Anomaly Attribution Framework Based on Cooperative Game Theory}
+
+The CPG provides propagation paths with edge weights, but these weights alone cannot represent responsibility attribution when faults propagate through multiple paths as a cooperative effect. This stage uses cooperative game theory to quantify the contribution of each node to global anomalies.
+
+\subsubsection{Discrete-Time Anomaly Propagation Model}
+
+A $K$-step anomaly propagation process is defined. The initial state is:
+\begin{equation}
+\delta_s^{(0)} = \log(1 + \max(0, \text{AnomalyScore}(s,T))).
+\end{equation}
+The logarithmic transformation $\log(1 + \cdot)$ is used because anomaly scores may exhibit extremely large value ranges, and the transformation compresses the value range to maintain stability during propagation.
+
+The state update formula is:
+\begin{equation}
+h_j^{(k+1)} = \alpha_{\text{prop}} \sum_{i \in U} \tilde{w}(i,j) \, h_i^{(k)},
+\end{equation}
+where $\alpha_{\text{prop}} \in (0,1)$ is the decay coefficient. The cumulative effect is:
+\begin{equation}
+H_s = \sum_{k=0}^{K} h_s^{(k)}.
+\end{equation}
+
+\subsubsection{Cooperative Game Formalization and SHAP Value Definition}
+
+This work formalizes the root cause analysis problem as a cooperative game $(U, v)$ \cite{lundberg2017,heskes2020,janzing2020}, where $U$ represents the set of players (local service nodes) and $v: 2^U \to \mathbb{R}_{\geq 0}$ denotes the characteristic function that quantifies each coalition's contribution to global anomalies.
+
+For each sub-coalition $C \subseteq U$, this work defines a counterfactual initial anomaly vector:
+\begin{equation}
+\delta_s^{(0)}(C) = 
+\begin{cases}
+ \delta_s^{(0)}, & s \in C, \\
+ 0, & s \notin C.
+\end{cases}
+\end{equation}
+Using this counterfactual setting, this work executes the $K$-step propagation model to compute the cumulative anomaly $H_s(C)$ for each node. The characteristic function is then:
+\begin{equation}
+v(C) = \sum_{s \in U} H_s(C).
+\end{equation}
+
+The SHAP value $\phi(s)$ quantifies the average marginal contribution of service $s$ to the global anomaly $v(U)$ \cite{shapley,lundberg2017}:
+{\small
+\begin{equation}
+\phi(s) = \!\sum_{C \subseteq U \setminus\{s\}} \frac{|C|!(|U|\!-\!|C|\!-\!1)!}{|U|}(v(C \cup \{s\}) - v(C)).
+\end{equation}}
+
+The SHAP value satisfies three key axioms that ensure fair attribution in root cause analysis: (1) \textbf{Efficiency}: the sum of all SHAP values equals the total global anomaly, ensuring complete distribution of responsibility; (2) \textbf{Symmetry}: services with identical marginal contributions receive equal attribution, regardless of topological position; (3) \textbf{Null player}: services that contribute nothing to any coalition receive zero attribution. These axioms eliminate the influence of topological position on ranking, focusing instead on causal contribution to specific anomaly outcomes.
+
+This work employs Monte Carlo sampling \cite{castro2009} to approximate SHAP values efficiently, then normalizes the results to $[0,1]$:
+\begin{equation}
+\tilde{\phi}(s) = \frac{\phi(s) - \min_{t \in U} \phi(t)}{\max_{t \in U} \phi(t) - \min_{t \in U} \phi(t)}.
+\end{equation}
+
+\subsection{Multi-dimensional Evidence Fusion and Root Cause Ranking}
+
+The root cause localization problem can be viewed as inferring the posterior probability of each service being a root cause given observed data. According to Bayes' theorem:
+\begin{equation}
+P(RC(s) | D) \propto P(D | RC(s)) \cdot P(RC(s)),
+\end{equation}
+where $RC(s)$ denotes $\text{RootCause}(s)$ and $D$ denotes $\text{Data}$.
+
+\subsubsection{Structural Reachability as Prior}
+
+The path strength from service $s$ to focus $F$ along path $P$ is defined as:
+\begin{equation}
+w(P) = \prod_{i=1}^{k-1} \tilde{w}(s_i, s_{i+1}),
+\end{equation}
+and the maximum probability path defines reachability $r(s,F)$, normalized to $\tilde{r}(s)$ as prior probability.
+
+The normalized SHAP value $\tilde{\phi}(s)$ represents the marginal contribution of service $s$'s anomalous state to global anomalies in counterfactual analysis, regarded as $P(\text{Data} | \text{RootCause}(s))$.
+
+To filter spurious causal relationships that violate temporal precedence, a temporal consistency coefficient $p(s) \in (0,1]$ is defined. If edges violating ``anomaly before propagation'' exist on the maximum probability path, exponential penalties are applied.
+
+The final root cause scoring function is:
+\begin{equation}
+\sigma_{\text{final}}(s) = \big[\beta \tilde{r}(s) + (1-\beta) \tilde{\phi}(s)\big] \cdot p(s),
+\end{equation}
+where $\beta \in [0,1]$ is the balance coefficient between prior and likelihood. In experiments, $\beta$ is set to 0.3 via cross-validation, indicating greater emphasis on causal contribution evidence provided by SHAP values while retaining structural reachability as auxiliary prior information. Ranking by $\sigma_{\text{final}}(s)$ in descending order yields the service-level root cause list.
+
+\subsection{CPG-SHAP Algorithm Flow}
+
+Algorithm~\ref{alg:cpg_shap} summarizes the complete execution flow of the CPG-SHAP framework from data preprocessing to root cause ranking.
+
+\begin{algorithm}[t]
+\SetAlgoLined
+\caption{CPG-SHAP Root Cause Localization Algorithm}
+\label{alg:cpg_shap}
+\KwIn{Monitoring metrics $\mathcal{M}$, trace data $E_{\text{trace}}$, focus node $F$, lag window $\tau_{\max}$}
+\KwOut{Root cause ranking list $\mathcal{R}$}
+\tcp{Phase 1: Data Preprocessing and Local Subgraph Extraction}
+Perform alignment and MAD robust normalization on $\mathcal{M}$\;
+Compute lagged correlation $\text{CorrScore}$ for all nodes with $F$\;
+$U_{\text{corr}} \leftarrow \{s \in V \mid \text{CorrScore}(s) > \theta_{\text{corr}}\}$\;
+$U \leftarrow U_{\text{corr}} \cup \text{Neighbor}_{G_{\text{trace}}}(U_{\text{corr}})$\;
+\tcp{Phase 2: Causal Structure Learning and Weight Fusion}
+$\mathbf{X}_{U} \leftarrow$ anomaly sequence matrix for node set $U$\;
+$G_{\text{PC}} \leftarrow \text{PC-Stable}(\mathbf{X}_{U}, \alpha=0.05)$\;
+For each edge $(i,j)$, compute entropy weights $\theta_k$ and fuse to get $\tilde{w}(i,j)$\;
+Construct causal propagation graph $G_{\text{CPG}} = (U, E_{\text{CPG}}, \tilde{w})$\;
+\tcp{Phase 3: SHAP Attribution and Ranking}
+Initialize state $\delta^{(0)}$ and define characteristic function $v(C)$\;
+\For{each candidate node $s \in U$}{
+    $\phi(s) \leftarrow \text{ApproxSHAP}(G_{\text{CPG}}, s, v)$ \tcp*{Monte Carlo sampling}
+    $r(s) \leftarrow$ compute topology-based shortest path reachability\;
+    $\text{Score}(s) \leftarrow \beta r(s) + (1-\beta) \tilde{\phi}(s)$\;
+}
+\Return List $\mathcal{R}$ sorted by $\text{Score}(s)$ in descending order\;
+\end{algorithm}
+
+\section{Experimental Setup}
+
+This section details the experimental process to systematically validate the effectiveness of the proposed CPG-SHAP framework for microservice root cause analysis.
+
+\subsection{Experimental Platform}
+
+To ensure comparability of evaluation results with the academic community, this study uses RCAEval \cite{li2024} as the core experimental platform. RCAEval is an open-source benchmark framework designed for microservice root cause analysis. It provides standardized interfaces for unified data loading, supports multimodal heterogeneous data reading (metrics, logs, and distributed traces), includes rich scenarios with multiple real microservice application systems and diverse fault injection scripts, and provides manually verified service-level and metric-level root cause labels.
+
+\subsection{Dataset Description}
+
+Experiments use two benchmark datasets RE1 and RE2 provided by RCAEval, representing ``metrics-only'' and ``multimodal'' data availability scenarios, respectively.
+
+\subsubsection{Microservice Application Systems}
+
+Experiments cover three microservice systems of different scales and architectural complexity: Online Boutique (OB) \cite{onlineboutique}, Sock Shop (SS) \cite{sockshop}, and Train Ticket (TT) \cite{trainticket}. OB has approximately 11 services, SS has approximately 10 services, and TT contains over 40 microservices with very deep invocation chains and complex service dependencies.
+
+\subsubsection{Fault Types and Data Statistics}
+
+Experimental data covers two major categories of common faults: resource faults and network faults. Table~\ref{tab:dataset_summary} provides dataset statistics.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Experimental Dataset Summary}
+    \label{tab:dataset_summary}
+    \scriptsize
+    \begin{tabular}{lcccc}
+        \toprule
+        \textbf{Dataset} & \textbf{Modality} & \textbf{Systems} & \textbf{Faults} & \textbf{Cases} \\
+        \midrule
+        RE1 & Metrics & OB, SS, TT & Res., Net. & 375 \\
+        RE2 & Met.+Logs+Traces & OB, SS, TT & Res., Net. & 270 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsection{Baseline Method}
+
+BARO is selected as the main comparison baseline. BARO is an unsupervised method based on statistical deviation, assuming that the metric with the highest anomaly severity is the root cause. Comparing CPG-SHAP with BARO can intuitively quantify the specific gains of introducing topological structure and causal propagation mechanisms compared to relying solely on statistical features.
+
+\subsection{Evaluation Metrics}
+
+Given that root cause analysis is essentially a ranking problem, Top-k accuracy (AC@k) and average accuracy across fault types (Avg@k) are adopted as main evaluation metrics. AC@k measures whether the real root cause appears in the top $k$ candidate results; Avg@k performs macro-averaging across different fault types to reflect method robustness.
+
+\subsection{Implementation Configuration}
+
+The experimental environment is a Linux server with Python 3.10. This study uses the \texttt{tigramite} library \cite{runge2019} for causal discovery, with multi-core parallelization enabled to accelerate Monte Carlo sampling for SHAP values. \texttt{tigramite} is a Python open-source library for time-series causal inference, providing implementations of causal discovery algorithms such as PC-Stable. In the anomaly propagation model, the decay coefficient $\alpha_{\text{prop}}$ is set to 0.9 to balance between capturing multi-hop propagation effects and preventing excessive signal amplification. To handle large-scale systems such as Train Ticket under limited computational resources, this study implements pruning strategies, retaining only nodes within several hops from the focus node and with anomaly scores above the global threshold.
+
+Table~\ref{tab:overall_results} summarizes Precision@k and Avg@5 statistics on RE1 and RE2 for CPG-SHAP and BARO.
+
+\begin{table*}[t]
+    \centering
+    \caption{Overall Performance Comparison of CPG-SHAP and BARO on RE1/RE2}
+    \label{tab:overall_results}
+    \small
+    \begin{tabular}{lccccc}
+        \toprule
+        Dataset-System & Method & Precision@1 & Precision@3 & Precision@5 & Avg@5 \\
+        \midrule
+        RE1-OB & CPG-SHAP & 0.9440 & 0.9920 & 1.0000 & 0.9808 \\
+        RE1-OB & BARO & 0.7360 & 0.9280 & 0.9840 & 0.8960 \\
+        RE1-OB & PC-PageRank & 0.0800 & 0.2160 & 0.4480 & 0.2416 \\
+        \midrule
+        RE1-SS & CPG-SHAP & 0.1120 & 0.8960 & 0.9680 & 0.7408 \\
+        RE1-SS & BARO & 0.2800 & 0.7280 & 0.9200 & 0.6640 \\
+        \midrule
+        RE1-TT & CPG-SHAP & 0.2720 & 0.5120 & 0.6640 & 0.5040 \\
+        RE1-TT & BARO & 0.1360 & 0.2800 & 0.3920 & 0.2720 \\
+        RE1-TT & PC-PageRank & 0.0100 & 0.1040 & 0.1820 & 0.1420 \\
+        \midrule
+        RE2-OB & CPG-SHAP & 0.9647 & 0.9941 & 1.0000 & 0.9894 \\
+        RE2-OB & BARO & 0.1444 & 0.8778 & 0.9444 & 0.7422 \\
+        RE2-OB & PC-PageRank & 0.0800 & 0.4842 & 0.6280 & 0.4922 \\
+        \midrule
+        RE2-SS & CPG-SHAP & 0.6500 & 0.8464 & 0.8929 & 0.8193 \\
+        RE2-SS & BARO & 0.0667 & 0.9556 & 0.9778 & 0.7644 \\
+        RE2-SS & PC-PageRank & 0.1500 & 0.4250 & 0.6667 & 0.4144 \\
+        \midrule
+        RE2-TT & CPG-SHAP & 0.8222 & 0.8222 & 0.8222 & 0.8222 \\
+        RE2-TT & BARO & 0.6885 & 0.8361 & 0.8525 & 0.8033 \\
+        \bottomrule
+    \end{tabular}
+\end{table*}
+
+\section{Results and Discussion}
+
+This section quantitatively evaluates performance differences between CPG-SHAP and BARO across different microservice system scales and data modalities.
+
+\subsection{RE1: Metrics-Only Scenario Analysis}
+
+In the RE1 experimental setting, systems only have temporal metrics and lack explicit invocation topology from traces. This scenario evaluates the algorithm's capability to infer causal structure from temporal correlations under information constraints.
+
+In small-to-medium-scale systems (Online Boutique and Sock Shop), CPG-SHAP generally outperforms the statistical baseline method BARO. In the large-scale Train Ticket system, CPG-SHAP's Avg@5 improves by approximately 85\% compared to BARO. As system scale and dependency depth increase, the diagnostic capability of pure statistical methods significantly decreases, while causal graph modeling methods can effectively maintain localization levels. PC-PageRank performs poorly in large-scale scenarios such as RE1-TT (Precision@1 only 0.01). The purely metric-driven PC algorithm easily produces incorrect causal edge directions in high dimensions, causing PageRank's random walk to be guided to irrelevant nodes. CPG-SHAP introduces traces as topology constraints and uses SHAP values for attribution, correcting causal edge direction errors and demonstrating significant robustness.
+
+\subsection{RE2: Multimodal Scenario Analysis}
+
+The RE2 experimental setting introduces logs and trace data. Experimental results show that explicit topological constraints significantly improve root cause localization precision. For example, in RE2-OB, CPG-SHAP achieves Precision@1 of 0.9647, compared to BARO's 0.1444.
+
+In RE2-SS and RE2-TT, CPG-SHAP also demonstrates robust performance in network fault scenarios. In large-scale systems, CPG-SHAP reconstructs propagation paths through traces and combines temporal causal analysis with SHAP attribution to more accurately trace back to source services of network quality degradation.
+
+\subsection{Impact of Attribution Mechanism: Game Theory vs. Graph Centrality}
+
+To verify the advantages of SHAP values compared to traditional graph centrality algorithms, ablation experiments are designed for comparative analysis. Ablation experiments replace the attribution module in CPG-SHAP with PageRank (denoted as CPG-PR) to quantify the contribution of SHAP values. Table~\ref{tab:attribution_ablation} presents the performance comparison.
+
+\begin{table*}[t]
+    \centering
+    \caption{Attribution Mechanism Ablation Results (RE2 Dataset)}
+    \label{tab:attribution_ablation}
+    \footnotesize
+    \begin{tabular}{lcccc}
+        \toprule
+        \textbf{System} & \textbf{Metric} & \textbf{CPG-PR (PageRank)} & \textbf{CPG-SHAP (Proposed)} & \textbf{Improvement ($\Delta$)} \\
+        \midrule
+        \multirow{2}{*}{Online Boutique} & Precision@1 & 0.6222 & \textbf{0.9647} & \textbf{+55.0\%} \\
+        & Avg@5 & 0.8578 & \textbf{0.9894} & +15.3\% \\
+        \midrule
+        \multirow{2}{*}{Sock Shop} & Precision@1 & 0.5333 & \textbf{0.6500} & +21.9\% \\
+        & Avg@5 & 0.7422 & \textbf{0.8193} & +10.4\% \\
+        \midrule
+        \multirow{2}{*}{Train Ticket} & Precision@1 & 0.8000 & \textbf{0.8222} & +2.8\% \\
+        & Avg@5 & 0.8022 & \textbf{0.8222} & +2.5\% \\
+        \bottomrule
+    \end{tabular}
+\end{table*}
+
+\textbf{Mitigating Centrality Bias:} In Online Boutique, CPG-SHAP's Precision@1 improves by 55.0\% over CPG-PR. PageRank exhibits hub bias and cannot distinguish symptom nodes from root cause nodes: when victim services are located at topological hubs and receive many anomaly propagation edges, the method tends to misidentify them as root causes. SHAP values, based on cooperative game fairness axioms, eliminate the influence of topological position on ranking through counterfactual analysis, focusing on quantifying marginal increments of anomaly propagation.
+
+\textbf{Robustness in Large-scale Topologies:} In Train Ticket, although the gap narrows, CPG-SHAP achieves 1.0 Precision@1 on specific fault types such as DISK Faults, compared to PageRank's 0.9333 (7.1\% improvement). This indicates that contribution-based attribution has better discriminability than structure-based ranking in deep invocation chains and complex dependencies.
+
+\subsubsection{Special Case Analysis}
+
+In Sock Shop's SOCKET and LOSS fault types, CPG-PR slightly outperforms CPG-SHAP (e.g., SOCKET Faults Avg@5 CPG-PR is 0.9067, 13.3\% higher than CPG-SHAP's 0.8000). Analysis shows that network and socket faults in Sock Shop mostly occur at high-centrality infrastructure components, with root cause nodes and topological hub nodes highly overlapping, causing PageRank's centrality ranking to coincidentally match correct answers.
+
+However, this advantage stems from coincidental overlap between root cause positions and high-centrality nodes, not PageRank's correct modeling of causal mechanisms. Such coincidence lacks generalizability across systems and fault types. When root causes are located at non-hub nodes, PageRank's false positive rate significantly increases. Although CPG-SHAP has slightly lower accuracy in this special case, its attribution mechanism maintains consistent causal semantics, always ranking based on marginal contribution rather than topological position.
+
+\subsection{Execution Efficiency and Scalability Analysis}
+
+The timeliness of root cause analysis directly affects Mean Time To Repair (MTTR). This section evaluates inference latency of the CPG-SHAP framework across different system scales.
+
+\subsubsection{Theoretical Complexity and Optimization Strategies}
+
+CPG-SHAP's computational bottlenecks come from two stages: causal structure learning and SHAP value estimation. (1) Causal Structure Learning: PC-Stable \cite{pcstable} has worst-case time complexity of $O(|U|^2 2^{|U|} \cdot I)$, where $|U|$ is the number of nodes in the local subgraph and $I$ is the average number of conditional independence tests. (2) SHAP Value Estimation: Exact computation has exponential complexity in $|U|$.
+
+The local subgraph extraction algorithm introduced in Section 3.4 restricts causal discovery to local contexts related to anomaly nodes, controlling $|U|$ to a small constant range. Monte Carlo sampling is used to estimate SHAP values rather than exact computation, reducing complexity from exponential to polynomial time.
+
+\subsubsection{Experimental Results and Practical Considerations}
+
+Experimental data shows that CPG-SHAP's inference time increases with system scale. In Train Ticket, single inference latency is approximately 600 seconds (10 minutes), about 5000 times higher than the lightweight baseline BARO (0.12 seconds). This computational time increase stems from the complexity of causal structure learning and SHAP value estimation, both of which grow exponentially with node count.
+
+Root cause analysis occurs within minute-level time windows after faults occur. CPG-SHAP's inference latency (600 seconds) falls within this time window. CPG-SHAP's Avg@5 accuracy in large-scale systems improves by 85\% over BARO, reducing false positive rates and improving root cause detection rates. The local subgraph extraction algorithm replaces global causal graph learning, which has exponentially growing computational overhead with system scale and is impractical in real systems. CPG-SHAP's increased computation time is accompanied by significant accuracy improvements. This time-accuracy tradeoff aligns with high-performance root cause analysis design objectives. All source code and experimental configurations used in this paper are released at the RCAEval project repository \cite{rcaevalrepo}, which facilitates reproducibility and further research.
+
+\subsection{Comprehensive Discussion}
+
+Experimental results demonstrate that CPG-SHAP exhibits performance patterns related to system scale and data modality in microservice root cause analysis tasks. In the RE1 scenario (metrics-only), CPG-SHAP infers structural dependencies from statistical correlations via temporal causal discovery. It performs stably in small-to-medium systems. Moreover, it maintains significant advantages over BARO in large-scale systems like Train Ticket, where it improves Avg@5 accuracy by approximately 85\%. This result indicates that as system scale expansion leads to increased service dependency depth and complexity, pure statistical methods are susceptible to fault propagation effects due to lack of structural constraints, producing many false positives. In contrast, causal graph modeling methods can suppress downstream symptom node interference through explicit path tracing, maintaining more stable localization accuracy.
+
+Performance changes after introducing distributed traces in RE2 validate the critical role of topological priors. In Online Boutique, Precision@1 improves from 0.9440 in RE1 to 0.9647 in RE2. Although this marginal gain is numerically limited, it represents a critical leap from localizing within top 5 to top 1 in practice, directly reducing operators' investigation workload. Deterministic invocation relationships provided by trace data not only reduce the search space for causal discovery but also correct spurious causal links that pure statistical methods might produce. This makes learned causal propagation graphs more consistent with physical dependency constraints.
+
+Comparative experiments on attribution algorithms demonstrate the theoretical advantages and empirical performance of SHAP values over traditional graph centrality algorithms. PageRank's ranking logic is based on the stationary distribution of random walks. Its ranking results reflect node importance in overall graph structure rather than causal contribution to specific anomaly outcomes. In fault propagation networks, victim services at topological hub positions occupy high positions in PageRank rankings due to receiving many anomaly propagation edges, forming hub bias. SHAP values, through cooperative game fair allocation axioms, quantify the average marginal contribution of each node to terminal anomaly states in counterfactual scenarios, eliminating the influence of topological position on ranking. The 55\% Precision@1 improvement in Online Boutique indicates that this algorithm can effectively distinguish root cause nodes from symptom nodes.
+
+Cross-fault-type and cross-system performance consistency analysis shows that CPG-SHAP maintains lower performance variance across different application scenarios. Train Ticket covers both resource and network fault categories. CPG-SHAP maintains similar Avg@5 accuracy (approximately 0.82) across all fault types, while BARO shows larger performance fluctuations across different fault types. This stability stems from CPG-SHAP's causal modeling mechanism: regardless of whether faults manifest as CPU overload, memory leaks, or network latency, their propagation paths follow the same service invocation topology. Causal propagation graphs can capture this common structure.
+
+The effectiveness of the data modality fusion strategy is embodied in uncertainty-aware weight allocation mechanisms. By computing each modality's certainty through information entropy, explicit trace invocation relationships receive higher weights due to low entropy characteristics, while fuzzy statistical correlations are dynamically suppressed. This design ensures that deterministic signals dominate final diagnostic results while reducing the risk of false positives introduced by noisy modalities.
+
+\section{Conclusion and Future Work}
+
+\subsection{Research Summary}
+
+This paper addresses root cause localization difficulties in microservice architectures caused by complex service dependencies and anomaly propagation effects, proposing the CPG-SHAP analysis framework. CPG-SHAP first constructs a weighted Causal Propagation Graph by integrating static topological constraints from distributed traces with dynamic causal relationships learned from monitoring metrics, simulating fault propagation paths in microservice networks. However, edge weights in the CPG alone cannot represent responsibility attribution when faults propagate through multiple paths as a cooperative effect. Therefore, this work introduces SHAP values as an attribution metric to replace traditional graph centrality algorithms. By applying cooperative game theory, this approach quantifies the marginal contribution of each service node to terminal anomaly symptoms, achieving a precise distinction between root causes and victim nodes based on mathematical axioms.
+
+\subsection{Empirical Findings and Performance Evaluation}
+
+Extensive experiments on RCAEval show that CPG-SHAP outperforms the statistical baseline method BARO across different scales (OB, SS, TT) and data scenarios (RE1, RE2). In large-scale Train Ticket systems, CPG-SHAP's Avg@5 reaches approximately 1.85 times that of BARO. Comparison of RE1 and RE2 results also confirms the complementarity of traces and metrics in root cause analysis.
+
+\subsection{Limitations and Future Directions}
+
+Although CPG-SHAP has achieved significant progress in accuracy and interpretability for microservice root cause analysis, this study has several limitations at theoretical assumption and implementation levels. For example, temporal causal discovery currently uses PC-Stable \cite{pcstable}. Future work could introduce PCMCI to more rigorously handle autocorrelation and lag effects. For attribution mechanisms, future work could extend from standard SHAP values \cite{shapley} to causal SHAP values, introducing do-calculus to strengthen causal semantics. For computational complexity and real-time performance, future work could explore GNN-based SHAP value approximation models or design more efficient estimation algorithms for ultra-large-scale systems.
+
+\begin{thebibliography}{00}
+
+\bibitem{dynacausal}
+S. Zhang, A. Fang, Y. Yang, R. Cheng, X. Tang, and P. He, ``DynaCausal: Dynamic Causality-Aware Root Cause Analysis for Distributed Microservices,'' arXiv preprint arXiv:2510.22613, 2025.
+
+\bibitem{li2024}
+Z. Li et al., ``Robust and Explainable Root Cause Analysis for Microservices: A Benchmark,'' in Proc. ACM Web Conf. (WWW), 2024.
+
+\bibitem{baro2023}
+Z. Li et al., ``BARO: Robust Root Cause Analysis for Microservices via Multivariate Bayesian Online Change Point Detection,'' in Proc. ACM Web Conf. (WWW), 2023, pp. 2865--2875.
+
+\bibitem{tracerca}
+Z. Li et al., ``Practical Root Cause Localization for Microservice Systems via Trace Analysis,'' in Proc. IEEE/ACM Int. Symp. Quality Service (IWQOS), Tokyo, Japan, 2021, pp. 1--10.
+
+\bibitem{microrca}
+L. Wu, J. Tordsson, E. Elmroth, and O. Kao, ``MicroRCA: Root Cause Localization of Performance Issues in Microservices,'' in Proc. IEEE/IFIP Network Operations Management Symp. (NOMS), Budapest, Hungary, 2020, pp. 1--9.
+
+\bibitem{circa}
+X. Jiang, H. Luo, Y. Sun, and S. K. Das, ``CIRCA: A Framework for Collaborative Identification of Root Cause Analysis in IoT Microservices,'' IEEE Transactions on Services Computing, vol. 1, pp. 1--15, 2025.
+
+\bibitem{causalrca}
+R. Xin et al., ``CausalRCA: Causal Inference Based Precise Fine-Grained Root Cause Localization for Microservice Applications,'' Journal of Systems and Software, vol. 203, p. 111724, 2023.
+
+\bibitem{leys2013}
+C. Leys et al., ``Detecting outliers: Do not use standard deviation around the mean, use absolute deviation around the median,'' Journal of Experimental Social Psychology, vol. 49, no. 4, pp. 764--766, 2013.
+
+\bibitem{isoforest}
+F. T. Liu, K. M. Ting, and Z. H. Zhou, ``Isolation forest,'' in Proc. IEEE Int. Conf. Data Mining (ICDM), 2008, pp. 413--422.
+
+\bibitem{pcstable}
+D. Colombo and M. H. Maathuis, ``Order-independent constraint-based causal structure learning,'' Journal of Machine Learning Research, vol. 15, no. 1, pp. 3741--3782, 2014.
+
+\bibitem{shapley}
+L. S. Shapley, ``A value for n-person games,'' Contributions to the Theory of Games, vol. 2, no. 28, pp. 307--317, 1953.
+
+\bibitem{castro2009}
+J. Castro, D. G\'{o}mez, and J. Tejada, ``Polynomial calculation of the Shapley value based on sampling,'' Computers \& Operations Research, vol. 36, no. 5, pp. 1726--1730, 2009.
+
+\bibitem{runge2019}
+J. Runge et al., ``Inferring causation from time series in Earth system sciences,'' Nature Communications, vol. 10, no. 1, p. 2553, 2019.
+
+\bibitem{onlineboutique}
+Google Cloud, ``Online Boutique: A Cloud-Native Microservices Demo Application,'' 2020. Available: https://github.com/GoogleCloudPlatform/microservices-demo
+
+\bibitem{sockshop}
+Weaveworks, ``Sock Shop: A Microservice Demo Application,'' 2016. Available: https://microservices-demo.github.io/
+
+\bibitem{trainticket}
+X. Zhou et al., ``Fault Analysis and Debugging of Microservice Systems: Industrial Survey, Benchmark System, and Empirical Study,'' IEEE Transactions on Software Engineering, vol. 47, no. 2, pp. 243--260, 2018.
+
+\bibitem{lundberg2017}
+S. M. Lundberg and S.-I. Lee, ``A unified approach to interpreting model predictions,'' in Advances in Neural Information Processing Systems (NeurIPS), vol. 30, 2017.
+
+\bibitem{heskes2020}
+T. Heskes, E. Sijben, I. G. Bucur, and T. Claassen, ``Causal Shapley values: Exploiting causal knowledge to explain individual predictions of complex models,'' in Advances in Neural Information Processing Systems (NeurIPS), vol. 33, pp. 4778--4789, 2020.
+
+\bibitem{janzing2020}
+D. Janzing, L. Minorics, and P. Blöbaum, ``Feature relevance quantification in explainable AI: A causal problem,'' in International Conference on Artificial Intelligence and Statistics (AISTATS), pp. 2907--2916, 2020.
+
+\bibitem{shapleyiq2024}
+Y. Li, Y. Liu, J. Li, and S. Li, ``ShapleyIQ: Influence quantification by Shapley values for performance debugging of microservices,'' in Proc. Int. Conf. Softw. Eng. (ICSE), 2024.
+
+\bibitem{rcaevalrepo}
+RCAEval project repository. [Online]. Available: \url{https://anonymous.4open.science/r/RCAEval-24D4/}.
+
+\end{thebibliography}
+
+\end{document}

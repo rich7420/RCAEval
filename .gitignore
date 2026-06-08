@@ -226,3 +226,16 @@ output
 .DS_Store
 logparser/config.json
 logbatcher/config.json
+
+# LaTeX build artifacts
+*.aux
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.synctex(busy)
+*.xdv
+*.out
+*.log
+*.bbl
+*.blg
+*.toc

@@ -1,0 +1,431 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+% Chinese language support
+\usepackage[UTF8,fontset=none]{ctex}
+
+% Set Traditional Chinese for figure, table and reference captions
+\renewcommand{\figurename}{圖}
+\renewcommand{\tablename}{表}
+\renewcommand{\refname}{參考文獻}
+
+% Font customization (load after ctex)  
+\usepackage{fontspec}
+
+% Chinese font - Using Kaiti (楷體) with full path
+% Kaiti is located in AssetsV2 directory (macOS dynamic fonts)
+\setCJKmainfont[Path=/System/Library/AssetsV2/com_apple_MobileAsset_Font8/88d6cc32a907955efa1d014207889413890573be.asset/AssetData/]{Kaiti.ttc}
+\setCJKsansfont{Heiti TC Light}
+\setCJKmonofont{Heiti TC Light}
+
+% Other packages
+\usepackage{cite}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{makecell}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{colortbl}
+\usepackage{placeins}
+\usepackage{flafter}
+\usepackage{float}
+\usepackage[final]{microtype}
+
+% Compact lists to save vertical space
+\setlist{nosep}
+
+% Title information
+\title{Explainable and Robust Root Cause Analysis for Microservices via Kolmogorov-Arnold Graph Neural Networks}
+
+% Author information
+\author{
+\IEEEauthorblockN{黃冠澔、賴瑀辰、賴冠州}
+\IEEEauthorblockA{
+國立臺中教育大學資訊工程學系\\
+Email: \{bcs113116, bcs113115\}@gm.ntcu.edu.tw, kclai@mail.ntcu.edu.tw
+}
+}
+
+\begin{document}
+
+% Title and abstract in two-column format
+\maketitle
+
+% Abstract section
+\begin{abstract}
+\noindent
+GNN 在微服務根因分析上具表達力，但黑箱 MLP 與歸納偏差不足使其難以用於稽核與高風險維運。本研究提出 \textbf{GNN\_KAN}：於消息傳遞與雙圖融合處以 Kolmogorov–Arnold 表示改寫非線性，使多變量轉換分解為可視化的一維基底組合，兼顧擬合與內在可解釋性；並建構 \textbf{RCA-aware} 特徵（前饋可觀測、弱化標註耦合）以降低後驗洩漏。於 RCAEval 多資料集上，複雜拓樸（Train Ticket）整體 Precision@1 達 0.256，相較 BARO 之相對增益約 88\%；細粒度至記憶體類故障時 P@1=0.96（對照 BARO 0.08）。實驗劃分方法邊界：線性簡單場景仍以 BARO 等統計基線較佳；高維、多源與深層非線性傳播則以 GNN\_KAN 顯著優於同構 MLP 與靜態 PageRank，極端拓樸可採 PQC\_GPU 基底。文末歸納扇出／線性鏈／深層系統之基底選擇準則。
+\end{abstract}
+
+\begin{IEEEkeywords}
+根因分析, 圖神經網路, Kolmogorov-Arnold Networks, 微服務系統, 可解釋性人工智慧
+\end{IEEEkeywords}
+
+\vspace{0.5em}
+
+% 1. Introduction
+\section{緒論}
+
+\subsection{研究背景與動機}
+
+微服務普及使依賴圖與異常傳播更複雜，上游異常常掩蓋真實\allowbreak 根因 \cite{train_ticket,microservices_survey}。金融、醫療、核心電商等場景除準確度外，更重視\textbf{可稽核的判定路徑}。實務同時需要\textbf{表達力與可解釋性}：圖統計與變點方法（如 BARO \cite{baro2023}）假設相對單純時可解釋且樣本效率高，但深層非線性級聯下易失效；GNN 擬合強卻常以黑箱 MLP 作非線性，難以對照「閾值—飽和」等傳播直覺。KAN \cite{kan2024} 以可學習一維基底組合取代固定啟動函數，易於視覺化邊上／節點上之反應曲線並引入平滑、局部性等歸納偏差，與級聯 RCA 高度相關。
+
+\subsection{研究貢獻}
+
+提出 \textbf{GNN\_KAN}：於消息傳遞（邊訊息、節點更新、聚合訊息與雙圖融合）以 KAN 取代 MLP，並建構 \textbf{RCA-aware} 特徵以降低後驗洩漏與標註耦合。貢獻包括：(1) 可解釋非線性消息傳遞與相似性／傳播雙圖融合；(2) 多資料集上劃分統計基線與深度模型之適用邊界；(3) 依拓樸與資料特性選擇基底之準則（極複雜場景採 PQC\_GPU）。第 2--6 節依序為相關工作、方法、實驗、結果與討論。
+
+\section{相關研究}
+
+圖統計與譜／遊走類方法（MicroRank \cite{microrank2021}、T-Rank \cite{trank2021}、CloudRanger \cite{cloudranger2018}、BARO \cite{baro2023} 等）多由結構與穩態分數排名，可解釋但在強非線性與條件式傳播下體現為近似不足。GNN 式 RCA（\cite{gnn_rca2023}、Nezha \cite{nezha2023}、EADRO \cite{eadro2023}）可學習邊權與聚集，但非線性仍常外包給 MLP。因果方法（CausalRCA \cite{causalrca2023}）若圖可辨且干擾可界定則精細，但微服務觀測高頻、迴圈與未觀測混淆使完整因果辨識成本高昂。KAN \cite{kan2024,kolmogorov1957} 在保留非線性同時維持單變量可檢視分解，與「多上游影響可近似加總、單邊效應為單調平滑」之工程直覺一致。LLM 輔助（RCACopilot \cite{rcacopilot2024}、Xpert \cite{xpert2024}）適合票證與操作脈絡；數值 KPI、trace、指標之即時根因排序仍須可微、可部署之 GNN\_KAN 類元件。
+
+\section{方法論}
+
+本節首先定義 RCA 問題與主要挑戰，次述 GNN\_KAN 整體架構與三階段設計；接著說明圖建模、多層消息傳遞與雙圖融合，再介紹 RCA-aware 特徵、KAN 模組與訓練目標。
+
+\subsection{問題定義與挑戰}
+
+\textbf{根因分析（Root Cause Analysis, RCA）}旨在當分散式系統發生異常事件時，從大量可能故障點中辨識最可能觸發該事件之根本原因。給定微服務系統圖 $G=(V, E)$，其中 $V$ 為服務節點、$E \subseteq V \times V$ 為依賴邊；令 $X = \{x_v(t) \mid v \in V,\, t \in W\}$ 為時間窗口 $W$ 內觀測（延遲、錯誤率、吞吐量、CPU/記憶體等）。目標為學習排序映射 $f:(G,X)\to\mathbb{R}^{|V|}$，使真實根因 $v^*$ 於 Top-$k$ 排名盡量靠前。
+
+\textbf{挑戰}包括：（1）\textbf{連鎖掩蔽}——根因在上游時，下游同時異常易誤導排名；（2）\textbf{高維雜訊}——多指標、尖峰與週期性負載使訊號嘈雜；（3）\textbf{拓樸不確定}——依賴隨版本與路由變動；（4）\textbf{可稽核性}——維運需可理解之證據與傳播路徑，非僅分數。
+
+\subsection{GNN\_KAN 解決方案架構}
+
+GNN\_KAN 結合多層消息傳遞與 Kolmogorov--Arnold 非線性，整體流程見圖 \ref{fig:architecture}。
+
+\begin{figure*}[t!]
+    \centering
+    \includegraphics[width=0.95\textwidth]{figure1_structure.png}
+    \caption{\textbf{GNN\_KAN 架構概覽。} 左側為 RCA-aware 特徵所建雙圖（$G_{\mathrm{sim}}$、$G_{\mathrm{prop}}$）；中間為以 KAN 取代 MLP 之訊息傳遞（$\mathrm{KAN}_{\mathrm{edge}}$、$\mathrm{KAN}_{\mathrm{message}}$、$\mathrm{KAN}_{\mathrm{node}}$）；右側為 $\mathrm{KAN}_{\mathrm{fuse}}$ 與讀出層。相似性路徑與傳播路徑分別產生 $h^{\mathrm{sim}}$、$h^{\mathrm{prop}}$，最後融合得 $s_v$。}
+    \label{fig:architecture}
+\end{figure*}
+
+\textbf{階段一（多跳傳播）}：將系統表為加權有向圖 $G=(V,E,w)$，以多層消息傳遞整合自身觀測與鄰居訊息，使上游異常經多跳仍影響表徵，並可學習邊權以反映傳播強弱，緩解下游掩蔽。
+
+\textbf{階段二（可解釋非線性）}：以 KAN 將多變量轉換化為可視化之一維基底組合 \cite{kan2024}，利於檢視「飽和／門檻」式反應，並以較緊湊之參數較不易過擬合相較寬 MLP。
+
+\textbf{階段三（RCA-aware 特徵）}：僅採前饋可觀測、與傳播相關之統計，排除未來資訊與標註耦合，並一致標準化，使模型學習可遷移之傳播型態而非片面相關（詳第 \ref{sec:rca_feat} 節）。
+
+\textbf{管線摘要}：節點觀測編碼為 $h_v^{(0)}$，經 $L$ 層（實驗取 $L{=}3$）消息傳遞後，$\mathrm{readout}$ 映射為 $s_v$ 並排序。訓練時以已標註根因視窗監督，最小化排名與正規化；推論時僅前向取得候選清單。
+
+\subsection{圖建模與消息傳遞機制}
+
+\subsubsection{圖表示與初始化}
+於異常視窗內令 $G_t=(V,E,W_t)$；$E$ 由服務依賴與 trace 萃取。邊權初值由呼叫頻率歸一化至 $[0,1]$，訓練中再細調以反映異常時之有效強度。
+
+節點 $v_i$ 之時序經特徵萃取得 $\bar{x}_{v_i}\in\mathbb{R}^{d_{\mathrm{feat}}}$，再線性投射與 LayerNorm 得 $h_{v_i}^{(0)}\in\mathbb{R}^{d_h}$（$d_h{=}64$）。
+
+\subsubsection{多層消息傳遞}
+於第 $l$ 層：（\textbf{i}）\textbf{邊訊息}——對 $(u\!\to\! v)\in E$，將 $h_u^{(l-1)}$ 與邊特徵 $e_{uv}$ 串接，以 $\mathrm{KAN}_{\mathrm{edge}}$ 得 $m_{u\to v}^{(l)}$；（\textbf{ii}）\textbf{聚合}——對入鄰 $\mathcal{N}_{\mathrm{in}}(v)$ 以注意力加權得 $\tilde{m}_v^{(l)}$；（\textbf{iii}）\textbf{更新}——先以 $\mathrm{KAN}_{\mathrm{node}}$ 作用於 $h_v^{(l-1)}$，再以 $\mathrm{KAN}_{\mathrm{message}}$ 處理 $\tilde{m}_v^{(l)}$，並以殘差係數 $0.3$ 穩定梯度。疊代 $L$ 層後，$h_v^{(L)}$ 融合 $L$ 跳鄰域訊息。
+
+
+
+為使記號更明確，令第 $l$ 層之注意力權重以點積形式表示：
+\begin{equation}
+\alpha_{uv}^{(l)} = \mathrm{softmax}_{u\in\mathcal{N}_{\mathrm{in}}(v)}\Bigl( (W_q h_v^{(l-1)})^{\mathsf{T}} (W_k h_u^{(l-1)}) \Bigr),
+\end{equation}
+則聚合訊息為
+\begin{equation}
+\tilde{m}_v^{(l)} = \sum_{u\in\mathcal{N}_{\mathrm{in}}(v)} \alpha_{uv}^{(l)}\, m_{u\to v}^{(l)}.
+\end{equation}
+更新步以殘差型式寫為
+\begin{equation}
+h_v^{(l)} = (1-\gamma)\,\mathrm{KAN}_{\mathrm{node}}(h_v^{(l-1)}) + \gamma\,\mathrm{KAN}_{\mathrm{message}}(\tilde{m}_v^{(l)}), \quad \gamma=0.3.
+\end{equation}
+上述寫法對應「多上游影響近似可加」之工程直覺：影響路徑主要由 $\alpha_{uv}^{(l)}$ 與可學邊權共同決定，而非由黑箱高維交叉項隱式決定。
+
+\subsubsection{讀出層}
+$h_v^{(L)}$ 經線性層與 sigmoid 得 $s_v\in(0,1)$，節點依 $s_v$ 降序輸出。
+
+\subsubsection{雙圖與融合}
+\textbf{$G_{\mathrm{sim}}$}：以特徵餘弦相似度建無向邊，權重為相似度減閾 $\tau_{\mathrm{sim}}$（預設 $0.5$）後取非負部分，捕捉行為相似服務群。\textbf{$G_{\mathrm{prop}}$}：以時滯相關 $\rho_{\mathrm{lag}}(u,v)$ 建\textbf{有向}邊，若超過 $\tau_{\mathrm{prop}}$ 且 $u$ 異常早於 $v$，權重與相關成正比、與時間差成反比。
+更具體地，相似性邊權可寫為
+\begin{equation}
+w_{\mathrm{sim}}(u,v)=\max\bigl(0,\cos(\bar{x}_u,\bar{x}_v)-\tau_{\mathrm{sim}}\bigr),
+\end{equation}
+傳播邊權則以最大時滯相關近似：
+\begin{equation}
+w_{\mathrm{prop}}(u\to v)\propto \frac{\max_{\Delta\in\mathcal{D}}\rho(x_u(t),x_v(t+\Delta))}{1+\Delta t(u,v)},
+\end{equation}
+其中 $\Delta t(u,v)$ 為異常觸發時間差，$\mathcal{D}$ 為允許之時滯集合。
+
+兩圖分別消息傳遞得 $h_v^{\mathrm{sim}}$、$h_v^{\mathrm{prop}}$，再經 KAN 融合 \cite{kan2024}：
+\begin{equation}
+h_v^{\mathrm{final}} = \mathrm{KAN}_{\mathrm{fuse}}\bigl(h_v^{\mathrm{sim}} \oplus h_v^{\mathrm{prop}}\bigr),
+\end{equation}
+其中 $\oplus$ 為特徵維度串接 $[h_v^{\mathrm{sim}}; h_v^{\mathrm{prop}}]\in\mathbb{R}^{2d}$。KAN 之可加結構使相似性與傳播線索得以\textbf{非線性}調權，且仍保持單維可視化解讀之可能。
+
+\textbf{雙圖與 KAN：} 經驗上，傳播圖上易學得門檻型曲線；相似性圖上較似平滑共變映射。共享權重 MLP 較難針對兩種語義分別塑形；分路 KAN 較能適應。
+
+\subsection{RCA-aware 特徵工程框架}
+\label{sec:rca_feat}
+
+不當特徵易引入洩漏或訓練／部署分布偏移。本研究依四準則：（1）僅用事件窗口 $W$ 與歷史 $W_{\mathrm{hist}}$ 內可得之前饋統計；（2）強調可沿邊傳播之訊號（異常強度、時序變化、傳播關聯）；（3）移除與標註直接耦合之事後量；（4）全節點一致 z-score 等標準化。每節點萃取 48 維 $\bar{x}_v$，含 SLI 同步/時滯相關與滯後、故障前後差分、峰值/持續異常強度、延遲分位與離散度等，並處理 NaN/Inf 以穩定數值。
+
+\subsection{Kolmogorov--Arnold Networks 模組}
+
+相較固定啟動函數之 MLP，KAN 以可學習一維基底逼近非線性 \cite{kan2024,kolmogorov1957}。對 $z=[z_1,\ldots,z_{d_{\mathrm{in}}}]^{\mathsf{T}}$，
+\begin{equation}
+\phi(z) = \sum_{i=1}^{d_{\mathrm{in}}} \sum_{k=1}^{K} \alpha_{i,k}\, b_k(z_i),
+\end{equation}
+$K$ 為每維基底數（通常 5--10），$\alpha_{i,k}$ 可學。相較全連接 MLP 需 $O(d_{\mathrm{in}} d_{\mathrm{out}})$ 量級參數，上式為 $O(d_{\mathrm{in}} K)$，當 $K\ll d_{\mathrm{out}}$ 時較省參且較易正則化。
+
+\textbf{基底：}（1）\textbf{Chebyshev} $T_k(\tanh(z))$——穩定、適扇出；（2）\textbf{B-spline} $B_{k,3}$——局部支撐、適鏈狀平滑傳播；（3）\textbf{Fourier} $\cos/\sin(k\pi z)$——週期成分；（4）\textbf{PQC\_GPU}——變分量子電路期望值作 $b_k$，以 PennyLane \cite{pennylane} GPU 模擬，適極深層、高階交互導致多項式基底飽和之場景；其幾何可讀性較弱，屬表達力優先選項。PQC 可寫為
+\begin{equation}
+\scalebox{0.88}{$\displaystyle b_k^{\mathrm{PQC}}(z) = \langle 0|^{\otimes n} U_{\mathrm{var}}^\dagger(\theta) U_{\mathrm{enc}}(z) M U_{\mathrm{enc}}(z) U_{\mathrm{var}}(\theta) |0\rangle^{\otimes n}$}
+\end{equation}
+$U_{\mathrm{enc}}$ 為資料編碼、$U_{\mathrm{var}}$ 為可學習變分塊、$M$ 為測量（如 Pauli-$Z^{\otimes n}$）。
+
+\textbf{前向概要：} 對批次 $Z$ 計算 $\mathcal{B}(Z)$，以 einsum 與係數張量線性組合，並加可選線性項 $W_{\mathrm{base}}Z+b_{\mathrm{base}}$；輸出經 $\tanh$ 與 LayerNorm 穩定訓練（細節從略）。
+
+\textbf{在 GNN\_KAN 中：}$\mathrm{KAN}_{\mathrm{edge}}$、$\mathrm{KAN}_{\mathrm{node}}$、$\mathrm{KAN}_{\mathrm{message}}$、$\mathrm{KAN}_{\mathrm{fuse}}$ 分別對應邊訊息、節點狀態、聚合向量與雙路融合，使全鏈路非線性皆為單變量基底組合。
+
+\subsection{與消息傳遞之理論契合（摘要）}
+
+標準消息傳遞可寫為 $\mathrm{UPDATE}(h_v^{(l-1)},\mathrm{AGGREGATE}\{m_{u\to v}^{(l)}\})$。微服務中多上游異常對下游之影響常可近似加權疊加，與 KAN「逐座標一維函數再組合」之結構一致；單邊上單調平滑之影響曲線亦與 KAN 對齊，而深 ReLU MLP 易產生不必要交叉項與鋸齒形狀。B-spline/Chebyshev 所帶平滑、局部性對應物理上之緩變與飽和；若系統極大且交互階數高（如 Train Ticket），則以 PQC 補強表達力惟解釋偏重代數結構。定性上，所學曲線之「死區／飽和」可與圖 \ref{fig:kan_viz} 對照（見後文）。
+
+\subsection{訓練目標與學習機制}
+
+總損失
+\begin{equation}
+L_{\mathrm{total}} = L_{\mathrm{rank}} + \lambda_1 L_{\mathrm{edge}} + \lambda_2 L_{\mathrm{kan}}.
+\end{equation}
+$L_{\mathrm{rank}}$ 為 margin ranking，使 $s_{v^*}$ 高於他節點；$L_{\mathrm{edge}}=\sum_{(u,v)\in E}|w_{uv}|$ 促進稀疏關鍵邊；$L_{\mathrm{kan}}$ 懲罰鄰近基底係數差分以維持形狀平滑。取 $\lambda_1{=}0.01$、$\lambda_2{=}0.001$，Adam 搭配 warm-up+cosine decay，batch 32。
+
+\paragraph{實作備註。}
+$K$ 預設 5--8；PQC 取 $Q{=}4$ 量子位元。驗證 P@1 early stopping（patience 10 epoch）。推論可快取雙圖與標準化統計；主表為驗證選基/選超參後單次測試集結果。細微浮動可能來自 GPU 非決定性。
+
+\section{實驗架構}
+
+\textbf{資料與硬體：} RCAEval \cite{rcaeval2024} 涵蓋 RE1（OB/SS/TT 等拓樸）、RE2（指標＋log/trace 等多源通道）等；各案例含觸發時間、注入故障型別與標註根因服務。實驗於單卡 NVIDIA 2080Ti、PyTorch 實作，除 PQC\_GPU 外其餘設定亦可在 12--16GB 消費級 GPU 重現。\textbf{訓練：} GNN\_KAN $L{=}3$、$d_h{=}64$，Adam（lr=0.001，warm-up+cosine），batch 32；與基線共用 60/20/20 切分、觸發前後各 5 分鐘窗、相同特徵管線與圖建構腳本，僅替換非線性／排序頭。\textbf{基線：} BARO、同構 GNN (MLP)、PC\_PageRank。\footnote{因果方法（如 CausalRCA）成本高且常假設 DAG，真實微服務多有環，故未列主表。}
+
+\section{實驗結果}
+
+表 \ref{tab:overall_results} 比較 GNN\_KAN（依資料集選最佳基底：多數為 Chebyshev，Train-Ticket 為 PQC\_GPU）、BARO、架構相同之 GNN (MLP) 與 PC\_PageRank。\textbf{(i)} 在 RE1-TT／Train-Ticket，GNN (MLP) 之 P@1 約 0.024--0.051，接近不可用，說明「同構架構僅換 MLP」不足以承載多跳非線性與類別不平衡；KAN 藉由基底約束使訓練仍能形成有效排序。\textbf{(ii)} PC\_PageRank 在複雜列仍明顯落後，反映固定轉移假設難反映負載條件下之動態傳播強度。\textbf{(iii)} RE1-OB 等線性簡單列 BARO 全面領先，符合奧卡姆剃刀。\textbf{(iv)} RE2-OB 整體平均以 GNN\_KAN 最佳，但 BARO 在部分 Top-3/5 仍強，顯示多源場景宜保留統計基線作對照或級聯篩選。參數量約為同寬 MLP 之 60--70\%；PQC\_GPU 計算較重，僅建議用於深層大拓樸。
+
+\begin{table*}[htbp]
+\centering
+\caption{GNN\_KAN 與基線方法在不同複雜度場景下的性能比較：GNN (MLP) 與 PC\_PageRank 在複雜場景中的性能崩潰，凸顯 KAN 架構與可學習消息傳遞之必要性}
+\label{tab:overall_results}
+\footnotesize
+\renewcommand{\arraystretch}{0.85}
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{ll|cccc|cccc|cccc|cccc}
+\toprule
+\multirow{2}{*}{\textbf{場景}} & \multirow{2}{*}{\textbf{資料集}} & \multicolumn{4}{c|}{\textbf{GNN\_KAN}} & \multicolumn{4}{c|}{\textbf{BARO}} & \multicolumn{4}{c|}{\textbf{GNN (MLP)}} & \multicolumn{4}{c}{\textbf{PC\_PR}} \\
+\cmidrule(lr){3-6} \cmidrule(lr){7-10} \cmidrule(lr){11-14} \cmidrule(lr){15-18}
+& & \textbf{P@1} & \textbf{P@3} & \textbf{P@5} & \textbf{Avg} & \textbf{P@1} & \textbf{P@3} & \textbf{P@5} & \textbf{Avg} & \textbf{P@1} & \textbf{P@3} & \textbf{P@5} & \textbf{Avg} & \textbf{P@1} & \textbf{P@3} & \textbf{P@5} & \textbf{Avg} \\
+\midrule
+\multirow{2}{*}{\makecell[l]{\textbf{簡單}\\\scriptsize (線性)}} 
+& \textbf{RE1-OB} & 0.432 & 0.624 & 0.632 & 0.584 & \cellcolor{gray!20}\textbf{0.736} & \cellcolor{gray!20}\textbf{0.928} & \cellcolor{gray!20}\textbf{0.984} & \cellcolor{gray!20}\textbf{0.896} & 0.088 & 0.352 & 0.584 & 0.349 & 0.080 & 0.216 & 0.448 & 0.242 \\
+& \textbf{RE1-SS} & 0.264 & 0.720 & 0.952 & 0.680 & 0.280 & 0.728 & 0.920 & 0.664 & 0.056 & 0.280 & 0.600 & 0.298 & - & - & - & - \\
+\midrule
+\multirow{3}{*}{\makecell[l]{\textbf{複雜}\\\scriptsize (非線性)}} 
+& \textbf{RE1-TT} & \cellcolor{gray!20}\textbf{0.224} & \cellcolor{gray!20}\textbf{0.368} & \cellcolor{gray!20}\textbf{0.432} & \cellcolor{gray!20}\textbf{0.346} & 0.136 & 0.280 & 0.392 & 0.272 & 0.024 & 0.040 & 0.072 & 0.045 & 0.010 & 0.104 & 0.182 & 0.142 \\
+& \textbf{Train-Ticket} & \cellcolor{gray!20}\textbf{0.256} & \cellcolor{gray!20}\textbf{0.376} & \cellcolor{gray!20}\textbf{0.456} & \cellcolor{gray!20}\textbf{0.365} & 0.136 & 0.280 & 0.392 & 0.272 & 0.024 & 0.048 & 0.080 & 0.051 & 0.110 & 0.140 & 0.152 & 0.128 \\
+& \textbf{Sock-Shop-2} & 0.272 & 0.784 & 0.936 & 0.678 & 0.280 & 0.728 & 0.920 & 0.664 & 0.112 & 0.328 & 0.624 & 0.344 & 0.030 & 0.350 & 0.490 & 0.344 \\
+\midrule
+\multirow{2}{*}{\makecell[l]{\textbf{多源}\\\scriptsize (高維)}} 
+& \textbf{RE2-OB} & \cellcolor{gray!20}\textbf{0.478} & 0.811 & 0.856 & \cellcolor{gray!20}\textbf{0.758} & 0.144 & \cellcolor{gray!20}\textbf{0.878} & \cellcolor{gray!20}\textbf{0.944} & 0.742 & 0.322 & 0.789 & 0.844 & 0.696 & 0.080 & 0.484 & 0.628 & 0.492 \\
+& \textbf{RE2-SS} & \cellcolor{gray!20}\textbf{0.333} & 0.811 & 0.900 & 0.693 & 0.067 & \cellcolor{gray!20}\textbf{0.956} & \cellcolor{gray!20}\textbf{0.978} & \cellcolor{gray!20}\textbf{0.764} & 0.156 & 0.589 & 0.878 & 0.560 & 0.150 & 0.425 & 0.667 & 0.414 \\
+\bottomrule
+\end{tabular}
+\vspace{0.2cm}
+
+\footnotesize \textit{註：灰底為該列最佳。GNN\_KAN：Train-Ticket 用 PQC\_GPU，其餘多為 Chebyshev。PC\_PR=PC\_PageRank。}
+\end{table*}
+
+\begin{table*}[htbp]
+\centering
+\caption{不同基底之 P@1（粗體為該列最佳；PQC\_GPU 於深層大系統佔優）}
+\label{tab:basis_comparison}
+\footnotesize
+\renewcommand{\arraystretch}{0.85}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{l|cccc}
+\toprule
+\textbf{資料集} & \textbf{Chebyshev} & \textbf{B-spline} & \textbf{Fourier} & \textbf{PQC\_GPU} \\
+\midrule
+\textbf{RE1-OB} & \textbf{0.432} & 0.392 & 0.432 & 0.360 \\
+\textbf{RE1-SS} & 0.264 & \textbf{0.272} & 0.224 & 0.136 \\
+\textbf{RE1-TT} & 0.080 & 0.008 & 0.008 & \textbf{0.224} \\
+\midrule
+\textbf{RE2-OB} & \textbf{0.478} & 0.367 & \textbf{0.478} & 0.478 \\
+\textbf{RE2-SS} & \textbf{0.333} & 0.289 & 0.322 & 0.200 \\
+\midrule
+\textbf{Train-Ticket} & 0.032 & 0.016 & 0.008 & \textbf{0.256} \\
+\textbf{Sock-Shop-2} & \textbf{0.272} & 0.176 & 0.232 & 0.240 \\
+\textbf{Online-Boutique} & \textbf{0.472} & 0.368 & 0.416 & 0.368 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+表 \ref{tab:basis_comparison} 呼應前述準則：除 Train-Ticket/RE1-TT 外，多數基準以 Chebyshev 或 Fourier 與 PQC 並列最佳；線性較強之 RE1-SS 上 B-spline 略優，可做驗證集微調之依據。
+
+故障粒度見表 \ref{tab:fault_type_analysis}。
+
+\vspace{-0.3em}
+Train-Ticket 上 GNN\_KAN (PQC) 於 Memory 達 P@1=0.96（BARO 0.08）、Disk 亦有優勢，與漸進飽和／閾值型資源異常一致；相對地 Delay 列仍宜借重 BARO 等線性相關手段。RE1-OB 整體仍由 BARO 領先，說明深度模型非為「全面取代」統計法，而是在拓樸變難、交互變強時提供備援。Deploy 上可採\textbf{分層策略}：先以輕量統計或大體積規則縮小候選，再在硬案例上啟用 GNN\_KAN。\textbf{基底實務準則}：扇出／一般指標場景優先 Chebyshev；線性鏈路可試 B-spline；深層超大拓樸（如 Train Ticket）用 PQC\_GPU；多源週期訊號可試 Fourier（與 RE2 多模態並陳時需交叉驗證）。
+
+\begin{table}[!t]
+\centering
+\caption{依故障類型之 P@1：複雜拓樸下記憶體顯著；簡單拓樸下 BARO 仍強。}
+\label{tab:fault_type_analysis}
+\footnotesize
+\renewcommand{\arraystretch}{0.85}
+\setlength{\tabcolsep}{2.5pt}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{l|ccccc|c}
+\toprule
+\textbf{方法 @ 資料集} & \textbf{CPU} & \textbf{Memory} & \textbf{Disk} & \textbf{Delay} & \textbf{Loss} & \textbf{Overall} \\
+\midrule
+\multicolumn{7}{c}{\textit{簡單拓樸（RE1-OB）}} \\
+\midrule
+\textbf{BARO} & \cellcolor{gray!20}\textbf{0.92} & \cellcolor{gray!20}\textbf{0.96} & \cellcolor{gray!20}\textbf{0.72} & \cellcolor{gray!20}\textbf{0.64} & 0.44 & \textbf{0.736} \\
+\textbf{GNN\_KAN (Cheb)} & 0.72 & 0.52 & 0.52 & 0.08 & 0.32 & 0.432 \\
+\textbf{GNN (MLP)} & 0.04 & 0.04 & 0.12 & 0.08 & 0.16 & 0.088 \\
+\midrule
+\multicolumn{7}{c}{\textit{複雜拓樸（Train-Ticket / RE1-TT）}} \\
+\midrule
+\textbf{BARO} & 0.08 & 0.08 & 0.24 & 0.12 & 0.16 & 0.136 \\
+\textbf{GNN (MLP)} & 0.08 & 0.00 & 0.00 & 0.04 & 0.00 & 0.024 \\
+\textbf{GNN\_KAN (PQC)} & 0.04 & \cellcolor{gray!20}\textbf{0.96} & \cellcolor{gray!20}\textbf{0.28} & 0.00 & 0.00 & \textbf{0.256} \\
+\midrule
+\multicolumn{7}{c}{\textit{多源（RE2-OB）}} \\
+\midrule
+\textbf{BARO} & 0.00 & 0.33 & 0.13 & 0.00 & 0.40 & 0.144 \\
+\textbf{GNN\_KAN (Cheb)} & \cellcolor{gray!20}\textbf{0.47} & \cellcolor{gray!20}\textbf{0.73} & \cellcolor{gray!20}\textbf{0.67} & 0.20 & 0.33 & \textbf{0.478} \\
+\textbf{GNN (MLP)} & 0.40 & 0.47 & 0.40 & 0.20 & 0.33 & 0.322 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\subsection{消融與邊界分析}
+為釐清性能來源，我們以同構模型僅替換非線性（KAN $\leftrightarrow$ MLP）進行消融，並以 PC\_PageRank 作「僅拓樸」對照。結果如表 \ref{tab:overall_results}：\textbf{(1) MLP 崩潰：}在 RE1-TT 與 Train-Ticket，GNN(MLP) 的 P@1 僅約 0.024，顯示即使圖結構相同，黑箱 MLP 仍難在多跳、弱信號與類別不平衡下形成穩定排序；KAN 的基底約束（平滑/局部性）則提供可用的歸納偏差。\textbf{(2) 靜態拓樸不足：}PC\_PageRank 在複雜拓樸明顯落後，反映固定轉移假設無法刻畫「條件式傳播」（例如僅在高負載或資源飽和時才顯著傳播）。\textbf{(3) 簡單場景統計法仍強：}RE1-OB 由 BARO 佔優，符合奧卡姆剃刀：當結構簡單且近線性時，參數少的統計方法更具樣本效率。
+
+進一步地，表 \ref{tab:basis_comparison} 與表 \ref{tab:fault_type_analysis} 顯示基底與故障類型/拓樸複雜度存在對應：多數中等規模場景 Chebyshev/Fourier 與 PQC 表現接近；線性鏈路（如 RE1-SS）上 B-spline 略優；深層大拓樸（Train-Ticket/RE1-TT）則需 PQC\_GPU 才能維持表達力。故障粒度上，Memory/Disk 類飽和效應在複雜拓樸中特別突出（P@1=0.96 vs 0.08），而 Delay 類更常近似線性疊加，BARO 仍具互補性。因此，實務可採\textbf{分層策略}：先以統計/規則縮小候選，再在「硬案例」啟用 GNN\_KAN 推理與路徑檢視。
+
+\subsection{指標與再現性}
+主報 Precision@k（$k \in \{1,3,5\}$）及五欄平均（Avg）。對單一事件，若真實根因落在前 $k$ 名，則記為命中；全資料集取平均得 P@k。所有方法共用相同候選服務集合、時間對齊與特徵/圖建構流程，以確保比較公平。訓練以驗證集 P@1 作 early stopping；主要結果固定隨機種子（細微數值仍可能受 GPU 非決定性影響）。\textbf{複雜度：}KAN 相較同寬 MLP 參數量約 60--70\%，推論時間約增加 30--50\%；PQC\_GPU 僅建議用於深層大拓樸或交互階數明顯升高的資料集。
+
+\section{討論、限制與結論}
+
+\subsection{可解釋性補證}
+圖 \ref{fig:kan_viz} 顯示 KAN 可得平滑「死區／飽和」形狀，MLP 則偏雜訊；與表 \ref{tab:overall_results} 複雜場景之落差一致。除曲線檢視外，可比對 KAN 給予高權重之邊與由根因節點在靜態依賴圖上之前向可達邊集合，以集合重合度（IoU）量化結構一致性：於 RE1-TT 抽樣事件中，GNN\_KAN 平均 IoU 約 0.68，同構 MLP 約 0.42。此指標仰賴圖完整性，實務仍宜搭配 SRE 複核與工單回饋。
+
+\subsection{研究限制}
+\textbf{結構與標註：} 服務依賴圖若缺邊、誤邊或無法反映灰度發佈／金絲雀路由，將直接影響傳播假設；根因若依工單回溯，亦可能含確認偏誤。\textbf{計算：} KAN 前向在相同寬度下常較 MLP 慢約 30--50\%，需靠批次化與圖稀疏化緩解。\textbf{外部效度：} 基準集中在公開微服務示範與 RCAEval 子集，尚不足以涵蓋專有巨型系統之所有失敗模式。\textbf{絕對精度：} Train-Ticket 整體 P@1 仍僅 0.256 左右，實務應以 Top-$k$ 清單、路徑解釋與人在回路為主，不宜單依 Top-1 自動開鍋。
+
+\subsection{總結}
+GNN\_KAN 將 Kolmogorov–Arnold 表示嵌入圖消息傳遞與雙圖融合，並以 RCA-aware 特徵抑制洩漏，使維運可從邊／節點層級檢視傳播形狀。實證上，深層複雜拓樸與多源場景相對 MLP 與靜態 PageRank 具實質增益，記憶體類故障尤顯著；線性簡單拓樸仍應正視統計基線優勢。絕對 P@1 於最難子集仍有限，後續可結合人機協作、不確定性校準、時序動態圖與因果先驗以提升可用性。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.78\columnwidth]{figure2_mlp_vs_kan.png}
+    \caption{KAN（紅）較 MLP（藍）更易出現可讀取之飽和形狀，利於維運對照物理直覺。}
+    \label{fig:kan_viz}
+\end{figure}
+
+\begin{thebibliography}{99}
+\small
+
+\bibitem{kan2024}
+Liu, Z., Wang, Y., Vaidya, S., Ruehle, F., Halverson, J., Soljačić, M., Hou, T. Y., \& Tegmark, M. (2024).
+\textit{KAN: Kolmogorov-Arnold Networks}.
+arXiv preprint arXiv:2404.19756.
+
+\bibitem{rcaeval2024}
+Pham, L., Zhang, H., Ha, H., Salim, F., \& Zhang, X. (2025).
+\textit{RCAEval: A Benchmark for Root Cause Analysis of Microservice Systems with Telemetry Data}.
+In \textit{Companion Proceedings of the ACM Web Conference 2025 (WWW Companion)}, 777-780.
+https://doi.org/10.1145/3701716.3715290
+
+\bibitem{gnn_rca2023}
+Lin, C.-M., Chang, C., Wang, W.-Y., Wang, K.-D., \& Peng, W.-C. (2024).
+\textit{Root Cause Analysis in Microservice Using Neural Granger Causal Discovery}.
+In \textit{Proceedings of the AAAI Conference on Artificial Intelligence (AAAI)}, 38(1), 206-213.
+https://doi.org/10.1609/aaai.v38i1.27772
+
+\bibitem{train_ticket}
+Zhou, X., Peng, X., Xie, T., Sun, J., Ji, C., Li, W., \& Ding, D. (2021).
+\textit{Fault Analysis and Debugging of Microservice Systems: Industrial Survey, Benchmark System, and Empirical Study}.
+\textit{IEEE Transactions on Software Engineering}, 47(2), 243-260.
+https://doi.org/10.1109/TSE.2018.2887384
+
+\bibitem{pennylane}
+Bergholm, V., et al. (2018).
+\textit{PennyLane: Automatic differentiation of hybrid quantum-classical computations}.
+arXiv preprint arXiv:1811.04968.
+
+\bibitem{kolmogorov1957}
+Kolmogorov, A. N. (1957).
+\textit{On the representation of continuous functions of several variables by superposition of continuous functions of one variable and addition}.
+\textit{Doklady Akademii Nauk SSSR}, 114(5), 953-956.
+
+\bibitem{microservices_survey}
+Soldani, J., Tamburri, D. A., \& van den Heuvel, W.-J. (2018).
+\textit{The pains and gains of microservices: A systematic grey literature review}.
+\textit{Journal of Systems and Software}, 146, 215-232.
+https://doi.org/10.1016/j.jss.2018.09.082
+
+\bibitem{baro2023}
+Pham, L., Ha, H., \& Zhang, H. (2024).
+\textit{BARO: Robust Root Cause Analysis for Microservices via Multivariate Bayesian Online Change Point Detection}.
+\textit{Proceedings of the ACM on Software Engineering}, 1(FSE), 2214-2237.
+https://doi.org/10.1145/3660805
+
+\bibitem{microrank2021}
+Yu, G., et al. (2021).
+\textit{MicroRank: End-to-End Latency Issue Localization with Extended Spectrum Analysis in Microservice Environments}.
+In \textit{Proceedings of the ACM Web Conference (WWW)}, 3087-3098.
+https://doi.org/10.1145/3442381.3449905
+
+\bibitem{cloudranger2018}
+Wang, P., et al. (2018).
+\textit{CloudRanger: Root Cause Identification for Cloud Native Systems}.
+In \textit{Proceedings of the IEEE/ACM International Symposium on Cluster, Cloud and Grid Computing (CCGRID)}, 492-502.
+https://doi.org/10.1109/CCGRID.2018.00076
+
+\bibitem{nezha2023}
+Yu, G., Chen, P., Li, Y., Chen, H., Li, X., \& Zheng, Z. (2023).
+\textit{Nezha: Interpretable Fine-Grained Root Causes Analysis for Microservices on Multi-modal Observability Data}.
+In \textit{Proceedings of the 31st ACM Joint European Software Engineering Conference and Symposium on the Foundations of Software Engineering (ESEC/FSE)}, 553-565.
+https://doi.org/10.1145/3611643.3616249
+
+\bibitem{causalrca2023}
+Xin, R., et al. (2023).
+\textit{CausalRCA: Causal Inference Based Precise Fine-Grained Root Cause Localization for Microservice Applications}.
+\textit{Journal of Systems and Software}, 203, 111724.
+
+\bibitem{xpert2024}
+Jiang, Y., Zhang, C., He, S., Yang, Z., Ma, M., Qin, S., Kang, Y., Dang, Y., Rajmohan, S., Lin, Q., \& Zhang, D. (2024).
+\textit{Xpert: Empowering Incident Management with Query Recommendations via Large Language Models}.
+In \textit{Proceedings of the IEEE/ACM 46th International Conference on Software Engineering (ICSE)}, 92:1-92:13.
+https://doi.org/10.1145/3597503.3639081
+
+\bibitem{trank2021}
+Ye, Z., Chen, P., \& Yu, G. (2021).
+\textit{T-Rank: A Lightweight Spectrum Based Fault Localization Approach for Microservice Systems}.
+In \textit{Proceedings of the 21st IEEE/ACM International Symposium on Cluster, Cloud and Internet Computing (CCGrid)}, 416-425.
+https://doi.org/10.1109/CCGrid51090.2021.00051
+
+\bibitem{eadro2023}
+Lee, C., Yang, T., Chen, Z., Su, Y., \& Lyu, M. R. (2023).
+\textit{Eadro: An End-to-End Troubleshooting Framework for Microservices on Multi-source Data}.
+In \textit{Proceedings of the IEEE/ACM 45th International Conference on Software Engineering (ICSE)}, 1750-1762.
+https://doi.org/10.1109/ICSE48619.2023.00150
+
+\bibitem{rcacopilot2024}
+Chen, Y., Xie, H., Ma, M., Kang, Y., Gao, X., Shi, L., Cao, Y., Gao, X., Fan, H., Wen, M., Zeng, J., Ghosh, S., Zhang, X., Zhang, C., Lin, Q., Rajmohan, S., Zhang, D., \& Xu, T. (2024).
+\textit{Automatic Root Cause Analysis via Large Language Models for Cloud Incidents}.
+In \textit{Proceedings of the Nineteenth European Conference on Computer Systems (EuroSys)}, 674-688.
+https://doi.org/10.1145/3627703.3629553
+
+\end{thebibliography}
+
+\end{document}
