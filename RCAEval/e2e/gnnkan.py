@@ -493,7 +493,16 @@ def gnn_kan_rca(data, inject_time=None, dataset=None, with_bg=False,
     
     # 3. Initialize pure KAN model and move to correct device
     model = GNNKANModel(config, len(node_names))
-    
+
+    # Ch5 parity hook: optionally swap the cubic-B-spline spline-term compute of every
+    # KAN evaluator (edge/node/message) to the SparseFuse fused Triton kernel. Only the
+    # B-spline kernel path changes; base/activation/LN/graph/fusion/ranking are untouched.
+    _kernel = getattr(config, 'kernel', 'naive')
+    if _kernel == 'sparsefuse':
+        from ch5.real_model_adapter import swap_to_sparsefuse
+        _n = swap_to_sparsefuse(model, grid_size=getattr(config, 'kan_grid_size', 5))
+        print(f"[Ch5] swapped {_n} KAN evaluators to SparseFuse fused kernel")
+
     # Force device management - ensure use of correct device (support CUDA, MPS, CPU)
     # device has already been set in previous detection
     

@@ -23,6 +23,7 @@ class GNNKANConfig:
         # Basis function selection configuration - single source of truth
         self.basis_function = 'chebyshev'    # Default to chebyshev for backward compatibility
         self.basis_kwargs = {}               # Additional parameters for specific basis functions
+        self.kernel = 'naive'                # Ch5: 'naive' | 'sparsefuse' B-spline kernel
         
         # Increase model capacity and depth
         self.input_dim = 128                 # Increased from 64 to 128

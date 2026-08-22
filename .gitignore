@@ -239,3 +239,8 @@ logbatcher/config.json
 *.bbl
 *.blg
 *.toc
+# CocoIndex Code (ccc)
+/.cocoindex_code/
+# Local envs / editor
+/.venv-modal/
+/.vscode/

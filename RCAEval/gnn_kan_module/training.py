@@ -11,7 +11,10 @@ import torch.optim as optim
 from torch.optim import lr_scheduler
 import numpy as np
 import math
-from torch_geometric.utils import negative_sampling
+try:  # torch_geometric pulls torch_sparse (compiled ext); negative_sampling is unused here
+    from torch_geometric.utils import negative_sampling
+except Exception:  # pragma: no cover - keep GNN_KAN importable without torch_geometric
+    negative_sampling = None
 
 # Use the centralized, full implementation of GradientStabilizer
 # GradientStabilizer removed, use simplified version
